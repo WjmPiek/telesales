@@ -12,7 +12,7 @@
       <p><b>Old Policy:</b> {{session.policy_number}}</p>
       <p><b>Agent:</b> {{current_user.name}}</p>
       <p><b>QA Ref:</b> {{step.qa}}</p>
-      {% if selected_product %}
+      {% if selected_product and step.id in [17,18,24,25] %}
       <hr>
       <p><b>Selected Policy:</b><br>{{selected_product.product_name}} / {{selected_product.plan_name}}</p>
       <p><b>Premium:</b> R {{'%.2f'|format(selected_product.monthly_premium or 0)}}</p>
@@ -48,10 +48,37 @@
               <div class="col-md-6 mt-2"><b>Address:</b><br>{{session.lapsed_policy.address if session.lapsed_policy else ''}}</div>
             </div>
             <div class="text-muted small mt-2">Confirm ID number, date of birth, postal address and email address on the next application screen if not available from the lapse data.</div>
+            {% if selected_product %}
+              <hr>
+              <p><b>Selected Product:</b> {{selected_product.product_name}} / {{selected_product.plan_name}}</p>
+              <p><b>Premium:</b> R {{'%.2f'|format(selected_product.monthly_premium or 0)}} | <b>Cover:</b> R {{'%.2f'|format(selected_product.cover_amount or 0)}}</p>
+            {% endif %}
           </div>
         </div>
         {% endif %}
 
+        {% if step.id == 26 %}
+        <div class="card border-info mb-3">
+          <div class="card-header bg-info text-white"><b>Beneficiary details to confirm</b></div>
+          <div class="card-body small">
+            <p><b>Beneficiary Name:</b> Capture/confirm on application screen if not available from lapse data.</p>
+            <p><b>Beneficiary Contact Number:</b> Capture/confirm on application screen.</p>
+            <p><b>Relationship:</b> Capture/confirm on application screen.</p>
+          </div>
+        </div>
+        {% endif %}
+        {% if step.id == 27 %}
+        <div class="card border-warning mb-3">
+          <div class="card-header bg-warning"><b>Debit order details</b></div>
+          <div class="card-body small">
+            {% if selected_payment == 'Debit Order' %}
+              <p>Confirm account holder, bank, account number, branch code, account type and debit date on the application screen.</p>
+            {% else %}
+              <p>Debit order details are not required because the selected payment method is {{selected_payment or 'not Debit Order'}}.</p>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
         <h5>Question / Confirmation</h5>
         <div class="alert alert-info">{{step.question}}</div>
         <form method="post">
@@ -67,7 +94,7 @@
             <input class="form-control mb-3" type="number" name="client_age" value="{{client_age or ''}}" placeholder="Enter client age if known">
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
             <input type="hidden" name="answer" value="yes">
-          {% elif step.id in [11,14,17] %}
+          {% elif step.id == 11 %}
             <div class="alert alert-secondary">Available policies are filtered by the selected cover type and client age where available.</div>
             <div class="list-group mb-3">
               {% for prod in products %}
@@ -82,6 +109,37 @@
             </div>
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
             <button class="btn btn-success btn-lg" name="answer" value="yes">Select Policy and Continue</button>
+          {% elif step.id == 12 %}
+            {% if selected_product %}
+              <div class="alert alert-secondary">
+                <b>Premium to confirm:</b> R {{'%.2f'|format(selected_product.monthly_premium or 0)}}
+              </div>
+            {% endif %}
+            <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
+            <button class="btn btn-success btn-lg" name="answer" value="yes">Yes - Affordable</button>
+            <button class="btn btn-warning btn-lg" name="answer" value="no">No - Show Other Products</button>
+          {% elif step.id == 16 %}
+            <label class="form-label"><b>Additional benefits selected, if any</b></label>
+            <textarea class="form-control mb-3" name="additional_benefits" rows="3" placeholder="Example: Repatriation, grocery benefit, airtime benefit. Leave blank if none."></textarea>
+            <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
+            <button class="btn btn-success btn-lg" name="answer" value="yes">Continue</button>
+          {% elif step.id == 17 %}
+            <div class="card border-success mb-3">
+              <div class="card-header bg-success text-white"><b>Confirm selected cover with client</b></div>
+              <div class="card-body">
+                {% if selected_product %}
+                  <p><b>Plan:</b> {{selected_product.product_name}} / {{selected_product.plan_name}}</p>
+                  <p><b>Main Member Cover:</b> R {{'%.2f'|format(selected_product.cover_amount or 0)}}</p>
+                  <p><b>Monthly Premium:</b> R {{'%.2f'|format(selected_product.monthly_premium or 0)}}</p>
+                  <p><b>Waiting Period:</b> {{selected_product.waiting_period_months or 0}} months</p>
+                {% else %}
+                  <div class="alert alert-warning">No product selected yet.</div>
+                {% endif %}
+              </div>
+            </div>
+            <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
+            <button class="btn btn-success btn-lg" name="answer" value="yes">Confirm and Continue</button>
+            <button class="btn btn-outline-secondary btn-lg" name="go_to_step" value="11">Edit Product</button>
           {% elif step.id == 19 %}
             <label class="form-label"><b>Select payment method</b></label>
             <div class="row g-2 mb-3">

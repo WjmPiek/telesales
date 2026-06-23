@@ -16,7 +16,7 @@ auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 QR_EXPIRY_SECONDS = 90
 TRUSTED_DEVICE_DAYS = 180
 TRUSTED_DEVICE_COOKIE = "mf_qr_trusted_device"
-ALLOWED_QR_ROLES = {"admin", "branch manager", "branch_manager", "manager", "supervisor", "agent", "user", "staff"}
+ALLOWED_QR_ROLES = {"admin", "manager", "supervisor", "agent", "user", "staff"}
 
 
 def _client_ip():
@@ -117,123 +117,6 @@ def login():
             return redirect(url_for("main.dashboard"))
         flash("Invalid login details", "danger")
     return render_template("auth/login.html")
-
-
-
-
-@auth_bp.route("/register", methods=["GET", "POST"])
-def register():
-    """Public user registration. New users stay inactive until Admin assigns a role."""
-    if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        email = request.form.get("email", "").lower().strip()
-        branch = request.form.get("branch", "").strip()
-        phone = request.form.get("phone", "").strip()
-        password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
-
-        if not name or not email or not password:
-            flash("Please complete name, email and password.", "danger")
-            return render_template("auth/register.html")
-        if password != confirm_password:
-            flash("Passwords do not match.", "danger")
-            return render_template("auth/register.html")
-        if len(password) < 8:
-            flash("Password must be at least 8 characters.", "danger")
-            return render_template("auth/register.html")
-        if User.query.filter_by(email=email).first():
-            flash("This email is already registered. Please login or contact Admin.", "warning")
-            return render_template("auth/register.html")
-
-        from app.models import Role
-        role = Role.query.filter_by(name="Pending").first()
-        if not role:
-            role = Role(name="Pending", description="Registered user pending Admin role assignment")
-            db.session.add(role)
-            db.session.flush()
-
-        user = User(name=name, email=email, branch=branch, work_tel=phone, role=role, active=False)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-        _audit(user.id, "USER_REGISTERED", f"User registration pending Admin role assignment for {email} / {branch}")
-        flash("Registration received. Admin must approve your account and assign your role before you can login or link your phone.", "success")
-        return redirect(url_for("auth.login"))
-
-    return render_template("auth/register.html")
-
-
-def _ensure_role(name, description=None):
-    from app.models import Role
-    role = Role.query.filter_by(name=name).first()
-    if not role:
-        role = Role(name=name, description=description or name)
-        db.session.add(role)
-        db.session.flush()
-    return role
-
-
-@auth_bp.route("/admin/branch-manager-approvals")
-@login_required
-def admin_branch_manager_approvals():
-    blocked = _admin_required()
-    if blocked:
-        return blocked
-    from app.models import Role
-    roles = Role.query.order_by(Role.name.asc()).all()
-    allowed_role_names = {"Branch Manager", "Agent"}
-    allowed_roles = [r for r in roles if r.name in allowed_role_names]
-    for role_name in sorted(allowed_role_names - {r.name for r in allowed_roles}):
-        allowed_roles.append(_ensure_role(role_name, role_name))
-    pending_role = Role.query.filter_by(name="Pending").first()
-    query = User.query
-    if pending_role:
-        users = query.filter((User.active == False) | (User.role_id == pending_role.id)).order_by(User.active.asc(), User.created_at.desc()).all()
-    else:
-        users = query.filter_by(active=False).order_by(User.created_at.desc()).all()
-    return render_template("auth/admin_branch_manager_approvals.html", users=users, allowed_roles=allowed_roles)
-
-
-@auth_bp.route("/admin/branch-manager-approvals/<int:user_id>/approve", methods=["POST"])
-@login_required
-def admin_approve_branch_manager(user_id):
-    blocked = _admin_required()
-    if blocked:
-        return blocked
-    from app.models import Role
-    user = db.session.get(User, user_id)
-    if not user:
-        flash("User not found.", "warning")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    role_id = request.form.get("role_id", type=int)
-    role = db.session.get(Role, role_id) if role_id else None
-    if not role or role.name not in {"Branch Manager", "Agent"}:
-        flash("Please select Branch Manager or Agent before approving this user.", "danger")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    user.role = role
-    user.active = True
-    db.session.commit()
-    _audit(current_user.id, "USER_APPROVED", f"Approved user {user.email} as {role.name}")
-    flash(f"{user.name} has been approved as {role.name} and can now login/link phone.", "success")
-    return redirect(url_for("auth.admin_branch_manager_approvals"))
-
-
-@auth_bp.route("/admin/branch-manager-approvals/<int:user_id>/reject", methods=["POST"])
-@login_required
-def admin_reject_branch_manager(user_id):
-    blocked = _admin_required()
-    if blocked:
-        return blocked
-    user = db.session.get(User, user_id)
-    if not user:
-        flash("User not found.", "warning")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    email = user.email
-    db.session.delete(user)
-    db.session.commit()
-    _audit(current_user.id, "USER_REJECTED", f"Rejected/deleted user registration {email}")
-    flash("Registration rejected and removed.", "info")
-    return redirect(url_for("auth.admin_branch_manager_approvals"))
 
 
 @auth_bp.route("/logout")

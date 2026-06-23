@@ -52,6 +52,13 @@ def _digits(value):
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
 
+def _signing_salutation(app_obj):
+    title = (getattr(app_obj, "title", "") or "").strip()
+    surname = (getattr(app_obj, "surname", "") or getattr(app_obj, "first_names", "") or "Client").strip()
+    if title:
+        return f"{title} {surname}"
+    return surname
+
 def _unlocked_key(app_id):
     return f"sign_unlocked_{app_id}"
 
@@ -241,7 +248,12 @@ def sign_application(token):
                 db.session.commit()
                 session.pop(_unlocked_key(app_obj.id), None)
                 if app_obj.email:
-                    send_email(app_obj.email, "Welcome to Martin's Funerals", "Your signed documents have been received and submitted to Martin's Funerals.", [welcome_pdf, signed_pdf, popia_pdf, disclosure_pdf, fica_pdf])
+                    body = (
+                        f"Dear {_signing_salutation(app_obj)},\n\n"
+                        "Your signed documents have been received and submitted to Martin's Funerals.\n\n"
+                        "No documents are attached to this email. The signed documents are stored securely on the Martin's Funerals system."
+                    )
+                    send_email(app_obj.email, "Martin's Funerals signed documents received", body, [])
                 return render_template("sign/complete.html", app=app_obj)
         except Exception as e:
             db.session.rollback()

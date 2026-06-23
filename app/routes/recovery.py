@@ -11,7 +11,7 @@ from app.security import permission_required
 from app.services.pdf_service import generate_telesales_script_pdf, generate_application_pdf, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message
-from app.services.compliance_service import dob_from_sa_id, age_from_dob, classify_product_template
+from app.services.compliance_service import dob_from_sa_id, age_from_dob, classify_product_template, assert_application_rules
 
 recovery_bp = Blueprint("recovery", __name__, url_prefix="/recovery")
 
@@ -431,12 +431,24 @@ def _client_surname(session):
     return parts[-1] if parts else "Client"
 
 
+def _client_title(session):
+    # Lapsed policy imports often do not contain a formal title. Use a neutral Mr/Mrs prefix
+    # so the agent addresses the client professionally and can correct it during details confirmation.
+    title = _answer_value(session, "client_title")
+    return (title or "Mr/Mrs").strip()
+
 def _client_display(session):
     surname = _client_surname(session)
     initials = ""
     if session and session.lapsed_policy:
         initials = session.lapsed_policy.initials or ""
-    return f"{initials} {surname}".strip() or surname
+    return f"{_client_title(session)} {surname}".strip() or surname
+
+def _agent_display_name():
+    return (getattr(current_user, "agent_name", None) or getattr(current_user, "name", None) or getattr(current_user, "email", None) or "Agent").strip()
+
+def _selected_additional_benefits(session):
+    return _answer_value(session, "additional_benefits", "") or ""
 
 
 def _script_client_age(session):
@@ -505,20 +517,42 @@ def _script_text_for_display(session, step):
     text = step.get("script", "")
     product = _selected_script_product(session)
     payment = _answer_value(session, "payment_method", "the selected payment method")
-    surname = _client_surname(session)
+    benefits = _selected_additional_benefits(session)
     display = _client_display(session)
-    if product:
-        text = text.replace("The monthly premium for this policy will be explained to you.", f"The monthly premium for this policy will be {_format_money(product.monthly_premium)}.")
-        text = text.replace("I will now explain the selected plan.", f"I will now explain the selected plan: {_product_label(product)}.")
-        text += f"\n\nSelected policy details:\nPlan: {_product_label(product)}\nCover Amount: {_format_money(product.cover_amount)}\nMonthly Premium: {_format_money(product.monthly_premium)}\nWaiting Period: {product.waiting_period_months or 0} months"
-    text = text.replace("[Client Name]", surname or display or "Client")
-    text = text.replace("[Client Surname]", surname or "Client")
-    text = text.replace("[Agent Name]", current_user.name or "Agent")
+
+    text = text.replace("[Client Name]", display or "Client")
+    text = text.replace("[Client Surname]", _client_surname(session) or "Client")
+    text = text.replace("[Agent Name]", _agent_display_name())
     text = text.replace("the selected payment method", payment)
+
+    if product and step.get("id") == 18:
+        text = text.replace("The monthly premium for this policy will be explained to you.", f"The monthly premium for this policy will be {_format_money(product.monthly_premium)}.")
+
+    if product and step.get("id") in {17, 18, 24, 25}:
+        details = [
+            "Selected policy details:",
+            f"Plan: {_product_label(product)}",
+            f"Cover Amount: {_format_money(product.cover_amount)}",
+            f"Monthly Premium: {_format_money(product.monthly_premium)}",
+            f"Waiting Period: {product.waiting_period_months or 0} months",
+        ]
+        if benefits:
+            details.append(f"Additional Benefits: {benefits}")
+        text += "\n\n" + "\n".join(details)
+
     return text
 
+def _application_salutation(app_obj):
+    title = (getattr(app_obj, "title", "") or "").strip()
+    surname = (getattr(app_obj, "surname", "") or getattr(app_obj, "first_names", "") or "Client").strip()
+    if title:
+        return f"{title} {surname}"
+    return surname
 
 def _send_script_selected_signing_link(app_obj, delivery_method):
+    ok, errors = assert_application_rules(app_obj)
+    if not ok:
+        return None, False, errors
     token = secrets.token_urlsafe(32)
     app_obj.sign_token = token
     app_obj.sign_token_created_at = datetime.utcnow()
@@ -539,22 +573,23 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     base_url = current_app.config.get("BASE_URL") or request.url_root.rstrip("/")
     link = f"{base_url}{url_for('signing.sign_application', token=token)}"
     body = (
-        f"Dear {app_obj.first_names or app_obj.surname},\n\n"
+        f"Dear {_application_salutation(app_obj)},\n\n"
         "Please open this secure Martin's Funerals link to upload your FICA documents and sign your application documents:\n\n"
         f"{link}\n\n"
-        "You will need your ID number to unlock the page."
+        "You will need your ID number to unlock the page.\n\n"
+        "No documents are attached. Your documents are available only inside the secure signing link."
     )
     method = (delivery_method or "email").lower()
     sent = False
     if method in {"email", "sms_email", "whatsapp_email"} and app_obj.email:
-        sent = send_email(app_obj.email, "Your Martin's Funerals application signing link", body, [preview_pdf, popia_pdf, disclosure_pdf, fica_pdf]) or sent
+        sent = send_email(app_obj.email, "Your Martin's Funerals secure signing link", body, []) or sent
     if method in {"whatsapp", "whatsapp_email"} and app_obj.cell_number:
         sent = send_whatsapp_message(app_obj.cell_number, body) or sent
     if method == "sms":
         current_app.logger.info("SMS selected for signing link, but no SMS provider is configured. Link: %s", link)
     app_obj.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
-    return link, sent
+    return link, sent, []
 
 
 SCRIPT_CONFIG_FILE = "telesales_script_steps.json"
@@ -684,7 +719,19 @@ def script_step(session_id):
     step = _script_step(session.current_step)
     if not step:
         return redirect(url_for("recovery.script_complete", session_id=session.id))
+    # Only ask number of lives when extended cover was selected. Otherwise skip this step automatically.
+    if request.method == "GET" and step.get("id") == 10 and (_answer_value(session, "coverage_choice") != "extended_family"):
+        session.current_step = 11
+        db.session.commit()
+        return redirect(url_for("recovery.script_step", session_id=session.id))
     if request.method == "POST":
+        if request.form.get("go_to_step"):
+            try:
+                session.current_step = int(request.form.get("go_to_step"))
+                db.session.commit()
+                return redirect(url_for("recovery.script_step", session_id=session.id))
+            except Exception:
+                pass
         answer = request.form.get("answer")
         note = request.form.get("note", "")
         extra = {}
@@ -692,10 +739,22 @@ def script_step(session_id):
             extra["coverage_choice"] = request.form.get("coverage_choice") or answer
             extra["client_age"] = request.form.get("client_age") or _script_client_age(session)
             answer = extra["coverage_choice"] or answer
-        if step["id"] in {11, 14, 17}:
+        if step["id"] == 11:
             if request.form.get("product_id"):
                 extra["product_id"] = request.form.get("product_id")
                 answer = "yes"
+        if step["id"] == 16:
+            extra["additional_benefits"] = request.form.get("additional_benefits") or ""
+            answer = "yes"
+        if step["id"] == 12 and answer == "no":
+            # Premium too high: return agent to policy selection instead of continuing.
+            answers = _script_answers(session)
+            answers[str(step["id"])] = {"answer": answer, "note": note, "title": step["title"], "qa": step["qa"], "question": step["question"], "recorded_at": datetime.utcnow().isoformat(), **extra}
+            session.answers_json = json.dumps(answers)
+            session.current_step = 11
+            db.session.commit()
+            flash("Premium declined. Please select a different product in the client's age range.", "warning")
+            return redirect(url_for("recovery.script_step", session_id=session.id))
         if step["id"] == 19:
             extra["payment_method"] = request.form.get("payment_method") or answer
             answer = extra["payment_method"] or answer
@@ -726,7 +785,7 @@ def script_step(session_id):
         return redirect(url_for("recovery.script_step", session_id=session.id))
     total_steps = len(_current_script_steps())
     progress = int(((session.current_step - 1) / total_steps) * 100)
-    products = _eligible_products_for_script(session) if step["id"] in {11, 14, 17} else []
+    products = _eligible_products_for_script(session) if step["id"] == 11 else []
     selected_product = _selected_script_product(session)
     spoken_text = _script_text_for_display(session, step)
     return render_template("recovery/script_step.html", session=session, step=step, total_steps=total_steps, progress=progress, products=products, selected_product=selected_product, spoken_text=spoken_text, client_age=_script_client_age(session), selected_payment=_answer_value(session, "payment_method"), selected_delivery=_answer_value(session, "delivery_method"))
@@ -875,8 +934,12 @@ def start_application(policy_id):
 
         delivery_method = request.form.get("delivery_method") or selected_delivery
         if delivery_method:
-            link, sent = _send_script_selected_signing_link(a, delivery_method)
-            if sent:
+            link, sent, send_errors = _send_script_selected_signing_link(a, delivery_method)
+            if send_errors:
+                for error in send_errors:
+                    flash(error, "danger")
+                flash("Application created, but policy/FICA validation blocked delivery. No email, SMS or WhatsApp link was sent. Fix the product or required FICA details before sending the signing link.", "danger")
+            elif sent:
                 flash("Application created and signing link sent using the selected delivery method.", "success")
             else:
                 flash(f"Application created. Signing link prepared but not sent automatically. Link: {link}", "warning")

@@ -208,6 +208,19 @@ def view_application(app_id):
     a = ClientApplication.query.get_or_404(app_id)
     return render_template("applications/view.html", app=a)
 
+
+def _client_salutation(app_obj):
+    title = (getattr(app_obj, "title", "") or "").strip()
+    surname = (getattr(app_obj, "surname", "") or getattr(app_obj, "first_names", "") or "Client").strip()
+    if title:
+        return f"{title} {surname}"
+    return surname
+
+def _block_signing_message(errors):
+    for error in errors:
+        flash(error, "danger")
+    flash("Application blocked. No email, SMS or WhatsApp signing link was sent. Please correct the product/FICA validation errors first.", "danger")
+
 @applications_bp.route("/<int:app_id>/send-sign-link", methods=["POST"])
 @login_required
 @permission_required("applications.send_signing")
@@ -215,9 +228,7 @@ def send_sign_link(app_id):
     a = ClientApplication.query.get_or_404(app_id)
     ok, errors = assert_application_rules(a)
     if not ok:
-        for error in errors:
-            flash(error, "danger")
-        flash("Application blocked. Correct the FICA/policy validation errors before sending the signing link.", "danger")
+        _block_signing_message(errors)
         return redirect(url_for("applications.view_application", app_id=a.id))
     token = secrets.token_urlsafe(32)
     a.sign_token = token
@@ -239,17 +250,16 @@ def send_sign_link(app_id):
     a.disclosure_pdf_path = disclosure_pdf
 
     link = f"{current_app.config['BASE_URL']}{url_for('signing.sign_application', token=token)}"
+    salutation = _client_salutation(a)
     body = (
-        "Please review your Martin's Funerals application documents and sign using this secure once-off link:\n\n"
+        f"Dear {salutation},\n\n"
+        "Please open this secure Martin's Funerals link to review your application documents, upload any required FICA documents and sign electronically:\n\n"
         f"{link}\n\n"
-        "Attached for your review:\n"
-        "- Application form\n"
-        "- POPIA consent\n"
-        "- Policy disclosure\n"
-        "- FICA verification checklist\n\n"
+        "For your security, you will need your ID number to unlock the document page.\n\n"
+        "No documents are attached to this email. Your documents are available only inside the secure signing link.\n\n"
         "The link can only be used once. After signing it will be deactivated."
     )
-    send_email(a.email, "Your Martin's Funerals application documents and signing link", body, [preview_pdf, popia_pdf, disclosure_pdf, fica_pdf])
+    send_email(a.email, "Your Martin's Funerals secure signing link", body, [])
     a.status = "Signing Link Sent"
     db.session.commit()
     flash("Signing link and review documents sent", "success")
@@ -263,9 +273,7 @@ def send_sign_whatsapp(app_id):
     app_obj = ClientApplication.query.get_or_404(app_id)
     ok, errors = assert_application_rules(app_obj)
     if not ok:
-        for error in errors:
-            flash(error, "danger")
-        flash("Application blocked. Correct the FICA/policy validation errors before sending the signing link.", "danger")
+        _block_signing_message(errors)
         return redirect(url_for("applications.view_application", app_id=app_obj.id))
 
     token = secrets.token_urlsafe(32)
@@ -279,7 +287,7 @@ def send_sign_whatsapp(app_id):
 
     message = (
         "Martin's Funerals application signing link\n\n"
-        f"Dear {app_obj.first_names or app_obj.surname},\n\n"
+        f"Dear {_client_salutation(app_obj)},\n\n"
         "Please review and sign your application using this secure link:\n"
         f"{sign_url}\n\n"
         "You will need to complete the required confirmation and signature steps. "

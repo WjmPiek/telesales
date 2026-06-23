@@ -1,0 +1,11 @@
+Patch included:
+- Blocked policy/FICA validation now blocks email, SMS and WhatsApp signing link delivery.
+- Signing emails use client salutation/surname.
+- Initial signing-link emails no longer attach PDFs; documents are only inside the secure link.
+- Signed-document confirmation email no longer attaches PDFs.
+- Script question 1 uses a professional Mr/Mrs + surname salutation.
+- Script question 2 uses the logged-in user's agent_name/name instead of a hard-coded default.
+- Product selection is constrained to step 11 and filtered by client age.
+- If premium is declined on step 12, the script returns to product selection.
+- Product details are only shown on relevant confirmation/premium/details steps.
+- Payment step only shows Cash, Debit Order and Stop Order.
