@@ -52,3 +52,18 @@ Use a Gmail App Password, not your normal Gmail password.
 - Each screen shows one conversation point or confirmation.
 - Agent text is split into separate speech blocks.
 - Progress counter now reflects the expanded guided flow.
+
+
+## SVG Document Templates
+
+The system now includes the CorelDRAW-exported SVG document templates in `app/static/svg_templates/` and converted PDF backgrounds in `app/static/pdf_templates/`.
+
+Application template selection:
+- Family / standard applications: `family_application.svg` -> `application_single_family.pdf`
+- Member + Product applications: `member_product_application.svg` -> `application_member_product.pdf`
+
+Terms template selection:
+- Family / standard applications: `family_terms.svg` -> `family_terms.pdf`
+- Member + Product applications: `member_product_terms.svg` -> `member_product_terms.pdf`
+
+The PDF overlay engine scales legacy field coordinates to A4 so values stay aligned next to headings on the new SVG-derived templates.

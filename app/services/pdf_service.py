@@ -17,6 +17,9 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEMPLATE_DIR = os.path.join(BASE_DIR, "static", "pdf_templates")
 LOGO_PATH = os.path.join(BASE_DIR, "static", "img", "martins_logo.png")
 TERMS_PDF_PATH = os.path.join(TEMPLATE_DIR, "martins_policy_terms.pdf")
+FAMILY_TERMS_PDF_PATH = os.path.join(TEMPLATE_DIR, "family_terms.pdf")
+MEMBER_PRODUCT_TERMS_PDF_PATH = os.path.join(TEMPLATE_DIR, "member_product_terms.pdf")
+SVG_TEMPLATE_DIR = os.path.join(BASE_DIR, "static", "svg_templates")
 COMPANY_NAME = "Martin's Funerals"
 FSP_FOOTER = "An Authorised Financial Service Provider (FSP 48189)"
 PURPLE = (0.31, 0.16, 0.55)
@@ -289,7 +292,11 @@ def _merge_template(template_path, overlay_pdf_path, out_path):
 
 
 def _make_overlay_single_family(app_obj, overlay_path, sig_path=None):
-    c = canvas.Canvas(overlay_path, pagesize=(612, 792))
+    c = canvas.Canvas(overlay_path, pagesize=A4)
+    # The new CorelDRAW SVG templates are A4. Existing overlay coordinates were
+    # built for 612 x 792, so scale them proportionally to A4 to keep each value
+    # positioned beside its field heading instead of drifting on the new template.
+    c.scale(A4[0] / 612.0, A4[1] / 792.0)
 
     # Top section
     _draw(c, app_obj.agent_name, 46, 647, 7, 24)
@@ -383,7 +390,9 @@ def _make_overlay_single_family(app_obj, overlay_path, sig_path=None):
 
 
 def _make_overlay_member_product(app_obj, overlay_path, sig_path=None):
-    c = canvas.Canvas(overlay_path, pagesize=(612, 792))
+    c = canvas.Canvas(overlay_path, pagesize=A4)
+    # Scale legacy overlay coordinates to the new A4 SVG-derived template.
+    c.scale(A4[0] / 612.0, A4[1] / 792.0)
 
     # Top section
     _draw(c, app_obj.agent_name, 40, 647, 7, 24)
@@ -462,15 +471,15 @@ def _make_overlay_member_product(app_obj, overlay_path, sig_path=None):
 
 
 
-def _append_policy_terms(writer):
-    """Append the official Martins policy terms and conditions to the application PDF."""
-    if not os.path.exists(TERMS_PDF_PATH):
+def _append_policy_terms(writer, template_choice="single_family"):
+    """Append the correct SVG-derived terms and conditions to the application PDF."""
+    preferred = MEMBER_PRODUCT_TERMS_PDF_PATH if template_choice == "member_product" else FAMILY_TERMS_PDF_PATH
+    terms_path = preferred if os.path.exists(preferred) else TERMS_PDF_PATH
+    if not os.path.exists(terms_path):
         return
     try:
-        terms = PdfReader(TERMS_PDF_PATH)
-        # Skip page 1 because the application template already supplies the acceptance form page.
-        start_index = 1 if len(terms.pages) > 1 else 0
-        for page in terms.pages[start_index:]:
+        terms = PdfReader(terms_path)
+        for page in terms.pages:
             writer.add_page(page)
     except Exception:
         return
@@ -541,7 +550,7 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     writer = PdfWriter()
     for page in reader.pages:
         writer.add_page(page)
-    _append_policy_terms(writer)
+    _append_policy_terms(writer, template_choice)
     _add_terms_page(writer, app_obj, sig_path)
     with open(out_path, "wb") as f:
         writer.write(f)
