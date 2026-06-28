@@ -159,3 +159,12 @@ This package adds branch-level data isolation:
 - Admin can assign branches from **User Approvals / User Branch Access**.
 
 Before going live, make sure every Agent and Branch Manager has a branch value that exactly matches the branch names used in imported leads and applications.
+
+
+## Phase 15 - Protected User / Agent Management
+
+- Admin and Branch Manager user management added at `/auth/users`.
+- Admin can create Branch Managers and Agents and allocate any branch.
+- Branch Managers can create/manage Agents only for their own branch.
+- Admin users are protected and cannot be edited or deleted.
+- User actions are audit logged.

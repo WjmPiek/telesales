@@ -176,17 +176,7 @@ def _ensure_role(name, description=None):
 @auth_bp.route("/admin/branch-manager-approvals")
 @login_required
 def admin_branch_manager_approvals():
-    blocked = _admin_required()
-    if blocked:
-        return blocked
-    from app.models import Role
-    roles = Role.query.order_by(Role.name.asc()).all()
-    allowed_role_names = {"Branch Manager", "Agent"}
-    allowed_roles = [r for r in roles if r.name in allowed_role_names]
-    for role_name in sorted(allowed_role_names - {r.name for r in allowed_roles}):
-        allowed_roles.append(_ensure_role(role_name, role_name))
-    users = User.query.order_by(User.active.asc(), User.name.asc()).all()
-    return render_template("auth/admin_branch_manager_approvals.html", users=users, allowed_roles=allowed_roles)
+    return redirect(url_for("auth.users_manage"))
 
 
 @auth_bp.route("/admin/branch-manager-approvals/<int:user_id>/approve", methods=["POST"])
@@ -199,6 +189,9 @@ def admin_approve_branch_manager(user_id):
     user = db.session.get(User, user_id)
     if not user:
         flash("User not found.", "warning")
+        return redirect(url_for("auth.admin_branch_manager_approvals"))
+    if (user.role.name if getattr(user, "role", None) else "").lower().strip() == "admin":
+        flash("Admin users are protected and cannot be edited.", "danger")
         return redirect(url_for("auth.admin_branch_manager_approvals"))
     role_id = request.form.get("role_id", type=int)
     role = db.session.get(Role, role_id) if role_id else None
@@ -228,12 +221,194 @@ def admin_reject_branch_manager(user_id):
     if not user:
         flash("User not found.", "warning")
         return redirect(url_for("auth.admin_branch_manager_approvals"))
+    if (user.role.name if getattr(user, "role", None) else "").lower().strip() == "admin":
+        flash("Admin users are protected and cannot be deleted.", "danger")
+        return redirect(url_for("auth.admin_branch_manager_approvals"))
     email = user.email
     db.session.delete(user)
     db.session.commit()
     _audit(current_user.id, "USER_REJECTED", f"Rejected/deleted user registration {email}")
     flash("Registration rejected and removed.", "info")
     return redirect(url_for("auth.admin_branch_manager_approvals"))
+
+
+
+
+# PHASE 15: ROLE-SAFE USER / AGENT MANAGEMENT
+def _role_name(user):
+    return ((user.role.name if getattr(user, "role", None) else "") or "").lower().replace("_", " ").strip()
+
+def _is_branch_manager_user(user):
+    return _role_name(user) in {"branch manager", "manager", "supervisor"}
+
+def _manager_or_admin_required():
+    if not current_user.is_authenticated or not (_is_admin_user(current_user) or _is_branch_manager_user(current_user)):
+        flash("Admin or Branch Manager access required.", "danger")
+        return redirect(url_for("role_portals.home"))
+    return None
+
+def _is_protected_admin(user):
+    return _role_name(user) == "admin"
+
+def _branch_choices():
+    from app.models import ClientApplication, LapsedPolicy
+    branches = set()
+    for model in (User, ClientApplication, LapsedPolicy):
+        try:
+            for row in db.session.query(model.branch).filter(model.branch.isnot(None)).distinct().all():
+                if row[0]:
+                    branches.add(row[0].strip())
+        except Exception:
+            pass
+    if current_user.is_authenticated and getattr(current_user, "branch", None):
+        branches.add(current_user.branch.strip())
+    return sorted(b for b in branches if b)
+
+def _can_manage_target(target):
+    if not target:
+        return False, "User not found."
+    if _is_protected_admin(target):
+        return False, "Admin users are protected and cannot be edited or deleted."
+    if _is_admin_user(current_user):
+        return True, ""
+    if _is_branch_manager_user(current_user):
+        if _role_name(target) != "agent":
+            return False, "Branch Managers can only manage Agent users."
+        if (target.branch or "") != (current_user.branch or ""):
+            return False, "Branch Managers can only manage agents in their own branch."
+        return True, ""
+    return False, "You do not have permission to manage users."
+
+def _allowed_manage_roles():
+    from app.models import Role
+    names = ["Agent"] if _is_branch_manager_user(current_user) and not _is_admin_user(current_user) else ["Branch Manager", "Agent"]
+    roles = []
+    for name in names:
+        roles.append(_ensure_role(name, name))
+    db.session.commit()
+    return roles
+
+@auth_bp.route("/users")
+@login_required
+def users_manage():
+    blocked = _manager_or_admin_required()
+    if blocked:
+        return blocked
+    allowed_roles = _allowed_manage_roles()
+    branches = _branch_choices()
+    if _is_admin_user(current_user):
+        users = User.query.order_by(User.active.asc(), User.branch.asc(), User.name.asc()).all()
+    else:
+        users = User.query.filter(User.branch == current_user.branch).order_by(User.active.asc(), User.name.asc()).all()
+    return render_template("auth/user_management.html", users=users, allowed_roles=allowed_roles, branches=branches)
+
+@auth_bp.route("/users/create", methods=["POST"])
+@login_required
+def users_create():
+    blocked = _manager_or_admin_required()
+    if blocked:
+        return blocked
+    name = (request.form.get("name") or "").strip()
+    email = (request.form.get("email") or "").lower().strip()
+    password = request.form.get("password") or ""
+    role_id = request.form.get("role_id", type=int)
+    branch = (request.form.get("branch") or "").strip()
+    phone = (request.form.get("phone") or "").strip()
+    from app.models import Role
+    role = db.session.get(Role, role_id) if role_id else None
+    allowed_names = {r.name for r in _allowed_manage_roles()}
+    if not name or not email or not password or not role:
+        flash("Please complete name, email, password and role.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    if role.name not in allowed_names or role.name == "Admin":
+        flash("You cannot create that role.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    if len(password) < 8:
+        flash("Password must be at least 8 characters.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    if User.query.filter_by(email=email).first():
+        flash("That email already exists.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    if _is_branch_manager_user(current_user) and not _is_admin_user(current_user):
+        branch = current_user.branch or ""
+    if not branch:
+        flash("Please select/enter a branch.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    user = User(name=name, email=email, branch=branch, work_tel=phone, role=role, active=True)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    _audit(current_user.id, "USER_CREATED", f"Created {role.name} {email}; branch={branch}")
+    flash(f"{role.name} created and allocated to {branch}.", "success")
+    return redirect(url_for("auth.users_manage"))
+
+@auth_bp.route("/users/<int:user_id>/update", methods=["POST"])
+@login_required
+def users_update(user_id):
+    blocked = _manager_or_admin_required()
+    if blocked:
+        return blocked
+    user = db.session.get(User, user_id)
+    ok, msg = _can_manage_target(user)
+    if not ok:
+        flash(msg, "danger")
+        return redirect(url_for("auth.users_manage"))
+    name = (request.form.get("name") or user.name).strip()
+    branch = (request.form.get("branch") or user.branch or "").strip()
+    phone = (request.form.get("phone") or "").strip()
+    active = request.form.get("active") == "1"
+    role_id = request.form.get("role_id", type=int)
+    from app.models import Role
+    role = db.session.get(Role, role_id) if role_id else user.role
+    allowed_names = {r.name for r in _allowed_manage_roles()}
+    if not role or role.name not in allowed_names or role.name == "Admin":
+        flash("You cannot assign that role.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    if _is_branch_manager_user(current_user) and not _is_admin_user(current_user):
+        branch = current_user.branch or ""
+        role = _ensure_role("Agent", "Agent")
+    if not branch:
+        flash("Branch is required.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    old = f"role={user.role.name if user.role else ''}; branch={user.branch}; active={user.active}"
+    user.name = name
+    user.branch = branch
+    user.work_tel = phone
+    user.role = role
+    user.active = active
+    new_password = request.form.get("new_password") or ""
+    if new_password:
+        if len(new_password) < 8:
+            flash("New password must be at least 8 characters.", "danger")
+            return redirect(url_for("auth.users_manage"))
+        user.set_password(new_password)
+    db.session.commit()
+    _audit(current_user.id, "USER_UPDATED", f"Updated {user.email}: {old} -> role={role.name}; branch={branch}; active={active}")
+    flash("User saved.", "success")
+    return redirect(url_for("auth.users_manage"))
+
+@auth_bp.route("/users/<int:user_id>/delete", methods=["POST"])
+@login_required
+def users_delete(user_id):
+    blocked = _manager_or_admin_required()
+    if blocked:
+        return blocked
+    user = db.session.get(User, user_id)
+    ok, msg = _can_manage_target(user)
+    if not ok:
+        flash(msg, "danger")
+        return redirect(url_for("auth.users_manage"))
+    if user.id == current_user.id:
+        flash("You cannot delete your own account while logged in.", "danger")
+        return redirect(url_for("auth.users_manage"))
+    email = user.email
+    role = user.role.name if user.role else "User"
+    branch = user.branch
+    db.session.delete(user)
+    db.session.commit()
+    _audit(current_user.id, "USER_DELETED", f"Deleted {role} {email}; branch={branch}")
+    flash("User deleted.", "info")
+    return redirect(url_for("auth.users_manage"))
 
 
 @auth_bp.route("/logout")
