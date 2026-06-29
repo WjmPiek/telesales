@@ -413,35 +413,37 @@ def _ensure_super_admin_account():
     return user
 
 def _reassign_user_history_to_super_admin(deleted_user):
-    """Move every reference to the user to the protected Super Admin.
+    """Move every user foreign-key reference to Super Admin before deleting.
 
-    This is used before a permanent delete so PostgreSQL foreign keys do not
-    block deletion. It updates FK references in all public tables that point to
-    users(id). Pure login/device rows may be deleted when they are not business
-    history; business rows are reassigned to Super Admin so the audit trail and
-    reports remain available.
+    The previous delete still failed when tables such as lapsed_policies kept a
+    foreign-key reference to the user. This function discovers every FK in
+    PostgreSQL that points to users(id), updates those references to the
+    protected Super Admin, then flushes before the users row is deleted.
     """
     from sqlalchemy import text
 
     super_user = _ensure_super_admin_account()
     if not super_user:
         raise ValueError(f"Super Admin user {SUPER_ADMIN_EMAIL} does not exist yet. Create it before deleting users.")
-    if deleted_user.id == super_user.id:
+    if int(deleted_user.id) == int(super_user.id):
         raise ValueError("Super Admin cannot be deleted.")
 
     old_id = int(deleted_user.id)
     super_id = int(super_user.id)
 
-    # Remove security/session records tied to the deleted login. These are not
-    # client/policy history and can otherwise cause duplicate/security issues.
-    for table in ("qr_trusted_devices",):
-        db.session.execute(text(f'DELETE FROM "{table}" WHERE user_id = :old_id'), {"old_id": old_id})
+    # Business history is reassigned. Login/session rows are removed because
+    # they belong to the deleted login, not to policy/application history.
+    try:
+        db.session.execute(text('DELETE FROM "qr_trusted_devices" WHERE user_id = :old_id'), {"old_id": old_id})
+    except Exception:
+        db.session.rollback()
+    try:
+        db.session.execute(text('DELETE FROM "qr_login_tokens" WHERE approved_user_id = :old_id'), {"old_id": old_id})
+    except Exception:
+        db.session.rollback()
 
     fk_rows = db.session.execute(text("""
-        SELECT
-            kcu.table_schema,
-            kcu.table_name,
-            kcu.column_name
+        SELECT kcu.table_name, kcu.column_name
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
           ON tc.constraint_name = kcu.constraint_name
@@ -460,12 +462,10 @@ def _reassign_user_history_to_super_admin(deleted_user):
     for row in fk_rows:
         table_name = row.table_name
         column_name = row.column_name
-        if table_name in {"users", "qr_trusted_devices"}:
+        if table_name in {"users", "qr_trusted_devices", "qr_login_tokens"}:
             continue
         quoted_table = '"' + table_name.replace('"', '""') + '"'
         quoted_column = '"' + column_name.replace('"', '""') + '"'
-        # Association tables such as user_roles may have uniqueness rules.
-        # Use a savepoint so a failed UPDATE does not undo previous FK moves.
         try:
             with db.session.begin_nested():
                 db.session.execute(
@@ -473,13 +473,25 @@ def _reassign_user_history_to_super_admin(deleted_user):
                     {"super_id": super_id, "old_id": old_id},
                 )
         except Exception:
-            db.session.execute(text(f"DELETE FROM {quoted_table} WHERE {quoted_column} = :old_id"), {"old_id": old_id})
+            # Some association tables can have uniqueness constraints. For those
+            # rows, remove the association row only; the actual business records
+            # have already been reassigned by their own FK rows.
+            try:
+                with db.session.begin_nested():
+                    db.session.execute(text(f"DELETE FROM {quoted_table} WHERE {quoted_column} = :old_id"), {"old_id": old_id})
+            except Exception:
+                raise
 
+    # Explicit protection for the table reported by Render, even if FK discovery
+    # is unavailable for any reason.
+    db.session.execute(text('UPDATE "lapsed_policies" SET assigned_agent_id = :super_id WHERE assigned_agent_id = :old_id'), {"super_id": super_id, "old_id": old_id})
+    db.session.flush()
     return super_user
 
 def _delete_user_row_permanently(user_id):
     from sqlalchemy import text
     result = db.session.execute(text('DELETE FROM users WHERE id = :old_id'), {"old_id": int(user_id)})
+    db.session.flush()
     return result.rowcount
 
 @auth_bp.route("/users/<int:user_id>/delete", methods=["POST"])
@@ -496,18 +508,20 @@ def users_delete(user_id):
     if user.id == current_user.id:
         flash("You cannot delete your own account while logged in.", "danger")
         return redirect(url_for("auth.users_manage"))
-    if _is_branch_manager_user(current_user) and not _is_admin_user(current_user):
-        flash("Branch Managers can add and view users, but only Admin can permanently delete users.", "danger")
+    if not _is_admin_user(current_user):
+        flash("Only Admin/Super Admin can permanently delete users.", "danger")
         return redirect(url_for("auth.users_manage"))
+
     email = user.email
     role = user.role.name if user.role else "User"
     branch = user.branch
+    old_id = int(user.id)
     try:
-        old_id = user.id
         super_user = _reassign_user_history_to_super_admin(user)
-        # Expunge the ORM object and perform a direct SQL delete. This avoids
-        # SQLAlchemy relationship cascades trying to delete before FK reassignment.
-        db.session.expunge(user)
+        try:
+            db.session.expunge(user)
+        except Exception:
+            pass
         _delete_user_row_permanently(old_id)
         db.session.commit()
         _audit(current_user.id, "USER_PERMANENTLY_DELETED", f"Permanently deleted {role} {email}; branch={branch}; history reassigned to Super Admin {super_user.email}")
@@ -516,6 +530,29 @@ def users_delete(user_id):
         db.session.rollback()
         flash(f"User could not be deleted: {exc}", "danger")
     return redirect(url_for("auth.users_manage"))
+
+@auth_bp.route("/users/employees")
+@login_required
+def users_employees():
+    return users_manage()
+
+@auth_bp.route("/users/roles")
+@login_required
+def users_roles():
+    blocked = _admin_required()
+    if blocked:
+        return blocked
+    from app.models import Role
+    roles = Role.query.order_by(Role.name.asc()).all()
+    return render_template("auth/user_roles.html", roles=roles)
+
+@auth_bp.route("/users/old-franchises")
+@login_required
+def old_franchises():
+    blocked = _admin_required()
+    if blocked:
+        return blocked
+    return render_template("auth/old_franchises.html")
 
 
 @auth_bp.route("/logout")

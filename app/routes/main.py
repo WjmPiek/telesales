@@ -122,3 +122,69 @@ def manager_dashboard():
     branches = branch_choices_from_model(db, LapsedPolicy)
 
     return render_template("dashboard/manager.html", stats=stats, agents=agents, status_counts=status_counts, pending_work=pending_work, branches=branches, active_branch=branch)
+
+
+# Grouped Franchise / Monthly Figures navigation placeholders
+# These keep the main tabs and sub-tabs available for Admin and Franchise/Branch users.
+def _manager_or_admin():
+    role_name = (current_user.role.name if current_user.is_authenticated and current_user.role else "").lower().replace("_", " ")
+    return role_name in {"admin", "super admin", "branch manager", "manager", "supervisor"}
+
+def _portal_guard():
+    if not _manager_or_admin():
+        return redirect(url_for("role_portals.home"))
+    return None
+
+@main_bp.route("/franchise/details")
+@login_required
+def franchise_details():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    branch = selected_branch_arg() or user_branch() or "All branches"
+    users_q = User.query
+    if not can_view_all_branches() and user_branch():
+        users_q = users_q.filter(User.branch == user_branch())
+    if can_view_all_branches() and selected_branch_arg():
+        users_q = users_q.filter(User.branch == selected_branch_arg())
+    rows = [[u.name, u.email, u.branch or "", u.role.name if u.role else "", "Active" if u.active else "Inactive"] for u in users_q.order_by(User.branch.asc(), User.name.asc()).limit(100).all()]
+    cards = [{"label":"Scope","value":branch},{"label":"Employees","value":len(rows)},{"label":"Leads","value":scope_by_branch(LapsedPolicy.query, LapsedPolicy).count()},{"label":"Applications","value":scope_by_branch(ClientApplication.query, ClientApplication).count()}]
+    return render_template("franchise_page.html", title="Franchise Details", subtitle="Branch/franchise overview with the related employee users.", headers=["Name","Email","Branch","Role","Status"], rows=rows, cards=cards)
+
+@main_bp.route("/franchise/employees")
+@login_required
+def franchise_employees():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    return redirect(url_for("auth.users_employees"))
+
+@main_bp.route("/monthly/performance")
+@login_required
+def monthly_performance():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    apps = scope_by_branch(ClientApplication.query, ClientApplication).count()
+    leads = scope_by_branch(LapsedPolicy.query, LapsedPolicy).count()
+    calls = RecoveryCallLog.query.count() if can_view_all_branches() else RecoveryCallLog.query.filter(RecoveryCallLog.agent_id == current_user.id).count()
+    cards = [{"label":"Leads","value":leads},{"label":"Applications","value":apps},{"label":"Calls","value":calls},{"label":"Conversion","value":f"{round((apps/leads*100),1) if leads else 0}%"}]
+    return render_template("franchise_page.html", title="Performance", subtitle="Monthly performance summary for the selected scope.", headers=[], rows=[], cards=cards)
+
+@main_bp.route("/monthly/figures")
+@login_required
+def monthly_figures():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    return render_template("franchise_page.html", title="Monthly Figures", subtitle="Monthly figures section. Import/connect monthly figure data here.", headers=[], rows=[], cards=[])
+
+@main_bp.route("/monthly/royalties")
+@login_required
+def monthly_royalties():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    return render_template("franchise_page.html", title="Royalties", subtitle="Royalty summary section. Connect royalty records when available.", headers=[], rows=[], cards=[])
+
+@main_bp.route("/monthly/finance")
+@login_required
+def monthly_finance():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    return render_template("franchise_page.html", title="Finance", subtitle="Finance summary section for branch/franchise reporting.", headers=[], rows=[], cards=[])
