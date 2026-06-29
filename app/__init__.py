@@ -37,6 +37,38 @@ def _ensure_lapsed_policy_contact_columns(app):
             app.logger.exception("Could not ensure lapsed policy contact/suspense columns")
 
 
+def _ensure_client_fica_document_columns(app):
+    """Render/PostgreSQL safety patch for existing databases.
+
+    Older live databases may have the client_fica_documents table from an
+    earlier phase without the newer upload metadata/status columns.  When the
+    external client signing page tries to save an ID copy or proof of address,
+    PostgreSQL then rejects the INSERT/UPDATE and the upload appears to do
+    nothing.  This keeps the schema compatible without wiping any data.
+    """
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS document_type VARCHAR(80)",
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS original_filename VARCHAR(255)",
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS file_path VARCHAR(500)",
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'Received'",
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP",
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS uploaded_ip VARCHAR(80)",
+                "ALTER TABLE client_fica_documents ADD COLUMN IF NOT EXISTS user_agent VARCHAR(500)",
+                "UPDATE client_fica_documents SET status = 'Received' WHERE status IS NULL OR TRIM(status) = ''",
+                "UPDATE client_fica_documents SET uploaded_at = NOW() WHERE uploaded_at IS NULL",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure client FICA document columns")
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
@@ -79,6 +111,10 @@ def create_app():
             db.create_all()
             try:
                 _ensure_lapsed_policy_contact_columns(app)
+            except Exception:
+                pass
+            try:
+                _ensure_client_fica_document_columns(app)
             except Exception:
                 pass
             try:

@@ -112,6 +112,16 @@ def _allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_UPLOADS
 
 
+def _get_uploaded_file(document_type):
+    # The public client page normally posts the file as "file".
+    # Some browsers/form changes may send the file under the document type name.
+    return (
+        request.files.get("file")
+        or request.files.get(document_type)
+        or request.files.get(f"file_{document_type}")
+    )
+
+
 def _save_upload(app_obj, document_type, uploaded_file):
     if not uploaded_file or not uploaded_file.filename:
         raise ValueError("No file selected. Please choose a PDF, JPG, PNG or WEBP file before clicking Upload / Replace.")
@@ -172,7 +182,7 @@ def upload_fica_document(token):
         doc_type = request.form.get("document_type")
         if doc_type not in FICA_LABELS:
             raise ValueError("Invalid document type")
-        row = _save_upload(app_obj, doc_type, request.files.get("file"))
+        row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
         generate_fica_pdf(app_obj, os.path.join(_upload_folder(), f"fica_verification_{app_obj.id}.pdf"))
         required, received, outstanding, docs = _fica_status(app_obj)
         if outstanding:
@@ -183,6 +193,7 @@ def upload_fica_document(token):
         flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {row.original_filename}", "success")
     except Exception as e:
         db.session.rollback()
+        current_app.logger.exception("Client FICA upload failed for application %s", app_obj.id)
         flash(str(e), "danger")
     return redirect(url_for("signing.sign_application", token=token))
 
@@ -211,7 +222,7 @@ def sign_application(token):
                 doc_type = request.form.get("document_type")
                 if doc_type not in FICA_LABELS:
                     raise ValueError("Invalid document type")
-                row = _save_upload(app_obj, doc_type, request.files.get("file"))
+                row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
                 generate_fica_pdf(app_obj, os.path.join(_upload_folder(), f"fica_verification_{app_obj.id}.pdf"))
                 required, received, outstanding, docs = _fica_status(app_obj)
                 app_obj.status = "FICA Outstanding" if outstanding else "Documents Received"
@@ -301,6 +312,7 @@ def sign_application(token):
                 return render_template("sign/complete.html", app=app_obj)
         except Exception as e:
             db.session.rollback()
+            current_app.logger.exception("Client signing/FICA action failed for application %s", app_obj.id)
             required, received, outstanding, docs = _fica_status(app_obj)
             return render_template("sign/sign.html", app=app_obj, token=token, error=str(e), required_docs=required, received_docs=received, outstanding_docs=outstanding, fica_docs=docs, fica_labels=FICA_LABELS, sign_docs=REQUIRED_SIGNATURE_DOCS, signed_docs=_signed_doc_types(app_obj), doc_labels=DOC_LABELS)
 
