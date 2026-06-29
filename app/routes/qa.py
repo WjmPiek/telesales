@@ -25,7 +25,7 @@ def _role_name():
     return str(getattr(getattr(current_user, 'role', None), 'name', '') or '').lower().replace('_', ' ')
 
 def _is_qa_user():
-    return _role_name() in {'admin', 'manager', 'branch manager', 'compliance', 'qa'}
+    return _role_name() in {'admin', 'super admin', 'superadmin', 'manager', 'branch manager', 'compliance', 'qa'}
 
 def _branch_scope(query, model):
     branch = request.args.get('branch') or ''

@@ -4,7 +4,9 @@ from app import db
 from app.models import SystemSetting, AuditLog
 settings_bp=Blueprint('settings',__name__,url_prefix='/settings')
 
-def is_admin(): return current_user.is_authenticated and current_user.role and current_user.role.name.lower()=='admin'
+def is_admin():
+    role=(current_user.role.name if current_user.is_authenticated and current_user.role else '').lower().replace('_',' ')
+    return role in {'admin','super admin','superadmin'}
 
 @settings_bp.route('/', methods=['GET','POST'])
 @login_required

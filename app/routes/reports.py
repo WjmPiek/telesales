@@ -11,7 +11,7 @@ reports_bp = Blueprint('reports', __name__, url_prefix='/reports')
 
 def is_manager():
     role = (current_user.role.name if current_user.is_authenticated and current_user.role else '').lower().replace('_',' ')
-    return role in {'admin','manager','branch manager'}
+    return role in {'admin','super admin','superadmin','manager','branch manager'}
 
 def parse_dates():
     today=date.today(); start=request.args.get('start') or today.replace(day=1).isoformat(); end=request.args.get('end') or today.isoformat()

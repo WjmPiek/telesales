@@ -3,6 +3,8 @@ from datetime import datetime
 from flask import Blueprint, render_template, request, current_app, abort, send_file, session, redirect, url_for, flash
 from werkzeug.utils import secure_filename
 from app import db
+from sqlalchemy import MetaData, Table
+from sqlalchemy.sql.sqltypes import DateTime, Boolean, Integer, Numeric, Float
 from app.models import ClientApplication, ApplicationSignature, ClientFicaDocument, DocumentSignature
 from app.services.pdf_service import generate_application_pdf, generate_welcome_pack, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.email_service import send_email
@@ -122,6 +124,89 @@ def _get_uploaded_file(document_type):
     )
 
 
+def _fica_table():
+    """Reflect the live FICA table so uploads also work on older Render DB schemas."""
+    metadata = MetaData()
+    return Table("client_fica_documents", metadata, autoload_with=db.engine)
+
+
+def _default_for_column(column, app_obj, document_type, safe, path):
+    name = column.name.lower()
+    if name in {"id"}:
+        return None
+    if name in {"application_id", "client_application_id", "app_id"}:
+        return app_obj.id
+    if name in {"document_type", "doc_type", "type", "fica_type"}:
+        return document_type
+    if name in {"original_filename", "filename", "file_name", "name"}:
+        return safe
+    if name in {"file_path", "path", "upload_path", "document_path"}:
+        return path
+    if name in {"status", "document_status"}:
+        return "Received"
+    if name in {"uploaded_ip", "ip_address", "ip"}:
+        return request.remote_addr
+    if name in {"user_agent", "browser"}:
+        return request.headers.get("User-Agent")
+    if name in {"uploaded_at", "created_at", "updated_at", "date_uploaded"}:
+        return datetime.utcnow()
+    if name in {"uploaded_by", "user_id", "created_by"}:
+        return None
+
+    # Safety for old live schemas with extra NOT NULL columns and no defaults.
+    if isinstance(column.type, (DateTime,)):
+        return datetime.utcnow()
+    if isinstance(column.type, (Integer, Numeric, Float)):
+        return 0
+    if isinstance(column.type, Boolean):
+        return False
+    return ""
+
+
+def _insert_fica_document_row(app_obj, document_type, safe, path):
+    table = _fica_table()
+
+    # Mark older documents of this type as replaced where the live schema supports it.
+    cols = table.c
+    if all(c in cols for c in ("application_id", "document_type", "status")):
+        db.session.execute(
+            table.update()
+            .where(cols.application_id == app_obj.id)
+            .where(cols.document_type == document_type)
+            .values(status="Replaced")
+        )
+
+    values = {}
+    for column in table.columns:
+        if column.primary_key and column.autoincrement:
+            continue
+        value = _default_for_column(column, app_obj, document_type, safe, path)
+        if value is None and (column.nullable or column.default is not None or column.server_default is not None):
+            continue
+        values[column.name] = value
+
+    result = db.session.execute(table.insert().values(**values))
+    inserted_id = None
+    try:
+        if result.inserted_primary_key:
+            inserted_id = result.inserted_primary_key[0]
+    except Exception:
+        inserted_id = None
+
+    if inserted_id:
+        row = db.session.get(ClientFicaDocument, inserted_id)
+        if row:
+            return row
+
+    # Fallback for databases where primary key is not returned.
+    return ClientFicaDocument.query.filter_by(
+        application_id=app_obj.id,
+        document_type=document_type,
+        original_filename=safe,
+        file_path=path,
+    ).order_by(ClientFicaDocument.uploaded_at.desc()).first()
+
+
 def _save_upload(app_obj, document_type, uploaded_file):
     if not uploaded_file or not uploaded_file.filename:
         raise ValueError("No file selected. Please choose a PDF, JPG, PNG or WEBP file before clicking Upload / Replace.")
@@ -137,24 +222,11 @@ def _save_upload(app_obj, document_type, uploaded_file):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         raise ValueError("The uploaded file was empty or could not be saved. Please try again.")
 
-    # Keep history, but make the newest upload the active document.
-    # Older documents of the same type should no longer keep the item outstanding/rejected.
-    ClientFicaDocument.query.filter_by(
-        application_id=app_obj.id,
-        document_type=document_type
-    ).update({"status": "Replaced"})
-
-    row = ClientFicaDocument(
-        application_id=app_obj.id,
-        document_type=document_type,
-        original_filename=safe,
-        file_path=path,
-        status="Received",
-        uploaded_ip=request.remote_addr,
-        user_agent=request.headers.get("User-Agent"),
-    )
-    db.session.add(row)
-    return row
+    try:
+        return _insert_fica_document_row(app_obj, document_type, safe, path)
+    except Exception:
+        current_app.logger.exception("Dynamic FICA insert failed for application %s", app_obj.id)
+        raise
 
 
 def _generate_review_docs(app_obj):
@@ -190,7 +262,7 @@ def upload_fica_document(token):
         elif app_obj.status in ("FICA Outstanding", "Signature Sent", "Draft", None):
             app_obj.status = "Documents Received"
         db.session.commit()
-        flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {row.original_filename}", "success")
+        flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
     except Exception as e:
         db.session.rollback()
         current_app.logger.exception("Client FICA upload failed for application %s", app_obj.id)
@@ -227,7 +299,7 @@ def sign_application(token):
                 required, received, outstanding, docs = _fica_status(app_obj)
                 app_obj.status = "FICA Outstanding" if outstanding else "Documents Received"
                 db.session.commit()
-                flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {row.original_filename}", "success")
+                flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
                 return redirect(url_for("signing.sign_application", token=token))
 
             if action == "sign_document":

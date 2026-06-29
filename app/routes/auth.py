@@ -433,31 +433,44 @@ def _reassign_user_history_to_super_admin(deleted_user):
 
     # Business history is reassigned. Login/session rows are removed because
     # they belong to the deleted login, not to policy/application history.
-    try:
-        db.session.execute(text('DELETE FROM "qr_trusted_devices" WHERE user_id = :old_id'), {"old_id": old_id})
-    except Exception:
-        db.session.rollback()
-    try:
-        db.session.execute(text('DELETE FROM "qr_login_tokens" WHERE approved_user_id = :old_id'), {"old_id": old_id})
-    except Exception:
-        db.session.rollback()
+    for stmt in (
+        'DELETE FROM "qr_trusted_devices" WHERE user_id = :old_id',
+        'DELETE FROM "qr_login_tokens" WHERE approved_user_id = :old_id',
+    ):
+        try:
+            with db.session.begin_nested():
+                db.session.execute(text(stmt), {"old_id": old_id})
+        except Exception:
+            # The table may not exist on older deployments. Ignore safely.
+            pass
 
-    fk_rows = db.session.execute(text("""
-        SELECT kcu.table_name, kcu.column_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name
-         AND tc.table_schema = kcu.table_schema
-        JOIN information_schema.constraint_column_usage ccu
-          ON ccu.constraint_name = tc.constraint_name
-         AND ccu.table_schema = tc.table_schema
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND ccu.table_schema = 'public'
-          AND ccu.table_name = 'users'
-          AND ccu.column_name = 'id'
-          AND kcu.table_schema = 'public'
-        ORDER BY kcu.table_name, kcu.column_name
-    """)).fetchall()
+    try:
+        fk_rows = db.session.execute(text("""
+            SELECT kcu.table_name, kcu.column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+              ON ccu.constraint_name = tc.constraint_name
+             AND ccu.table_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND ccu.table_schema = 'public'
+              AND ccu.table_name = 'users'
+              AND ccu.column_name = 'id'
+              AND kcu.table_schema = 'public'
+            ORDER BY kcu.table_name, kcu.column_name
+        """)).fetchall()
+    except Exception:
+        # SQLite/local fallback used for tests. PostgreSQL uses the query above.
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        fk_rows = []
+        for table_name in inspector.get_table_names():
+            for fk in inspector.get_foreign_keys(table_name):
+                if fk.get("referred_table") == "users" and fk.get("referred_columns") == ["id"]:
+                    for column_name in fk.get("constrained_columns") or []:
+                        fk_rows.append(type("FKRow", (), {"table_name": table_name, "column_name": column_name})())
 
     for row in fk_rows:
         table_name = row.table_name

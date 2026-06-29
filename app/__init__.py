@@ -138,6 +138,10 @@ def create_app():
         _ensure_lapsed_policy_contact_columns(app)
     except Exception:
         pass
+    try:
+        _ensure_client_fica_document_columns(app)
+    except Exception:
+        pass
 
     @login_manager.user_loader
     def load_user(user_id):

@@ -177,3 +177,22 @@ This package makes `wjm@martinsdirect.com` the protected Super Admin. Admin can 
 ## Phase 15 - CRM Workspace Redesign
 
 This package adds a unified CRM workspace at `/workspace` so the dashboard/agent workspace no longer disappears when users move between tabs. Admin can select any branch/agent, Branch Managers are locked to their own branch, and Agents are locked to their own data. No database schema changes are required.
+
+## Upload & System Fix Package
+
+This build fixes the external client FICA upload flow for ID copy and Proof of Address from email signing links.
+
+Key fixes:
+- Uses a robust reflected insert for `client_fica_documents`, so older Render/PostgreSQL schemas with legacy columns do not block uploads.
+- Runs the FICA document schema guard on startup even when `AUTO_CREATE_TABLES` is disabled.
+- Keeps upload history and marks the newest document as active/Received.
+- Keeps Super Admin access working for QA, Reports and Settings.
+- Improves permanent user deletion by reassigning user history to the protected Super Admin before deleting the user.
+
+Tested locally:
+- App loads and registers routes.
+- Client email signing link accepts ID copy upload.
+- Client email signing link accepts Proof of Address upload.
+- Application status changes from FICA Outstanding to Documents Received after required documents are uploaded.
+- Key admin pages render after login.
+- User deletion reassigns lapsed policy history to Super Admin before permanent delete.
