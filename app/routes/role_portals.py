@@ -80,19 +80,101 @@ def branch_manager_home():
     pending_callbacks = LapsedPolicy.query.filter(LapsedPolicy.branch == branch, LapsedPolicy.recovery_status == "Callback").order_by(LapsedPolicy.next_action_date.asc()).limit(10).all() if branch else []
     return render_template("role_portals/branch_manager.html", stats=stats, branch=branch, agent_rows=agent_rows, pending_callbacks=pending_callbacks)
 
-@role_portals_bp.route("/agent")
-@login_required
-def agent_home():
+def _resolve_agent_context():
+    """Return the agent id that the current user is allowed to view."""
     if not (is_agent_user() or is_admin_user() or is_branch_manager_user()):
-        flash("Agent access required.", "danger")
-        return redirect(url_for("main.dashboard"))
+        return None, "Agent access required."
     agent_id = current_user.id if is_agent_user() else request.args.get("agent_id", type=int)
     if not agent_id:
         agent_id = current_user.id
+    agent = db.session.get(User, agent_id)
+    if not agent:
+        return None, "Selected agent was not found."
+    if is_agent_user() and agent.id != current_user.id:
+        return None, "Agents can only open their own dashboard."
+    if is_branch_manager_user() and not is_admin_user() and (agent.branch or "") != (user_branch() or ""):
+        return None, "Branch managers can only open agents in their own branch."
+    return agent, None
+
+@role_portals_bp.route("/agent")
+@login_required
+def agent_home():
+    agent, error = _resolve_agent_context()
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("main.dashboard"))
+    agent_id = agent.id
     stats = _base_stats(agent_id=agent_id)
-    callbacks = LapsedPolicy.query.filter(LapsedPolicy.assigned_agent_id == agent_id, LapsedPolicy.recovery_status == "Callback").order_by(LapsedPolicy.next_action_date.asc()).limit(10).all()
+    callbacks = LapsedPolicy.query.filter(LapsedPolicy.assigned_agent_id == agent_id, LapsedPolicy.recovery_status == "Callback").order_by(LapsedPolicy.next_action_date.asc().nullslast()).limit(10).all()
     my_apps = ClientApplication.query.filter(ClientApplication.agent_id == agent_id).order_by(ClientApplication.created_at.desc()).limit(10).all()
-    return render_template("role_portals/agent.html", stats=stats, callbacks=callbacks, my_apps=my_apps)
+    return render_template("role_portals/agent.html", stats=stats, callbacks=callbacks, my_apps=my_apps, active_agent=agent)
+
+@role_portals_bp.route("/agent/activity")
+@login_required
+def agent_activity():
+    """Clickable Agent Portal card drill-downs.
+
+    Every Agent Portal card points here with a `view` filter. Agents only see
+    their own records. Admins can pass agent_id and Branch Managers can pass
+    agent_id for agents in their own branch.
+    """
+    agent, error = _resolve_agent_context()
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("role_portals.agent_home"))
+    view = (request.args.get("view") or "leads").strip().lower()
+    today = date.today()
+    start, end = _today_bounds()
+
+    leads_q = LapsedPolicy.query.filter(LapsedPolicy.assigned_agent_id == agent.id)
+    apps_q = ClientApplication.query.filter(ClientApplication.agent_id == agent.id)
+    calls_q = RecoveryCallLog.query.filter(RecoveryCallLog.agent_id == agent.id)
+    scripts_q = TelesalesScriptSession.query.filter(TelesalesScriptSession.agent_id == agent.id)
+    docs_q = ClientFicaDocument.query.join(ClientApplication, ClientFicaDocument.application_id == ClientApplication.id).filter(ClientApplication.agent_id == agent.id)
+
+    title = "My Leads"
+    leads = []
+    applications = []
+    calls = []
+    docs = []
+    scripts = []
+
+    if view == "calls_today":
+        title = "Calls Today"
+        calls = calls_q.filter(RecoveryCallLog.created_at >= start, RecoveryCallLog.created_at <= end).order_by(RecoveryCallLog.created_at.desc()).all()
+    elif view == "sales_today":
+        title = "Sales Today"
+        applications = apps_q.filter(ClientApplication.created_at >= start, ClientApplication.created_at <= end).order_by(ClientApplication.created_at.desc()).all()
+    elif view == "callbacks_today":
+        title = "Callbacks Today"
+        leads = leads_q.filter(LapsedPolicy.recovery_status == "Callback", LapsedPolicy.next_action_date == today).order_by(LapsedPolicy.next_action_date.asc()).all()
+    elif view == "callbacks_overdue":
+        title = "Callbacks Overdue"
+        leads = leads_q.filter(LapsedPolicy.recovery_status == "Callback", LapsedPolicy.next_action_date < today).order_by(LapsedPolicy.next_action_date.asc()).all()
+    elif view == "pending_signatures":
+        title = "Pending Signatures"
+        applications = apps_q.filter(ClientApplication.signed_at.is_(None)).order_by(ClientApplication.created_at.desc()).all()
+    elif view == "fica_outstanding":
+        title = "FICA Outstanding"
+        docs = docs_q.filter(ClientFicaDocument.status.in_(["Received", "Rejected"])).order_by(ClientFicaDocument.uploaded_at.desc()).all()
+    elif view == "qa_pending":
+        title = "QA Pending"
+        scripts = scripts_q.filter(TelesalesScriptSession.status == "Completed", TelesalesScriptSession.qa_result.is_(None)).order_by(TelesalesScriptSession.completed_at.desc().nullslast()).all()
+    else:
+        view = "leads"
+        leads = leads_q.filter(LapsedPolicy.recovery_status.notin_(["Approved", "Rejected", "Closed", "Reinstated", "Suspense"])).order_by(LapsedPolicy.next_action_date.asc().nullslast(), LapsedPolicy.imported_at.desc()).all()
+
+    return render_template(
+        "role_portals/agent_activity.html",
+        active_agent=agent,
+        view=view,
+        title=title,
+        leads=leads,
+        applications=applications,
+        calls=calls,
+        docs=docs,
+        scripts=scripts,
+    )
 
 
 # PHASE 15 - unified CRM workspace
