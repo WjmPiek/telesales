@@ -1,1 +1,16 @@
-{% extends "base.html" %}{% block content %}<h1>Agent Portal</h1><p class="text-muted">Your clients, callbacks and applications only.</p><div class="d-grid gap-2 mb-3"><a class="btn btn-success btn-lg" href="{{ url_for('recovery.next_client') }}">NEXT CLIENT</a></div><div class="row g-3">{% for k,v in stats.items() %}<div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted">{{ k.replace('_',' ').title() }}</div><h2>{{ v }}</h2></div></div></div>{% endfor %}</div><hr><h3>My Callbacks</h3><table class="table table-sm"><tr><th>Date</th><th>Client</th><th>Policy</th><th>Status</th></tr>{% for p in callbacks %}<tr><td>{{p.next_action_date}}</td><td>{{p.surname}} {{p.initials}}</td><td>{{p.policy_number}}</td><td>{{p.recovery_status}}</td></tr>{% endfor %}</table><h3>My Applications</h3><table class="table table-sm"><tr><th>Ref</th><th>Client</th><th>Status</th><th>Premium</th></tr>{% for a in my_apps %}<tr><td>{{a.application_ref}}</td><td>{{a.first_names}} {{a.surname}}</td><td>{{a.status}}</td><td>{{a.monthly_premium}}</td></tr>{% endfor %}</table>{% endblock %}
+{% extends "base.html" %}{% block content %}
+<h1>Agent Portal</h1><p class="text-muted">Your clients, callbacks and applications only.</p><div class="d-grid gap-2 mb-3"><a class="btn btn-success btn-lg" href="{{ url_for('recovery.next_client') }}">NEXT CLIENT</a></div>
+{% set card_links = {
+  'leads': url_for('recovery.queue'),
+  'calls_today': url_for('recovery.queue'),
+  'sales_today': url_for('applications.list_applications'),
+  'callbacks_today': url_for('recovery.callbacks'),
+  'callbacks_overdue': url_for('recovery.callbacks'),
+  'pending_signatures': url_for('applications.list_applications'),
+  'fica_outstanding': url_for('applications.list_applications'),
+  'qa_pending': url_for('applications.list_applications')
+} %}
+<div class="row g-3">{% for k,v in stats.items() %}<div class="col-md-3"><a class="text-decoration-none text-reset" href="{{ card_links.get(k, '#') }}"><div class="card action-card h-100"><div class="card-body"><div class="text-muted">{{ k.replace('_',' ').title() }}</div><h2>{{ v }}</h2><small class="text-primary">Open</small></div></div></a></div>{% endfor %}</div>
+<hr><h3>My Callbacks</h3><div class="table-responsive"><table class="table table-sm responsive-table"><tr><th>Date</th><th>Client</th><th>Policy</th><th>Status</th></tr>{% for p in callbacks %}<tr><td data-label="Date">{{p.next_action_date}}</td><td data-label="Client">{{p.surname}} {{p.initials}}</td><td data-label="Policy">{{p.policy_number}}</td><td data-label="Status">{{p.recovery_status}}</td></tr>{% endfor %}</table></div>
+<h3>My Applications</h3><div class="table-responsive"><table class="table table-sm responsive-table"><tr><th>Ref</th><th>Client</th><th>Status</th><th>Premium</th></tr>{% for a in my_apps %}<tr><td data-label="Ref"><a href="{{ url_for('applications.view_application', app_id=a.id) }}">{{a.application_ref}}</a></td><td data-label="Client">{{a.first_names}} {{a.surname}}</td><td data-label="Status">{{a.status}}</td><td data-label="Premium">{{a.monthly_premium}}</td></tr>{% endfor %}</table></div>
+{% endblock %}

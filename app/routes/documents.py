@@ -21,7 +21,7 @@ def _role_name():
 
 
 def _can_manage_documents():
-    return _role_name() in {"admin", "manager", "branch manager", "compliance", "qa"}
+    return _role_name() in {"admin", "super admin", "super_admin", "manager", "branch manager", "branch_manager", "compliance", "qa"}
 
 
 def _client_name(app):

@@ -53,18 +53,20 @@
         <a class="workspace-nav" href="{{ url_for('recovery.queue', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Queue</a>
         <a class="workspace-nav" href="{{ url_for('recovery.callbacks', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Callbacks</a>
         <a class="workspace-nav" href="{{ url_for('applications.list_applications', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Applications</a>
+        <a class="workspace-nav" href="{{ url_for('documents.document_dashboard', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Documents</a>
+        {% if is_admin %}<a class="workspace-nav" href="{{ url_for('policies.list_products') }}">Policy Data</a><a class="workspace-nav" href="{{ url_for('policies.import_policies') }}">Import Policies</a>{% endif %}
         {% if is_admin or is_manager %}<a class="workspace-nav" href="{{ url_for('auth.users_manage') }}">Manage Users</a>{% endif %}
       </div>
     </aside>
 
     <section class="workspace-main">
       <div id="overview" class="stat-grid mb-3">
-        <div class="stat-card"><div>Clients</div><strong>{{ branch_summary.clients }}</strong></div>
-        <div class="stat-card"><div>Calls Today</div><strong>{{ stats.calls_today }}</strong></div>
-        <div class="stat-card"><div>Sales Today</div><strong>{{ stats.sales_today }}</strong></div>
-        <div class="stat-card"><div>Callbacks</div><strong>{{ branch_summary.callbacks }}</strong></div>
-        <div class="stat-card"><div>Pending Signatures</div><strong>{{ stats.pending_signatures }}</strong></div>
-        <div class="stat-card"><div>QA Pending</div><strong>{{ branch_summary.qa_pending }}</strong></div>
+        <a class="text-decoration-none text-reset" href="{{ url_for('recovery.queue', branch=ctx_branch, agent_id=ctx_agent_id) }}"><div class="stat-card action-card"><div>Clients</div><strong>{{ branch_summary.clients }}</strong></div></a>
+        <a class="text-decoration-none text-reset" href="{{ url_for('reports.index', branch=ctx_branch) }}"><div class="stat-card action-card"><div>Calls Today</div><strong>{{ stats.calls_today }}</strong></div></a>
+        <a class="text-decoration-none text-reset" href="{{ url_for('applications.list_applications', branch=ctx_branch, agent_id=ctx_agent_id) }}"><div class="stat-card action-card"><div>Sales Today</div><strong>{{ stats.sales_today }}</strong></div></a>
+        <a class="text-decoration-none text-reset" href="{{ url_for('recovery.callbacks', branch=ctx_branch, agent_id=ctx_agent_id) }}"><div class="stat-card action-card"><div>Callbacks</div><strong>{{ branch_summary.callbacks }}</strong></div></a>
+        <a class="text-decoration-none text-reset" href="{{ url_for('applications.list_applications', branch=ctx_branch, agent_id=ctx_agent_id) }}"><div class="stat-card action-card"><div>Pending Signatures</div><strong>{{ stats.pending_signatures }}</strong></div></a>
+        <a class="text-decoration-none text-reset" href="{{ url_for('qa.qa_dashboard', branch=ctx_branch) }}"><div class="stat-card action-card"><div>QA Pending</div><strong>{{ branch_summary.qa_pending }}</strong></div></a>
       </div>
 
       <div class="card shadow-sm mb-3">
@@ -139,7 +141,7 @@
         {% for app in selected_client_apps %}<div class="timeline-item"><b>{{ app.application_ref }}</b><br><small>{{ app.status }} - {{ app.created_at.date() if app.created_at else '' }}</small></div>{% else %}<p class="text-muted small">No applications.</p>{% endfor %}
         <div class="d-grid gap-2 mt-3">
           <a class="btn btn-primary" href="{{ url_for('recovery.log_call', policy_id=selected_client.id) }}">Log Call</a>
-          <a class="btn btn-outline-primary" href="{{ url_for('recovery.timeline', policy_id=selected_client.id) }}">Full Timeline</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('recovery.client_timeline', policy_id=selected_client.id) }}">Full Timeline</a>
         </div>
       </div>
     </aside>

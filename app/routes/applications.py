@@ -27,7 +27,7 @@ def _role_name():
 
 
 def _is_admin():
-    return _role_name() == "admin"
+    return _role_name() in {"admin", "super admin", "super_admin"}
 
 
 @applications_bp.route("/")

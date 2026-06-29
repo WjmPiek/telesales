@@ -413,11 +413,13 @@ def _ensure_super_admin_account():
     return user
 
 def _reassign_user_history_to_super_admin(deleted_user):
-    """Before permanent delete, move every FK that points to users.id to Super Admin.
+    """Move every reference to the user to the protected Super Admin.
 
-    This uses PostgreSQL metadata instead of a hard-coded model list, so deletes do not fail
-    when a new table later adds a users.id foreign key, for example
-    lapsed_policies.assigned_agent_id.
+    This is used before a permanent delete so PostgreSQL foreign keys do not
+    block deletion. It updates FK references in all public tables that point to
+    users(id). Pure login/device rows may be deleted when they are not business
+    history; business rows are reassigned to Super Admin so the audit trail and
+    reports remain available.
     """
     from sqlalchemy import text
 
@@ -427,10 +429,14 @@ def _reassign_user_history_to_super_admin(deleted_user):
     if deleted_user.id == super_user.id:
         raise ValueError("Super Admin cannot be deleted.")
 
-    # Flush pending changes first, then update every FK column in the public schema that
-    # references users(id). This preserves history by moving ownership/agent/reviewer
-    # references to the protected Super Admin before the user row is deleted.
-    db.session.flush()
+    old_id = int(deleted_user.id)
+    super_id = int(super_user.id)
+
+    # Remove security/session records tied to the deleted login. These are not
+    # client/policy history and can otherwise cause duplicate/security issues.
+    for table in ("qr_trusted_devices",):
+        db.session.execute(text(f'DELETE FROM "{table}" WHERE user_id = :old_id'), {"old_id": old_id})
+
     fk_rows = db.session.execute(text("""
         SELECT
             kcu.table_schema,
@@ -454,17 +460,27 @@ def _reassign_user_history_to_super_admin(deleted_user):
     for row in fk_rows:
         table_name = row.table_name
         column_name = row.column_name
-        if table_name == "users":
+        if table_name in {"users", "qr_trusted_devices"}:
             continue
-        # Table/column names come from PostgreSQL metadata. Quote identifiers safely.
         quoted_table = '"' + table_name.replace('"', '""') + '"'
         quoted_column = '"' + column_name.replace('"', '""') + '"'
-        db.session.execute(
-            text(f"UPDATE {quoted_table} SET {quoted_column} = :super_id WHERE {quoted_column} = :old_id"),
-            {"super_id": super_user.id, "old_id": deleted_user.id},
-        )
+        # Association tables such as user_roles may have uniqueness rules.
+        # Use a savepoint so a failed UPDATE does not undo previous FK moves.
+        try:
+            with db.session.begin_nested():
+                db.session.execute(
+                    text(f"UPDATE {quoted_table} SET {quoted_column} = :super_id WHERE {quoted_column} = :old_id"),
+                    {"super_id": super_id, "old_id": old_id},
+                )
+        except Exception:
+            db.session.execute(text(f"DELETE FROM {quoted_table} WHERE {quoted_column} = :old_id"), {"old_id": old_id})
 
     return super_user
+
+def _delete_user_row_permanently(user_id):
+    from sqlalchemy import text
+    result = db.session.execute(text('DELETE FROM users WHERE id = :old_id'), {"old_id": int(user_id)})
+    return result.rowcount
 
 @auth_bp.route("/users/<int:user_id>/delete", methods=["POST"])
 @login_required
@@ -487,8 +503,12 @@ def users_delete(user_id):
     role = user.role.name if user.role else "User"
     branch = user.branch
     try:
+        old_id = user.id
         super_user = _reassign_user_history_to_super_admin(user)
-        db.session.delete(user)
+        # Expunge the ORM object and perform a direct SQL delete. This avoids
+        # SQLAlchemy relationship cascades trying to delete before FK reassignment.
+        db.session.expunge(user)
+        _delete_user_row_permanently(old_id)
         db.session.commit()
         _audit(current_user.id, "USER_PERMANENTLY_DELETED", f"Permanently deleted {role} {email}; branch={branch}; history reassigned to Super Admin {super_user.email}")
         flash("User permanently deleted. All linked history was moved under Super Admin.", "info")

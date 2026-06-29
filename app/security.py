@@ -7,7 +7,30 @@ def permission_required(code):
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            if not current_user.is_authenticated or not current_user.has_permission(code):
+            if not current_user.is_authenticated:
+                abort(403)
+
+            # Role safety net: Admin/Super Admin must never be locked out of
+            # operational screens just because seed permissions are missing.
+            if is_admin_user(current_user):
+                return fn(*args, **kwargs)
+
+            role = normalized_role_name(current_user)
+            manager_allowed = {
+                "recovery.view", "applications.view", "documents.view",
+                "reports.view", "qa.view", "allocation.view", "targets.view",
+                "analytics.view", "policies.view",
+            }
+            agent_allowed = {
+                "recovery.view", "recovery.call", "applications.view",
+                "applications.create", "policies.view",
+            }
+            if role in {"branch manager", "branchmanager", "manager", "supervisor"} and code in manager_allowed:
+                return fn(*args, **kwargs)
+            if role in {"agent", "user", "staff", "sales agent"} and code in agent_allowed:
+                return fn(*args, **kwargs)
+
+            if not current_user.has_permission(code):
                 abort(403)
             return fn(*args, **kwargs)
         return wrapper
