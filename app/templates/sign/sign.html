@@ -80,11 +80,11 @@
               <b>{{fica_labels.get(key, key)}}</b>
               {% if key in received_docs %}<span class="badge text-bg-success">Received</span>{% else %}<span class="badge text-bg-warning">Outstanding</span>{% endif %}
             </div>
-            <div class="small text-muted mb-3">Accepted: PDF, JPG, PNG, WEBP</div>
+            <div class="small text-muted mb-3">Accepted: PDF, JPG, PNG, WEBP. Files are checked and then sent to staff for approval.</div>
             <form method="post" action="{{url_for('signing.upload_fica_document', token=token)}}" enctype="multipart/form-data">
               <input type="hidden" name="action" value="upload_fica">
               <input type="hidden" name="document_type" value="{{key}}">
-              <input class="form-control form-control-sm" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp" required>
+              <input class="form-control form-control-sm" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,image/*,application/pdf" required>
               <button class="btn btn-sm btn-outline-primary mt-2 w-100">Upload / Replace</button>
             </form>
           </div>
@@ -99,7 +99,7 @@
           <thead><tr><th>Document</th><th>File</th><th>Status</th><th></th></tr></thead>
           <tbody>
           {% for d in fica_docs %}
-          <tr><td>{{fica_labels.get(d.document_type, d.document_type)}}</td><td>{{d.original_filename}}</td><td><span class="badge text-bg-success">{{d.status}}</span></td><td><a target="_blank" href="{{url_for('signing.download_fica_upload', token=token, doc_id=d.id)}}">View</a></td></tr>
+          <tr><td>{{fica_labels.get(d.document_type, d.document_type)}}</td><td>{{d.original_filename}}</td><td><span class="badge text-bg-{% if d.status in ['Reviewed', 'Approved'] %}success{% elif d.status == 'Rejected' %}danger{% else %}warning{% endif %}">{{d.status}}</span></td><td><a target="_blank" href="{{url_for('signing.download_fica_upload', token=token, doc_id=d.id)}}">View</a></td></tr>
           {% endfor %}
           </tbody>
         </table>

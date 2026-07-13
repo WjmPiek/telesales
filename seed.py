@@ -1,3 +1,6 @@
+import os
+import secrets
+
 from app import create_app, db
 from app.models import Role, Permission, User, PolicyProduct
 
@@ -39,12 +42,21 @@ with app.app_context():
     db.session.commit()
 
     admin_role = Role.query.filter_by(name="Admin").first()
-    if not User.query.filter_by(email="wjm@martinsdirect.com").first():
-        u = User(name="Default Admin", email="wjm@martinsdirect.com", role=admin_role, branch="Head Office")
-        u.set_password("Renette7")
+    seed_admin_email = os.getenv("SEED_ADMIN_EMAIL", "wjm@martinsdirect.com").strip().lower()
+    seed_admin_password = os.getenv("SEED_ADMIN_PASSWORD") or secrets.token_urlsafe(18)
+    created_admin = False
+    if not User.query.filter(db.func.lower(User.email) == seed_admin_email).first():
+        u = User(name="Default Admin", email=seed_admin_email, role=admin_role, branch="Head Office")
+        u.set_password(seed_admin_password)
         db.session.add(u)
+        created_admin = True
 
     if not PolicyProduct.query.first():
         db.session.add(PolicyProduct(product_name="Funeral Cover", plan_name="Starter Plan", cover_amount=10000, monthly_premium=100, waiting_period_months=6, min_age=18, max_age=100))
     db.session.commit()
-    print("Seed complete. Login: wjm@martinsdirect.com / Renette7")
+    if created_admin:
+        print(f"Seed complete. Admin created: {seed_admin_email}")
+        print(f"Temporary password: {seed_admin_password}")
+        print("Change this password immediately after first login.")
+    else:
+        print("Seed complete. Admin user already exists; password was not changed.")

@@ -5,7 +5,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from itsdangerous import URLSafeTimedSerializer
 from app import db
-from app.models import ClientApplication, PolicyProduct, PolicyProductRule, ApplicationSignature, ClientFicaDocument, DocumentSignature, TelesalesScriptSession
+from app.models import ClientApplication, PolicyProduct, LapsedPolicy, PolicyProductRule, ApplicationSignature, ClientFicaDocument, DocumentSignature, TelesalesScriptSession
 from app.security import permission_required
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message
@@ -194,6 +194,7 @@ def new_application():
             joining_fee=(prod.rules.joining_fee if prod and getattr(prod, "rules", None) else 0),
             joining_fee_waived=False,
             application_type="New Policy",
+            lapsed_policy_id=(int(val("lapsed_policy_id")) if val("lapsed_policy_id").isdigit() else None),
             form_template=form_template,
         )
         try:
@@ -206,7 +207,11 @@ def new_application():
             return render_template("applications/form.html", products=products, google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
         flash("Application created", "success")
         return redirect(url_for("applications.view_application", app_id=a.id))
-    return render_template("applications/form.html", products=products, google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
+    lead = None
+    lead_id = request.args.get("lapsed_policy_id", type=int)
+    if lead_id:
+        lead = LapsedPolicy.query.get(lead_id)
+    return render_template("applications/form.html", products=products, lead=lead, google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
 
 
 @applications_bp.route("/<int:app_id>")

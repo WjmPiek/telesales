@@ -27,7 +27,7 @@
   <div class="card-header"><b>Document Status Panel</b></div>
   <div class="card-body table-responsive">
     <table class="table table-sm align-middle">
-      <thead><tr><th>Group</th><th>Document</th><th>Status</th><th>Date</th><th>File</th></tr></thead>
+      <thead><tr><th>Group</th><th>Document</th><th>Status</th><th>Date</th><th>File</th><th>Review Action</th></tr></thead>
       <tbody>
       {% for row in summary.rows %}
         <tr>
@@ -43,6 +43,21 @@
               {% if row.key == 'popia' and app.popia_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='popia')}}">View PDF</a>{% endif %}
               {% if row.key == 'disclosure' and app.disclosure_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='disclosure')}}">View PDF</a>{% endif %}
               {% if row.key == 'welcome' and app.welcome_pack_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='welcome_pack')}}">View PDF</a>{% endif %}
+            {% endif %}
+          </td>
+          <td>
+            {% if row.group == 'FICA' and row.document and row.status in ['Needs Review', 'Rejected'] %}
+              <div class="d-flex gap-1 flex-wrap align-items-start">
+                <form method="post" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='approve')}}">
+                  <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Approve this FICA document?')">Accept</button>
+                </form>
+                <form method="post" class="d-flex gap-1" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='reject')}}">
+                  <input class="form-control form-control-sm" name="reason" placeholder="Reason for rejection" style="min-width: 190px;">
+                  <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Reject this FICA document and email the client to resend it?')">Decline</button>
+                </form>
+              </div>
+            {% elif row.group == 'FICA' and row.document and row.status == 'Approved' %}
+              <span class="text-success">Accepted</span>
             {% endif %}
           </td>
         </tr>
@@ -64,7 +79,7 @@
       <div class="col-md-5"><input class="form-control" type="file" name="file" required></div>
       <div class="col-md-3"><button class="btn btn-primary w-100">Upload</button></div>
     </form>
-    <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP.</div>
+    <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP. Uploads are marked Needs Review until staff approves them. Images and scanned PDFs need manual verification unless OCR is configured.</div>
   </div>
 </div>
 {% endblock %}

@@ -20,12 +20,9 @@ python seed.py
 python run.py
 ```
 
-Default login:
+First production admin user:
 
-```text
-wjm@martinsdirect.com
-Renette7
-```
+Run `python seed.py` once. You can set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`; otherwise a temporary password is printed. Change the seeded password immediately in production. Do not commit real passwords to GitHub or documentation.
 
 ## Render deployment
 
@@ -196,3 +193,73 @@ Tested locally:
 - Application status changes from FICA Outstanding to Documents Received after required documents are uploaded.
 - Key admin pages render after login.
 - User deletion reassigns lapsed policy history to Super Admin before permanent delete.
+
+
+## Production safety defaults added
+
+This cleaned package removes bundled Git history, Python bytecode caches and sample upload files from the distributable zip.
+
+Recommended Render environment variables:
+
+```text
+AUTO_CREATE_TABLES=0      # after migrations are in place
+UPLOAD_FOLDER=/var/data/uploads  # only if you add a Render persistent disk
+```
+
+For long-term document storage, use Google Drive, S3, Supabase Storage or another persistent storage provider instead of Render's normal application filesystem.
+
+Daily workflow priority:
+
+1. Workspace
+2. Next Client
+3. My Clients / Import Leads
+4. Callbacks
+5. Applications
+6. Documents
+7. QA / Reports / Wallboard / Targets
+8. Admin, Security and Settings
+
+## 2026 CRM Production Improvements Added
+
+This package includes the first production-ready CRM improvements:
+
+- Lead Pipeline Kanban board at `/recovery/pipeline`.
+- Drag-and-drop lead status updates with audit logging.
+- Dark mode toggle saved in the browser.
+- Mobile-friendly pipeline and existing responsive tables.
+- Login brute-force protection for repeated failed attempts.
+- Health check endpoint at `/healthz` for Render monitoring.
+- PostgreSQL backup helper: `scripts/backup_postgres.ps1`.
+- Migration helper: `scripts/create_migration.ps1`.
+- Safer Git flow: deploy/test from `develop`, merge to `main` only after approval.
+
+### Render Deployment Notes
+
+Current safe start command:
+
+```bash
+gunicorn run:app
+```
+
+Pre-deploy command should remain blank until a `migrations/` folder has been created and tested. After migrations are created, set Render Pre-Deploy Command to:
+
+```bash
+flask db upgrade
+```
+
+### Recommended Render Environment Variables
+
+```bash
+FLASK_ENV=production
+SECRET_KEY=<long random value>
+DATABASE_URL=<Render PostgreSQL internal connection string>
+BASE_URL=https://your-render-service.onrender.com
+UPLOAD_FOLDER=/var/data/uploads
+AUTO_CREATE_TABLES=1
+```
+
+After a proper migration workflow is confirmed, change:
+
+```bash
+AUTO_CREATE_TABLES=0
+```

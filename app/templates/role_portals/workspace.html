@@ -16,6 +16,12 @@
             {% if selected_client %}<span>›</span><span>{{ selected_client.surname or selected_client.policy_number }}</span>{% endif %}
           </div>
         </div>
+        <div class="d-flex flex-wrap gap-2 align-self-center">
+          <a class="btn btn-success btn-lg" href="{{ url_for('recovery.next_client') }}">Next Client</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('recovery.callbacks', branch=ctx_branch, agent_id=ctx_agent_id) }}">Callbacks</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('applications.list_applications', branch=ctx_branch, agent_id=ctx_agent_id) }}">Applications</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('documents.document_dashboard', branch=ctx_branch, agent_id=ctx_agent_id) }}">Documents</a>
+        </div>
         <form class="crm-context-form" method="get" action="{{ url_for('role_portals.workspace') }}">
           {% if is_admin %}
           <label class="form-label small mb-1">Branch</label>

@@ -7,6 +7,7 @@ from werkzeug.utils import secure_filename
 from app import db
 from app.models import ClientApplication, ClientFicaDocument, AuditLog
 from app.services.document_status_service import document_summary, FICA_LABELS
+from app.services.fica_validation_service import validate_fica_upload
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message
 from app.services.branch_access import scope_by_branch, ensure_branch_access, selected_branch_arg, branch_choices_from_model
@@ -26,6 +27,39 @@ def _can_manage_documents():
 
 def _client_name(app):
     return " ".join([x for x in [app.first_names, app.surname] if x]) or app.application_ref
+
+
+def _ensure_active_signing_link(app):
+    """Create or reopen a secure signing link so the client can re-upload rejected FICA."""
+    if not app.sign_token or app.sign_token_revoked or app.sign_token_used_at:
+        app.sign_token = secrets.token_urlsafe(32)
+    app.sign_token_created_at = datetime.utcnow()
+    app.sign_token_used_at = None
+    app.sign_token_revoked = False
+    return app.sign_token
+
+
+def _send_rejected_document_email(app, rejected_labels, reason=None):
+    if not app.email:
+        return False, "Application has no client email address."
+
+    token = _ensure_active_signing_link(app)
+    base_url = current_app.config.get("BASE_URL") or request.url_root.rstrip("/")
+    link = f"{base_url}{url_for('signing.sign_application', token=token)}"
+    doc_lines = "\n".join(f"- {label}" for label in rejected_labels)
+    reason_text = f"\n\nReason: {reason}" if reason else ""
+    body = (
+        f"Dear {_client_name(app)},\n\n"
+        "Martin's Funerals reviewed the document(s) you uploaded for your application and could not accept the following document(s):\n"
+        f"{doc_lines}"
+        f"{reason_text}\n\n"
+        "Please upload the correct replacement document(s) using this secure link:\n"
+        f"{link}\n\n"
+        "Only the document(s) listed above need to be resent.\n\n"
+        "Thank you.\nMartin's Funerals"
+    )
+    sent = send_email(app.email, "Martin's Funerals document rejected - please resend", body, [])
+    return sent, None
 
 
 def _upload_folder():
@@ -108,11 +142,12 @@ def application_documents(app_id):
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, f"{doc_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe}")
         uploaded_file.save(path)
-        doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status="Received", uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
+        validation_status, validation_notes = validate_fica_upload(path, safe, doc_type, app)
+        doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status=validation_status, uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
         db.session.add(doc)
-        db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{FICA_LABELS.get(doc_type, doc_type)} uploaded by staff: {safe}"))
+        db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{FICA_LABELS.get(doc_type, doc_type)} uploaded by staff: {safe}; Status: {validation_status}; {validation_notes}"))
         db.session.commit()
-        flash("Document uploaded and marked as received.", "success")
+        flash(f"Document uploaded. Status: {validation_status}. {validation_notes}", "warning" if validation_status == "Needs Review" else "danger")
         return redirect(url_for("documents.application_documents", app_id=app.id))
     return render_template("documents/application.html", app=app, summary=document_summary(app), fica_labels=FICA_LABELS)
 
@@ -128,6 +163,60 @@ def download_fica(doc_id):
     if not path:
         abort(404)
     return send_file(path, as_attachment=False)
+
+
+@documents_bp.route("/fica/<int:doc_id>/<action>", methods=["POST"])
+@login_required
+def review_fica(doc_id, action):
+    if not _can_manage_documents():
+        abort(403)
+    doc = ClientFicaDocument.query.get_or_404(doc_id)
+    ensure_branch_access(doc.application, agent_attr="agent_id")
+    if action not in {"approve", "reject"}:
+        abort(404)
+    old_status = doc.status
+    reason = request.form.get("reason", "").strip()
+    label = FICA_LABELS.get(doc.document_type, doc.document_type)
+
+    if action == "approve":
+        doc.status = "Reviewed"
+        audit_details = f"{label} changed from {old_status} to {doc.status}. {reason}"
+        db.session.add(AuditLog(
+            user_id=current_user.id,
+            action="FICA Reviewed",
+            entity_type="ClientFicaDocument",
+            entity_id=str(doc.id),
+            details=audit_details
+        ))
+        db.session.commit()
+        flash(f"{label} marked as approved.", "success")
+        return redirect(url_for("documents.application_documents", app_id=doc.application_id))
+
+    doc.status = "Rejected"
+    doc.application.status = "FICA Outstanding"
+    sent, mail_error = _send_rejected_document_email(doc.application, [label], reason)
+    audit_details = f"{label} changed from {old_status} to {doc.status}. {reason}"
+    if sent:
+        audit_details += " Rejection email sent to client."
+    elif mail_error:
+        audit_details += f" Rejection email not sent: {mail_error}"
+    else:
+        audit_details += " Rejection email delivery failed. Check provider settings/logs."
+
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action="FICA Rejected",
+        entity_type="ClientFicaDocument",
+        entity_id=str(doc.id),
+        details=audit_details
+    ))
+    db.session.commit()
+
+    if sent:
+        flash(f"{label} rejected. A resend email was sent to the client.", "warning")
+    else:
+        flash(f"{label} rejected, but the email was not sent. {mail_error or 'Check SMTP/provider settings.'}", "danger")
+    return redirect(url_for("documents.application_documents", app_id=doc.application_id))
 
 
 @documents_bp.route("/application/<int:app_id>/resend-missing/<channel>", methods=["POST"])

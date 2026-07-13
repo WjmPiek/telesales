@@ -3,11 +3,11 @@ import secrets
 import json
 import os
 import re
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, send_file, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, send_file, abort, jsonify
 from flask_login import login_required, current_user
 from openpyxl import load_workbook
 from app import db
-from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument
+from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument, AuditLog
 from app.security import permission_required
 from app.services.pdf_service import generate_telesales_script_pdf, generate_application_pdf, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.email_service import send_email
@@ -179,6 +179,50 @@ def queue():
         active_status=status,
         today=date.today(),
     )
+
+
+
+
+@recovery_bp.route("/pipeline")
+@login_required
+@permission_required("recovery.view")
+def pipeline():
+    """Kanban-style lead pipeline for daily telesales follow-up."""
+    columns = [
+        "Imported", "No Answer", "Callback", "Interested",
+        "Application Started", "Signature Sent", "FICA Outstanding",
+        "QA Review", "Approved", "Rejected"
+    ]
+    cards = {}
+    base = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
+    for status in columns:
+        cards[status] = (
+            base.filter(LapsedPolicy.recovery_status == status)
+            .order_by(LapsedPolicy.next_action_date.asc().nullslast(), LapsedPolicy.imported_at.asc())
+            .limit(40)
+            .all()
+        )
+    return render_template("recovery/pipeline.html", columns=columns, cards=cards, today=date.today())
+
+
+@recovery_bp.route("/<int:policy_id>/status", methods=["POST"])
+@login_required
+@permission_required("recovery.call")
+def update_status(policy_id):
+    """Update a lead status from the Kanban board without opening the full call screen."""
+    p = LapsedPolicy.query.get_or_404(policy_id)
+    ensure_branch_access(p, agent_attr="assigned_agent_id")
+    new_status = (request.form.get("status") or "").strip()
+    allowed = set(LEAD_OPEN_STATUSES + LEAD_CLOSED_STATUSES + [SUSPENSE_STATUS])
+    if new_status not in allowed:
+        return jsonify({"ok": False, "error": "Invalid status"}), 400
+    old_status = p.recovery_status
+    p.recovery_status = new_status
+    if new_status == "Callback" and not p.next_action_date:
+        p.next_action_date = date.today()
+    db.session.add(AuditLog(user_id=current_user.id, action="LEAD_STATUS_CHANGED", entity_type="LapsedPolicy", entity_id=str(p.id), details=f"{old_status} -> {new_status}"))
+    db.session.commit()
+    return jsonify({"ok": True, "status": new_status})
 
 
 @recovery_bp.route("/next")

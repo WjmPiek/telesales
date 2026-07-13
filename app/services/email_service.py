@@ -3,7 +3,7 @@ import smtplib
 from email.message import EmailMessage
 
 
-def send_email(to_email, subject, body, attachments=None):
+def send_email(to_email, subject, body, attachments=None, html_body=None):
     user = os.getenv("GMAIL_SMTP_USER")
     password = os.getenv("GMAIL_SMTP_PASSWORD")
     mail_from = os.getenv("MAIL_FROM", user or "no-reply@example.com")
@@ -17,6 +17,8 @@ def send_email(to_email, subject, body, attachments=None):
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.set_content(body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
 
     for path in attachments or []:
         if not path or not os.path.exists(path):

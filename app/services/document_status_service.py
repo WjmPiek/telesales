@@ -65,12 +65,12 @@ def document_summary(application):
         latest = docs[0] if docs else None
         if not latest:
             status, badge = "Missing", "danger"
-        elif latest.status == "Reviewed":
+        elif latest.status in {"Reviewed", "Approved"}:
             status, badge = "Approved", "success"
         elif latest.status == "Rejected":
             status, badge = "Rejected", "danger"
         else:
-            status, badge = "Received - review needed", "warning"
+            status, badge = "Needs Review", "warning"
         rows.append({
             "group": "FICA",
             "key": key,
@@ -101,7 +101,7 @@ def document_summary(application):
         })
 
     missing = [row for row in rows if row["required"] and row["status"] in {"Missing", "Rejected"}]
-    pending_review = [row for row in rows if row["status"] == "Received - review needed"]
+    pending_review = [row for row in rows if row["status"] == "Needs Review"]
     complete = not missing and not pending_review
     return {
         "rows": rows,

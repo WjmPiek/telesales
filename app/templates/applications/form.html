@@ -2,6 +2,7 @@
 <h3>New Client Application</h3>
 
 <form method="post" class="row g-2">
+  {% if lead %}<input type="hidden" name="lapsed_policy_id" value="{{ lead.id }}"><div class="alert alert-info">Application started from callback lead {{ lead.policy_number or lead.id }}.</div>{% endif %}
   <h5>Policy / Agent</h5>
   <div class="col-md-5"><label>Product</label><select class="form-control" name="product_id" id="product_id" onchange="policyChanged()">
       {% for p in products %}
@@ -15,24 +16,24 @@
       </option>
       {% endfor %}
     </select></div>
-  <div class="col-md-3"><label>Policy No.</label><input class="form-control" name="policy_number"></div>
+  <div class="col-md-3"><label>Policy No.</label><input class="form-control" name="policy_number" value="{{ lead.policy_number if lead else '' }}"></div>
   <div class="col-md-2"><label>Agent Name</label><input class="form-control" name="agent_name" value="{{ current_user.name }}"></div>
   <div class="col-md-2"><label>Agent Code</label><input class="form-control" name="agent_code"></div>
 
   <h5 class="mt-3">Principal Member / Policyholder</h5>
   <div class="col-md-2"><label>Title</label><input class="form-control" name="title"></div>
-  <div class="col-md-5"><label>First Names</label><input class="form-control" name="first_names"></div>
-  <div class="col-md-5"><label>Surname</label><input class="form-control" name="surname"></div>
-  <div class="col-md-3"><label>ID Number</label><input class="form-control" name="id_number" id="id_number" maxlength="13" oninput="validateSaIdField(this); fillDobFromId('id_number','date_of_birth')"></div>
+  <div class="col-md-5"><label>First Names</label><input class="form-control" name="first_names" value="{{ lead.initials if lead else '' }}"></div>
+  <div class="col-md-5"><label>Surname</label><input class="form-control" name="surname" value="{{ lead.surname if lead else '' }}"></div>
+  <div class="col-md-3"><label>ID Number</label><input class="form-control" name="id_number" id="id_number" value="{{ lead.id_number if lead else '' }}" maxlength="13" oninput="validateSaIdField(this); fillDobFromId('id_number','date_of_birth')"></div>
   <div class="col-md-3"><label>Date of Birth</label><input class="form-control" name="date_of_birth" id="date_of_birth" placeholder="DD/MM/YYYY" oninput="formatDateInput(this)"></div>
-  <div class="col-md-3"><label>Cell Number</label><input class="form-control" name="cell_number"></div>
+  <div class="col-md-3"><label>Cell Number</label><input class="form-control" name="cell_number" value="{{ lead.cell_number if lead else '' }}"></div>
   <div class="col-md-3"><label>Retail Premium</label><input class="form-control" id="display_premium" readonly></div>
   <div class="col-md-3"><label>Cover Amount</label><input class="form-control" id="display_cover" readonly></div>
-  <div class="col-md-3"><label>Email</label><input class="form-control" name="email" type="email"></div>
-  <div class="col-md-4"><label>Home Tel</label><input class="form-control" name="home_tel"></div>
+  <div class="col-md-3"><label>Email</label><input class="form-control" name="email" type="email" value="{{ lead.email_address if lead else '' }}"></div>
+  <div class="col-md-4"><label>Home Tel</label><input class="form-control" name="home_tel" value="{{ lead.home_tel if lead else '' }}"></div>
   <div class="col-md-4"><label>Work Tel</label><input class="form-control" name="work_tel"></div>
   <div class="col-md-4" id="plan_choice_block" style="display:none;"><label>Plan Choice (Member + Product)</label><input class="form-control" name="plan_choice" id="plan_choice" readonly></div>
-  <div class="col-md-6"><label>Residential Address</label><textarea class="form-control" id="residential_address" name="residential_address"></textarea><input type="hidden" name="address_place_id" id="address_place_id"><input type="hidden" name="address_lat" id="address_lat"><input type="hidden" name="address_lng" id="address_lng"></div>
+  <div class="col-md-6"><label>Residential Address</label><textarea class="form-control" id="residential_address" name="residential_address">{{ lead.address if lead else '' }}</textarea><input type="hidden" name="address_place_id" id="address_place_id"><input type="hidden" name="address_lat" id="address_lat"><input type="hidden" name="address_lng" id="address_lng"></div>
   <div class="col-md-2"><label>Residential Postal Code</label><input class="form-control" name="residential_postal_code" id="residential_postal_code"></div><div class="col-12"><div id="map" style="height:280px;border:1px solid #ccc;"></div></div>
   <div class="col-md-6"><label>Postal Address</label><textarea class="form-control" name="postal_address"></textarea></div>
   <div class="col-md-2"><label>Postal Code</label><input class="form-control" name="postal_code"></div>

@@ -18,6 +18,9 @@ TRUSTED_DEVICE_DAYS = 180
 TRUSTED_DEVICE_COOKIE = "mf_qr_trusted_device"
 SUPER_ADMIN_EMAIL = "wjm@martinsdirect.com"
 ALLOWED_QR_ROLES = {"super admin", "super_admin", "admin", "branch manager", "branch_manager", "manager", "supervisor", "agent", "user", "staff"}
+LOGIN_ATTEMPTS = {}
+MAX_LOGIN_ATTEMPTS = 8
+LOGIN_WINDOW_SECONDS = 15 * 60
 
 
 def _client_ip():
@@ -29,6 +32,27 @@ def _client_ip():
 
 def _user_agent():
     return (request.headers.get("User-Agent") or "")[:500]
+
+
+def _login_key():
+    return (_client_ip() or "unknown") + ":" + (request.form.get("email", "").lower().strip() or "unknown")
+
+
+def _login_blocked():
+    now = datetime.utcnow()
+    key = _login_key()
+    attempts = [t for t in LOGIN_ATTEMPTS.get(key, []) if (now - t).total_seconds() < LOGIN_WINDOW_SECONDS]
+    LOGIN_ATTEMPTS[key] = attempts
+    return len(attempts) >= MAX_LOGIN_ATTEMPTS
+
+
+def _record_bad_login():
+    key = _login_key()
+    LOGIN_ATTEMPTS.setdefault(key, []).append(datetime.utcnow())
+
+
+def _clear_bad_logins():
+    LOGIN_ATTEMPTS.pop(_login_key(), None)
 
 
 def _hash_token(token):
@@ -117,10 +141,15 @@ def _approve_qr_with_user(qr_token, user, via):
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        if _login_blocked():
+            flash("Too many failed login attempts. Please wait a few minutes and try again.", "danger")
+            return render_template("auth/login.html"), 429
         user = User.query.filter_by(email=request.form.get("email", "").lower().strip()).first()
         if user and user.check_password(request.form.get("password", "")) and user.active:
+            _clear_bad_logins()
             login_user(user)
             return redirect(url_for("main.dashboard"))
+        _record_bad_login()
         flash("Invalid login details", "danger")
     return render_template("auth/login.html")
 

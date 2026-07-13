@@ -9,6 +9,7 @@ from app.models import ClientApplication, ApplicationSignature, ClientFicaDocume
 from app.services.pdf_service import generate_application_pdf, generate_welcome_pack, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.email_service import send_email
 from app.services.compliance_service import assert_application_rules
+from app.services.fica_validation_service import validate_fica_upload
 
 signing_bp = Blueprint("signing", __name__, url_prefix="/sign")
 
@@ -29,13 +30,32 @@ FICA_LABELS = {
     "permit_visa": "Permit / Visa",
 }
 
-ALLOWED_UPLOADS = {"pdf", "png", "jpg", "jpeg", "webp"}
+ALLOWED_UPLOADS = {"pdf", "png", "jpg", "jpeg", "webp", "heic", "heif"}
+ALLOWED_UPLOAD_MIMES = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
 
 
 def _upload_folder():
-    folder = os.path.abspath(current_app.config["UPLOAD_FOLDER"])
-    os.makedirs(folder, exist_ok=True)
-    return folder
+    configured = os.path.abspath(current_app.config["UPLOAD_FOLDER"])
+    candidates = [configured, os.path.join(current_app.instance_path, "uploads"), "/tmp/telesales_uploads"]
+    last_error = None
+    for folder in candidates:
+        try:
+            os.makedirs(folder, exist_ok=True)
+            test_path = os.path.join(folder, ".write_test")
+            with open(test_path, "w", encoding="utf-8") as f:
+                f.write("ok")
+            try:
+                os.remove(test_path)
+            except Exception:
+                pass
+            return folder
+        except Exception as exc:
+            last_error = exc
+            try:
+                current_app.logger.warning("Upload folder not writable: %s (%s)", folder, exc)
+            except Exception:
+                pass
+    raise RuntimeError(f"No writable upload folder is available: {last_error}")
 
 
 def _resolve_existing(path):
@@ -85,7 +105,31 @@ def _required_fica_types(app_obj):
 def _fica_status(app_obj):
     required = _required_fica_types(app_obj)
     docs = ClientFicaDocument.query.filter_by(application_id=app_obj.id).all()
-    received = {d.document_type for d in docs if d.status in ("Received", "Reviewed")}
+
+    # Treat uploaded FICA documents as received even when the live DB uses
+    # slightly different status names from older deployments.  The client
+    # final-submit check must not fail after a successful upload just because
+    # the status is Approved/Reviewed/Received with different casing.
+    good_statuses = {"received", "needs review", "reviewed", "approved"}
+    received = set()
+    for d in docs:
+        doc_type = (getattr(d, "document_type", "") or "").strip()
+        status = (getattr(d, "status", "") or "Needs Review").strip().lower()
+        file_path = getattr(d, "file_path", None)
+        has_file = bool(_resolve_existing(file_path))
+        if doc_type and status in good_statuses and has_file:
+            received.add(doc_type)
+
+    # Extra safety for Render/live systems: if a file was saved successfully
+    # but the DB row was not visible because of an older schema, still mark it
+    # as received for the same request/session by checking the upload folder.
+    folder = os.path.join(_upload_folder(), f"fica_app_{app_obj.id}")
+    if not docs and os.path.isdir(folder):
+        for filename in os.listdir(folder):
+            for doc_type in required:
+                if filename.startswith(f"{doc_type}_"):
+                    received.add(doc_type)
+
     outstanding = [t for t in required if t not in received]
     return required, received, outstanding, docs
 
@@ -110,8 +154,25 @@ def _save_signature_file(app_obj, doc_type, sig_data):
     return path
 
 
-def _allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_UPLOADS
+def _extension_from_upload(uploaded_file):
+    filename = uploaded_file.filename or ""
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[1].lower()
+        if ext in ALLOWED_UPLOADS:
+            return ext
+    mime_map = {
+        "application/pdf": "pdf",
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/webp": "webp",
+        "image/heic": "heic",
+        "image/heif": "heif",
+    }
+    return mime_map.get((uploaded_file.mimetype or "").lower(), "")
+
+
+def _allowed_file(uploaded_file):
+    return _extension_from_upload(uploaded_file) in ALLOWED_UPLOADS or (uploaded_file.mimetype or "").lower() in ALLOWED_UPLOAD_MIMES
 
 
 def _get_uploaded_file(document_type):
@@ -130,7 +191,7 @@ def _fica_table():
     return Table("client_fica_documents", metadata, autoload_with=db.engine)
 
 
-def _default_for_column(column, app_obj, document_type, safe, path):
+def _default_for_column(column, app_obj, document_type, safe, path, validation_status="Needs Review", validation_notes=""):
     name = column.name.lower()
     if name in {"id"}:
         return None
@@ -143,7 +204,9 @@ def _default_for_column(column, app_obj, document_type, safe, path):
     if name in {"file_path", "path", "upload_path", "document_path"}:
         return path
     if name in {"status", "document_status"}:
-        return "Received"
+        return validation_status
+    if name in {"validation_notes", "review_notes", "notes", "comment", "comments"}:
+        return validation_notes
     if name in {"uploaded_ip", "ip_address", "ip"}:
         return request.remote_addr
     if name in {"user_agent", "browser"}:
@@ -163,7 +226,7 @@ def _default_for_column(column, app_obj, document_type, safe, path):
     return ""
 
 
-def _insert_fica_document_row(app_obj, document_type, safe, path):
+def _insert_fica_document_row(app_obj, document_type, safe, path, validation_status="Needs Review", validation_notes=""):
     table = _fica_table()
 
     # Mark older documents of this type as replaced where the live schema supports it.
@@ -180,7 +243,7 @@ def _insert_fica_document_row(app_obj, document_type, safe, path):
     for column in table.columns:
         if column.primary_key and column.autoincrement:
             continue
-        value = _default_for_column(column, app_obj, document_type, safe, path)
+        value = _default_for_column(column, app_obj, document_type, safe, path, validation_status, validation_notes)
         if value is None and (column.nullable or column.default is not None or column.server_default is not None):
             continue
         values[column.name] = value
@@ -210,20 +273,39 @@ def _insert_fica_document_row(app_obj, document_type, safe, path):
 def _save_upload(app_obj, document_type, uploaded_file):
     if not uploaded_file or not uploaded_file.filename:
         raise ValueError("No file selected. Please choose a PDF, JPG, PNG or WEBP file before clicking Upload / Replace.")
-    if not _allowed_file(uploaded_file.filename):
-        raise ValueError("Only PDF, JPG, PNG or WEBP files are allowed")
+    if not _allowed_file(uploaded_file):
+        raise ValueError("Only PDF, JPG, PNG, WEBP, HEIC or HEIF files are allowed. Please do not upload screenshots or unrelated pictures.")
 
-    safe = secure_filename(uploaded_file.filename)
+    ext = _extension_from_upload(uploaded_file) or "bin"
+    safe = secure_filename(uploaded_file.filename or f"upload.{ext}")
+    if "." not in safe:
+        safe = f"{safe}.{ext}"
     folder = os.path.join(_upload_folder(), f"fica_app_{app_obj.id}")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f"{document_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe}")
     uploaded_file.save(path)
 
     if not os.path.exists(path) or os.path.getsize(path) == 0:
-        raise ValueError("The uploaded file was empty or could not be saved. Please try again.")
+        raise ValueError("The uploaded file was empty or could not be saved. Please try again. If this was taken with a phone camera, try saving it as JPG or PDF first.")
+    if os.path.getsize(path) > 25 * 1024 * 1024:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        raise ValueError("The uploaded file is too large. Please upload a smaller file under 25 MB.")
 
     try:
-        return _insert_fica_document_row(app_obj, document_type, safe, path)
+        validation_status, validation_notes = validate_fica_upload(path, safe, document_type, app_obj)
+    except Exception as exc:
+        current_app.logger.exception("FICA validation failed after upload; keeping document for manual review")
+        validation_status = "Needs Review"
+        validation_notes = f"File uploaded but automatic validation failed: {exc}. Staff must review manually."
+
+    try:
+        row = _insert_fica_document_row(app_obj, document_type, safe, path, validation_status, validation_notes)
+        if row:
+            row.status = validation_status
+        return row
     except Exception:
         current_app.logger.exception("Dynamic FICA insert failed for application %s", app_obj.id)
         raise
@@ -260,7 +342,7 @@ def upload_fica_document(token):
         if outstanding:
             app_obj.status = "FICA Outstanding"
         elif app_obj.status in ("FICA Outstanding", "Signature Sent", "Draft", None):
-            app_obj.status = "Documents Received"
+            app_obj.status = "FICA Review"
         db.session.commit()
         flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
     except Exception as e:
@@ -297,7 +379,7 @@ def sign_application(token):
                 row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
                 generate_fica_pdf(app_obj, os.path.join(_upload_folder(), f"fica_verification_{app_obj.id}.pdf"))
                 required, received, outstanding, docs = _fica_status(app_obj)
-                app_obj.status = "FICA Outstanding" if outstanding else "Documents Received"
+                app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
                 db.session.commit()
                 flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
                 return redirect(url_for("signing.sign_application", token=token))

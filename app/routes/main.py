@@ -36,6 +36,11 @@ def login_alias():
     return redirect(url_for("auth.login"))
 
 
+@main_bp.route("/healthz")
+def healthz():
+    return {"ok": True, "service": "telesales"}
+
+
 def _is_manager_user():
     role_name = (current_user.role.name if current_user.is_authenticated and current_user.role else "").lower().replace("_", " ")
     return role_name in {"admin", "manager", "branch manager"}

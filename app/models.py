@@ -328,7 +328,7 @@ class ClientFicaDocument(db.Model):
     document_type = db.Column(db.String(80), nullable=False)  # id_copy, proof_of_address, bank_statement, passport, permit_visa
     original_filename = db.Column(db.String(255))
     file_path = db.Column(db.String(500), nullable=False)
-    status = db.Column(db.String(40), default="Received")  # Received, Reviewed, Rejected
+    status = db.Column(db.String(40), default="Needs Review")  # Needs Review, Reviewed, Rejected
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     uploaded_ip = db.Column(db.String(80))
     user_agent = db.Column(db.String(500))
@@ -679,3 +679,101 @@ class ComplianceFlag(db.Model):
     resolved = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     call_log = db.relationship("RecoveryCallLog")
+
+class CommunicationCampaign(db.Model):
+    __tablename__ = "communication_campaigns"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False)
+    subject = db.Column(db.String(255))
+    message_body = db.Column(db.Text, nullable=False)
+    send_whatsapp = db.Column(db.Boolean, default=True, nullable=False)
+    send_email = db.Column(db.Boolean, default=True, nullable=False)
+    branch = db.Column(db.String(120))
+    status = db.Column(db.String(40), default="Draft", nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    sent_at = db.Column(db.DateTime)
+    created_by = db.relationship("User")
+
+class CampaignRecipient(db.Model):
+    __tablename__ = "campaign_recipients"
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id"), nullable=False, index=True)
+    lapsed_policy_id = db.Column(db.Integer, db.ForeignKey("lapsed_policies.id"), nullable=False, index=True)
+    secure_token = db.Column(db.String(128), unique=True, nullable=False, index=True)
+    whatsapp_status = db.Column(db.String(40), default="Not Sent")
+    email_status = db.Column(db.String(40), default="Not Sent")
+    response_type = db.Column(db.String(40))
+    response_channel = db.Column(db.String(30))
+    responded_at = db.Column(db.DateTime)
+    callback_created = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    campaign = db.relationship("CommunicationCampaign", backref=db.backref("recipients", lazy=True))
+    policy = db.relationship("LapsedPolicy")
+    __table_args__ = (db.UniqueConstraint("campaign_id", "lapsed_policy_id", name="uq_campaign_policy"),)
+
+class ContactCommunicationPreference(db.Model):
+    __tablename__ = "contact_communication_preferences"
+    id = db.Column(db.Integer, primary_key=True)
+    lapsed_policy_id = db.Column(db.Integer, db.ForeignKey("lapsed_policies.id"), unique=True, nullable=False, index=True)
+    telephone_allowed = db.Column(db.Boolean, default=True, nullable=False)
+    whatsapp_allowed = db.Column(db.Boolean, default=True, nullable=False)
+    email_allowed = db.Column(db.Boolean, default=True, nullable=False)
+    opted_out_all = db.Column(db.Boolean, default=False, nullable=False)
+    opted_out_at = db.Column(db.DateTime)
+    opt_out_source = db.Column(db.String(40))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    policy = db.relationship("LapsedPolicy", backref=db.backref("communication_preference", uselist=False))
+
+class ContactSuppression(db.Model):
+    __tablename__ = "contact_suppressions"
+    id = db.Column(db.Integer, primary_key=True)
+    phone_hash = db.Column(db.String(128), index=True)
+    email_hash = db.Column(db.String(128), index=True)
+    reason = db.Column(db.String(160), default="Client opted out")
+    source = db.Column(db.String(40))
+    campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id"))
+    lapsed_policy_id = db.Column(db.Integer, db.ForeignKey("lapsed_policies.id"))
+    suppressed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class AgentNotification(db.Model):
+    __tablename__ = "agent_notifications"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    title = db.Column(db.String(180), nullable=False)
+    message = db.Column(db.Text)
+    notification_type = db.Column(db.String(50), default="info")
+    entity_type = db.Column(db.String(50))
+    entity_id = db.Column(db.Integer)
+    is_read = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    user = db.relationship("User")
+
+class CommunicationFollowUp(db.Model):
+    __tablename__ = "communication_follow_ups"
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id"), nullable=False, index=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey("campaign_recipients.id"), nullable=False, index=True)
+    due_at = db.Column(db.DateTime, nullable=False, index=True)
+    channel = db.Column(db.String(30), nullable=False)
+    status = db.Column(db.String(30), default="Pending", nullable=False, index=True)
+    attempt_count = db.Column(db.Integer, default=0, nullable=False)
+    last_error = db.Column(db.Text)
+    processed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    campaign = db.relationship("CommunicationCampaign")
+    recipient = db.relationship("CampaignRecipient")
+
+class CommunicationEvent(db.Model):
+    __tablename__ = "communication_events"
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id"), index=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey("campaign_recipients.id"), index=True)
+    lapsed_policy_id = db.Column(db.Integer, db.ForeignKey("lapsed_policies.id"), index=True)
+    event_type = db.Column(db.String(60), nullable=False, index=True)
+    channel = db.Column(db.String(30))
+    details = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    campaign = db.relationship("CommunicationCampaign")
+    recipient = db.relationship("CampaignRecipient")
+    policy = db.relationship("LapsedPolicy")

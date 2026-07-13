@@ -2,7 +2,7 @@ import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-from flask_login import LoginManager
+from flask_login import LoginManager, current_user
 
 from dotenv import load_dotenv
 
@@ -71,7 +71,10 @@ def _ensure_client_fica_document_columns(app):
 
 def create_app():
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
+    secret_key = os.getenv("SECRET_KEY")
+    if not secret_key and os.getenv("FLASK_ENV") == "production":
+        raise RuntimeError("SECRET_KEY must be set in production")
+    app.config["SECRET_KEY"] = secret_key or "dev-secret-change-me"
     db_url = os.getenv("DATABASE_URL", "sqlite:///dev.db")
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -94,8 +97,14 @@ def create_app():
         upload_folder = os.path.join(app.root_path, "static", "uploads")
     app.config["UPLOAD_FOLDER"] = upload_folder
     app.config["BASE_URL"] = os.getenv("BASE_URL", "http://localhost:5000")
+    app.config["WHATSAPP_VERIFY_TOKEN"] = os.getenv("WHATSAPP_VERIFY_TOKEN")
 
-    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    try:
+        os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    except Exception:
+        # Do not prevent the app from starting if a Render upload path is not mounted.
+        # The signing upload route will fall back to instance/uploads or /tmp/telesales_uploads.
+        app.logger.warning("Configured UPLOAD_FOLDER is not writable at startup: %s", app.config["UPLOAD_FOLDER"])
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -171,6 +180,7 @@ def create_app():
     from app.routes.wallboard import wallboard_bp
     from app.routes.targets import targets_bp
     from app.routes.analytics import analytics_bp
+    from app.routes.communications import communications_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -189,5 +199,40 @@ def create_app():
     app.register_blueprint(wallboard_bp)
     app.register_blueprint(targets_bp)
     app.register_blueprint(analytics_bp)
+    app.register_blueprint(communications_bp)
+
+    @app.context_processor
+    def communication_badges():
+        try:
+            if not getattr(current_user, "is_authenticated", False):
+                return {"unread_notification_count": 0}
+            from app.models import AgentNotification
+            count = AgentNotification.query.filter_by(user_id=current_user.id, is_read=False).count()
+            return {"unread_notification_count": count}
+        except Exception:
+            return {"unread_notification_count": 0}
+
+    @app.cli.command("process-communication-followups")
+    def process_communication_followups():
+        """Send due WhatsApp/email follow-ups that have no client response."""
+        from datetime import datetime
+        from app.models import CommunicationFollowUp
+        from app.routes.communications import _send_to_recipient
+        jobs = CommunicationFollowUp.query.filter(
+            CommunicationFollowUp.status == "Pending",
+            CommunicationFollowUp.due_at <= datetime.utcnow(),
+        ).order_by(CommunicationFollowUp.due_at.asc()).limit(500).all()
+        sent = failed = skipped = 0
+        for job in jobs:
+            recipient = job.recipient
+            if recipient.response_type:
+                job.status = "Skipped"; job.processed_at = datetime.utcnow(); skipped += 1
+                continue
+            ok, error = _send_to_recipient(job.campaign, recipient, job.channel)
+            job.attempt_count += 1; job.processed_at = datetime.utcnow()
+            job.status = "Sent" if ok else "Failed"; job.last_error = error
+            sent += int(ok); failed += int(not ok)
+        db.session.commit()
+        print(f"Processed {len(jobs)} follow-ups: {sent} sent, {failed} failed, {skipped} skipped")
 
     return app
