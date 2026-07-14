@@ -1,0 +1,14 @@
+TeleSales 28 - Automatic WhatsApp template image example
+
+Changes:
+- Rebuilds the campaign image URL from BASE_URL before template submission.
+- Confirms the URL is public HTTPS, returns HTTP 200 and serves an image MIME type.
+- Sends the verified public image URL in the 360dialog/Meta template HEADER example automatically.
+- Normalises English template language variants such as en_US to en during creation.
+- Shows the exact public example-image link on the campaign page after submission.
+- Blocks submission with a clear error when Meta would be unable to fetch the image.
+
+Required Render setting:
+BASE_URL=https://telesales.onrender.com
+
+No database migration is required.

@@ -17,7 +17,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template
+from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url
 from app.services.branch_access import scope_by_branch
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
@@ -448,11 +448,25 @@ def create_campaign_template(campaign_id):
     if not campaign.image_data or not campaign.image_url:
         flash("Upload the campaign image before creating the WhatsApp template.", "danger")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    # Always rebuild an absolute public URL from BASE_URL so Meta never receives
+    # a localhost, internal Render hostname or login-protected relative path.
+    public_base = (os.getenv("BASE_URL") or request.url_root).rstrip("/")
+    public_image_url = public_base + url_for("communications.campaign_image", campaign_id=campaign.id)
+    campaign.image_url = public_image_url
+    image_ok, image_error = validate_public_image_url(public_image_url)
+    if not image_ok:
+        campaign.template_status = "Submission failed"
+        campaign.template_status_error = image_error
+        campaign.template_checked_at = datetime.utcnow()
+        db.session.commit()
+        flash(f"Template could not be submitted: {image_error}", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
     result = create_whatsapp_image_template(
         campaign.whatsapp_template_name,
         campaign.whatsapp_template_language or "en",
         campaign.message_body,
-        campaign.image_url,
+        public_image_url,
     )
     campaign.template_checked_at = datetime.utcnow()
     if result.ok:
@@ -464,7 +478,7 @@ def create_campaign_template(campaign_id):
         db.session.add(AgentNotification(
             user_id=campaign.created_by_id,
             title="WhatsApp template submitted",
-            message=f"Template {campaign.whatsapp_template_name} was submitted for Meta review.",
+            message=f"Template {campaign.whatsapp_template_name} was submitted for Meta review with its campaign image example.",
             notification_type="whatsapp_template_submitted",
             entity_type="campaign",
             entity_id=campaign.id,

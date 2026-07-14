@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 import requests
+from urllib.parse import urlparse
 
 
 @dataclass
@@ -20,6 +21,26 @@ def normalize_phone(value: str) -> str:
 
 def _provider() -> str:
     return os.getenv("WHATSAPP_PROVIDER", "360dialog").strip().lower()
+
+
+
+
+def validate_public_image_url(image_url: str) -> tuple[bool, str | None]:
+    """Confirm the template example image is publicly reachable by Meta/360dialog."""
+    value = (image_url or "").strip()
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return False, "The campaign image URL must be a public HTTPS URL."
+    try:
+        response = requests.get(value, timeout=25, allow_redirects=True, stream=True)
+        content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if response.status_code != 200:
+            return False, f"The campaign image URL returned HTTP {response.status_code}."
+        if not content_type.startswith("image/"):
+            return False, f"The campaign image URL returned {content_type or 'an unknown content type'} instead of an image."
+        return True, None
+    except requests.RequestException as exc:
+        return False, f"The campaign image URL could not be reached: {exc}"
 
 
 def send_whatsapp_text(to_number: str, message: str) -> SendResult:
@@ -242,9 +263,15 @@ def create_whatsapp_image_template(template_name: str, language_code: str, body_
     """
     name = (template_name or "").strip().lower()
     language = (language_code or "en").strip()
+    if language.lower() in {"en_us", "en-us", "english"}:
+        language = "en"
     body = (body_text or "").strip()
+    image_example_url = (image_example_url or "").strip()
     if not name or not body or not image_example_url:
         return TemplateCreateResult(False, error="Template name, body text and a public example image are required.")
+    image_ok, image_error = validate_public_image_url(image_example_url)
+    if not image_ok:
+        return TemplateCreateResult(False, error=image_error)
     if not __import__('re').fullmatch(r"[a-z0-9_]+", name):
         return TemplateCreateResult(False, error="Template name may contain only lowercase letters, numbers and underscores.")
     if "{{1}}" not in body:
@@ -303,6 +330,10 @@ def create_whatsapp_image_template(template_name: str, language_code: str, body_
         template_id = str(data.get("id") or data.get("template_id") or data.get("message_template_id") or "") or None
         raw_status = str(data.get("status") or data.get("state") or "PENDING").upper()
         status = "Approved" if raw_status in {"APPROVED", "ACTIVE"} else "Pending"
+        # Keep the exact public example URL in the response metadata so the UI
+        # can prove which image was submitted without requiring 360dialog login.
+        if isinstance(data, dict):
+            data.setdefault("submitted_header_image_url", image_example_url)
         return TemplateCreateResult(True, status=status, template_id=template_id, response_json=data)
     except requests.RequestException as exc:
         return TemplateCreateResult(False, error=f"Template submission failed: {exc}")

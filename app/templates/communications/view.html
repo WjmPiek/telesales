@@ -33,7 +33,7 @@
 </form>
 {% endif %}
 </div>
-{% if campaign.template_submitted_at %}<div class="small text-muted mt-2">Submitted {{ campaign.template_submitted_at.strftime('%Y-%m-%d %H:%M') }} UTC{% if campaign.template_provider_id %} · Provider ID {{ campaign.template_provider_id }}{% endif %}. TeleSales checks automatically while approval is pending.</div>{% endif %}
+{% if campaign.template_submitted_at %}<div class="small text-muted mt-2">Submitted {{ campaign.template_submitted_at.strftime('%Y-%m-%d %H:%M') }} UTC{% if campaign.template_provider_id %} · Provider ID {{ campaign.template_provider_id }}{% endif %}. TeleSales checks automatically while approval is pending.</div><div class="alert alert-success py-2 px-3 mt-2 mb-0 small"><strong>Image example submitted automatically:</strong> <a href="{{ campaign.image_url }}" target="_blank" rel="noopener">Open public image</a>. You do not need to paste a Header image URL in 360dialog.</div>{% endif %}
 </div>
 </div>
 </div></div></div></div></div>{% endif %}
