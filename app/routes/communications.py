@@ -117,11 +117,14 @@ def create_campaign():
             whatsapp_template_name=(request.form.get("whatsapp_template_name") or "").strip() or None,
             whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en_US").strip(),
             image_filename=image_filename, image_url=image_url,
+            audience_type=(request.form.get("audience_type") or "group").strip().lower(),
             send_whatsapp=bool(request.form.get("send_whatsapp")),
             send_email=bool(request.form.get("send_email")),
             branch=(request.form.get("branch") or current_user.branch or "").strip() or None,
             created_by_id=current_user.id,
         )
+        if campaign.audience_type not in {"individual", "group"}:
+            campaign.audience_type = "group"
         if not campaign.name or not campaign.message_body:
             flash("Campaign name and message are required.", "danger")
             return render_template("communications/create.html")
@@ -146,11 +149,14 @@ def view_campaign(campaign_id):
     leads_query = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip()
+    branch = (request.args.get("branch") or "").strip()
     if q:
         like = f"%{q}%"
         leads_query = leads_query.filter(db.or_(LapsedPolicy.surname.ilike(like), LapsedPolicy.cell_number.ilike(like), LapsedPolicy.email_address.ilike(like)))
     if status:
         leads_query = leads_query.filter(LapsedPolicy.recovery_status == status)
+    if branch:
+        leads_query = leads_query.filter(LapsedPolicy.branch == branch)
     leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(500).all()
     metrics = {
         "total": len(recipients),
@@ -160,7 +166,8 @@ def view_campaign(campaign_id):
         "not_interested": sum(1 for r in recipients if r.response_type == "not_interested"),
         "opt_outs": sum(1 for r in recipients if r.response_type == "opt_out"),
     }
-    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics)
+    branches = [row[0] for row in db.session.query(LapsedPolicy.branch).filter(LapsedPolicy.branch.isnot(None), LapsedPolicy.branch != "").distinct().order_by(LapsedPolicy.branch).all()]
+    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches)
 
 
 @communications_bp.route("/<int:campaign_id>/duplicate", methods=["POST"])
@@ -170,7 +177,7 @@ def duplicate_campaign(campaign_id):
     source = CommunicationCampaign.query.get_or_404(campaign_id)
     clone = CommunicationCampaign(name=f"Copy of {source.name}", subject=source.subject, message_body=source.message_body,
         whatsapp_template_name=source.whatsapp_template_name, whatsapp_template_language=source.whatsapp_template_language,
-        image_filename=source.image_filename, image_url=source.image_url, send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
+        image_filename=source.image_filename, image_url=source.image_url, audience_type=source.audience_type or "group", send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
         created_by_id=current_user.id, status="Draft")
     db.session.add(clone); db.session.flush()
     if request.form.get("copy_recipients"):
@@ -198,6 +205,10 @@ def add_recipients(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
     ids = [int(x) for x in request.form.getlist("policy_ids") if x.isdigit()]
+    if campaign.audience_type == "individual" and len(ids) > 1:
+        ids = ids[:1]
+    if campaign.audience_type == "individual" and ids:
+        CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
     added = 0
     for policy in LapsedPolicy.query.filter(LapsedPolicy.id.in_(ids)).all():
         if is_suppressed(policy) or preference_for(policy).opted_out_all:
@@ -208,8 +219,48 @@ def add_recipients(campaign_id):
             db.session.add(recipient); db.session.flush(); _event(recipient, "recipient_added")
             added += 1
     db.session.commit()
-    flash(f"{added} recipient(s) added.", "success")
+    if campaign.audience_type == "individual" and added:
+        flash("Individual client selected.", "success")
+    else:
+        flash(f"{added} recipient(s) added.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
+@communications_bp.route("/<int:campaign_id>/add-filtered-group", methods=["POST"])
+@login_required
+def add_filtered_group(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if campaign.audience_type != "group":
+        flash("This campaign is configured for one individual client.", "warning")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    leads_query = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
+    q = (request.form.get("q") or "").strip()
+    status = (request.form.get("status") or "").strip()
+    branch = (request.form.get("branch") or "").strip()
+    if q:
+        like = f"%{q}%"
+        leads_query = leads_query.filter(db.or_(LapsedPolicy.surname.ilike(like), LapsedPolicy.cell_number.ilike(like), LapsedPolicy.email_address.ilike(like)))
+    if status:
+        leads_query = leads_query.filter(LapsedPolicy.recovery_status == status)
+    if branch:
+        leads_query = leads_query.filter(LapsedPolicy.branch == branch)
+    policies = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(2000).all()
+    added = skipped = 0
+    for policy in policies:
+        if is_suppressed(policy) or preference_for(policy).opted_out_all:
+            skipped += 1
+            continue
+        exists = CampaignRecipient.query.filter_by(campaign_id=campaign.id, lapsed_policy_id=policy.id).first()
+        if exists:
+            skipped += 1
+            continue
+        recipient = CampaignRecipient(campaign_id=campaign.id, lapsed_policy_id=policy.id, secure_token=secrets.token_urlsafe(32))
+        db.session.add(recipient); db.session.flush(); _event(recipient, "recipient_added")
+        added += 1
+    db.session.commit()
+    flash(f"Group selection complete: {added} added, {skipped} excluded or already selected.", "success")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, q=q, status=status, branch=branch))
 
 
 @communications_bp.route("/<int:campaign_id>/send", methods=["POST"])

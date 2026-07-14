@@ -49,6 +49,8 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_language VARCHAR(20) DEFAULT 'en_US'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_filename VARCHAR(255)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_url VARCHAR(1000)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS audience_type VARCHAR(20) DEFAULT 'group'",
+                "UPDATE communication_campaigns SET audience_type = 'group' WHERE audience_type IS NULL OR TRIM(audience_type) = ''",
             ]
             with db.engine.begin() as conn:
                 for stmt in statements:

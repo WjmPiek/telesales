@@ -690,6 +690,7 @@ class CommunicationCampaign(db.Model):
     whatsapp_template_language = db.Column(db.String(20), default="en_US")
     image_filename = db.Column(db.String(255))
     image_url = db.Column(db.String(1000))
+    audience_type = db.Column(db.String(20), default="group", nullable=False)
     send_whatsapp = db.Column(db.Boolean, default=True, nullable=False)
     send_email = db.Column(db.Boolean, default=True, nullable=False)
     branch = db.Column(db.String(120))
