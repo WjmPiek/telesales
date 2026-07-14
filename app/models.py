@@ -777,3 +777,66 @@ class CommunicationEvent(db.Model):
     campaign = db.relationship("CommunicationCampaign")
     recipient = db.relationship("CampaignRecipient")
     policy = db.relationship("LapsedPolicy")
+
+class WhatsAppContact(db.Model):
+    __tablename__ = "whatsapp_contacts"
+    id = db.Column(db.Integer, primary_key=True)
+    wa_id = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    phone_number = db.Column(db.String(40), nullable=False, index=True)
+    display_name = db.Column(db.String(180))
+    email = db.Column(db.String(255))
+    branch = db.Column(db.String(120), index=True)
+    assigned_agent_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    status = db.Column(db.String(40), default="New", nullable=False, index=True)
+    tags = db.Column(db.String(500), default="")
+    notes = db.Column(db.Text)
+    opted_out = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    assigned_agent = db.relationship("User")
+
+class WhatsAppConversation(db.Model):
+    __tablename__ = "whatsapp_conversations"
+    id = db.Column(db.Integer, primary_key=True)
+    contact_id = db.Column(db.Integer, db.ForeignKey("whatsapp_contacts.id"), nullable=False, index=True)
+    assigned_agent_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    status = db.Column(db.String(30), default="Open", nullable=False, index=True)
+    priority = db.Column(db.String(20), default="Normal", nullable=False)
+    unread_count = db.Column(db.Integer, default=0, nullable=False)
+    last_message_preview = db.Column(db.String(500))
+    last_message_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    closed_at = db.Column(db.DateTime)
+    contact = db.relationship("WhatsAppContact", backref=db.backref("conversations", lazy=True))
+    assigned_agent = db.relationship("User")
+
+class WhatsAppMessage(db.Model):
+    __tablename__ = "whatsapp_messages"
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("whatsapp_conversations.id"), nullable=False, index=True)
+    provider_message_id = db.Column(db.String(255), unique=True, index=True)
+    direction = db.Column(db.String(12), nullable=False, index=True)  # inbound/outbound
+    message_type = db.Column(db.String(30), default="text", nullable=False)
+    body = db.Column(db.Text)
+    media_id = db.Column(db.String(255))
+    media_url = db.Column(db.String(1000))
+    media_mime_type = db.Column(db.String(120))
+    status = db.Column(db.String(30), default="received", nullable=False, index=True)
+    error_message = db.Column(db.Text)
+    sender_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    raw_payload = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    delivered_at = db.Column(db.DateTime)
+    read_at = db.Column(db.DateTime)
+    conversation = db.relationship("WhatsAppConversation", backref=db.backref("messages", lazy=True, order_by="WhatsAppMessage.created_at"))
+    sender_user = db.relationship("User")
+
+class WhatsAppWebhookEvent(db.Model):
+    __tablename__ = "whatsapp_webhook_events"
+    id = db.Column(db.Integer, primary_key=True)
+    event_key = db.Column(db.String(255), unique=True, index=True)
+    payload = db.Column(db.Text, nullable=False)
+    processed = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    error = db.Column(db.Text)
+    received_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    processed_at = db.Column(db.DateTime)

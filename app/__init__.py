@@ -181,6 +181,7 @@ def create_app():
     from app.routes.targets import targets_bp
     from app.routes.analytics import analytics_bp
     from app.routes.communications import communications_bp
+    from app.routes.whatsapp import whatsapp_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -200,6 +201,7 @@ def create_app():
     app.register_blueprint(targets_bp)
     app.register_blueprint(analytics_bp)
     app.register_blueprint(communications_bp)
+    app.register_blueprint(whatsapp_bp)
 
     @app.context_processor
     def communication_badges():

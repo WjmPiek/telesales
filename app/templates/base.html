@@ -30,6 +30,7 @@
       <a class="side-link" href="{{ url_for('recovery.callbacks') }}"><span>Callbacks</span></a>
       <a class="side-link" href="{{ url_for('communications.notifications') }}"><span>Notifications {% if unread_notification_count %}<span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</span></a>
       {% if admin_role or manager_role %}<a class="side-link" href="{{ url_for('communications.index') }}"><span>Communications</span></a>{% endif %}
+      <a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span>WhatsApp Centre</span></a>
       <a class="side-link" href="{{ url_for('recovery.pipeline') }}"><span>Pipeline</span></a>
       <a class="side-link" href="{{ url_for('applications.list_applications') }}"><span>Applications</span></a>
       <a class="side-link" href="{{ url_for('documents.document_dashboard') }}"><span>Documents</span></a>
