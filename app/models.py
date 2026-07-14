@@ -692,6 +692,8 @@ class CommunicationCampaign(db.Model):
     image_url = db.Column(db.String(1000))
     audience_type = db.Column(db.String(20), default="group", nullable=False)
     template_status = db.Column(db.String(30), default="Pending", nullable=False)
+    template_checked_at = db.Column(db.DateTime)
+    template_status_error = db.Column(db.String(1000))
     template_approved_at = db.Column(db.DateTime)
     template_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     send_whatsapp = db.Column(db.Boolean, default=True, nullable=False)

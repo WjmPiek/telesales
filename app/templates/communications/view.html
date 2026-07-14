@@ -2,18 +2,28 @@
 <style>
 .audience-banner{border:1px solid #d8ebe4;background:#f3fbf8;border-radius:18px;padding:18px 20px}.recipient-picker{border:1px solid #e5e7eb;border-radius:18px;overflow:hidden}.picker-toolbar{background:#f8faf9;padding:16px;border-bottom:1px solid #e5e7eb}.picker-scroll{max-height:430px;overflow:auto}.select-all-bar{background:#effaf6;border:1px solid #cce9dd;border-radius:14px;padding:14px}.individual-radio{width:20px;height:20px}.recipient-row-selected{background:#effaf6!important}
 </style>
-<div class="d-flex justify-content-between flex-wrap gap-2 mb-3"><div><h2>{{ campaign.name }}</h2><p class="text-muted mb-0">WhatsApp image campaign · Template: <strong>{{ campaign.whatsapp_template_name or 'Not configured' }}</strong></p></div><div><a class="btn btn-outline-secondary" href="{{ url_for('communications.campaign_report', campaign_id=campaign.id) }}">Analytics</a> <a class="btn btn-outline-secondary" href="{{ url_for('communications.export_campaign', campaign_id=campaign.id) }}">Export CSV</a> <form class="d-inline" method="post" action="{{ url_for('communications.send_campaign', campaign_id=campaign.id) }}" onsubmit="return confirm('Send this campaign to {{ recipients|length }} selected client(s)?')"><button class="btn btn-success" {% if not recipients or (campaign.send_whatsapp and campaign.template_status != 'Approved') %}disabled{% endif %}>Send / retry</button></form></div></div>
+<div class="d-flex justify-content-between flex-wrap gap-2 mb-3"><div><h2>{{ campaign.name }}</h2><p class="text-muted mb-0">WhatsApp image campaign · Template: <strong>{{ campaign.whatsapp_template_name or 'Not configured' }}</strong></p></div><div><a class="btn btn-outline-secondary" href="{{ url_for('communications.campaign_report', campaign_id=campaign.id) }}">Analytics</a> <a class="btn btn-outline-secondary" href="{{ url_for('communications.export_campaign', campaign_id=campaign.id) }}">Export CSV</a> <form class="d-inline" method="post" action="{{ url_for('communications.send_campaign', campaign_id=campaign.id) }}" onsubmit="return confirm('Send this campaign to {{ recipients|length }} selected client(s)?')"><button id="sendCampaignButton" class="btn btn-success" {% if not recipients or (campaign.send_whatsapp and campaign.template_status != 'Approved') %}disabled{% endif %}>Send / retry</button></form></div></div>
 <div class="audience-banner mb-3 d-flex justify-content-between align-items-center flex-wrap gap-3"><div><div class="small text-uppercase fw-bold text-success">Audience</div><h5 class="mb-1">{% if campaign.audience_type == 'individual' %}One individual client{% else %}A group of clients{% endif %}</h5><div class="text-muted">{% if campaign.audience_type == 'individual' %}Select one specific person. Only one recipient can be added to this campaign.{% else %}Select clients manually or add every client matching the current filters.{% endif %}</div></div><span class="badge rounded-pill text-bg-success px-3 py-2">{{ recipients|length }} selected</span></div>
-{% if campaign.image_url %}<div class="card mb-3"><div class="card-header"><b>Campaign preview</b></div><div class="card-body"><div class="row g-4 align-items-start"><div class="col-lg-5"><img src="{{ campaign.image_url }}" class="img-fluid rounded-4 border" style="max-height:560px;object-fit:contain;width:100%"></div><div class="col-lg-7"><div class="p-4 rounded-4" style="background:#efeae2"><div class="bg-white rounded-3 p-3 shadow-sm" style="white-space:pre-line">{{ campaign.message_body }}</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">YES, CALL ME BACK</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">NO THANKS, OPT OUT</div></div><div class="card mt-3 border-{% if campaign.template_status == 'Approved' %}success{% else %}warning{% endif %}">
+{% if campaign.image_url %}<div class="card mb-3"><div class="card-header"><b>Campaign preview</b></div><div class="card-body"><div class="row g-4 align-items-start"><div class="col-lg-5"><img src="{{ campaign.image_url }}" class="img-fluid rounded-4 border" style="max-height:560px;object-fit:contain;width:100%"></div><div class="col-lg-7"><div class="p-4 rounded-4" style="background:#efeae2"><div class="bg-white rounded-3 p-3 shadow-sm" style="white-space:pre-line">{{ campaign.message_body }}</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">YES, CALL ME BACK</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">NO THANKS, OPT OUT</div></div><div id="templateStatusCard" class="card mt-3 border-{% if campaign.template_status == 'Approved' %}success{% elif campaign.template_status in ['Rejected','Paused','Disabled','Deleted','Not found'] %}danger{% else %}warning{% endif %}">
 <div class="card-body">
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
-<div><div class="small text-uppercase fw-bold text-muted">360dialog template status</div>
-<h5 class="mb-1">{% if campaign.template_status == 'Approved' %}<span class="text-success">Approved and active</span>{% else %}<span class="text-warning">Waiting for approval</span>{% endif %}</h5>
-<p class="mb-2">Open <strong>360dialog → Martin's Sales → Templates</strong> and find <strong>{{ campaign.whatsapp_template_name }}</strong>. It is ready only when the status shows <strong>Approved</strong> or <strong>Active</strong>, not Pending, In review, Paused or Rejected.</p>
-{% if campaign.template_approved_at %}<div class="small text-muted">Confirmed by {{ campaign.template_approved_by.full_name if campaign.template_approved_by and campaign.template_approved_by.full_name else (campaign.template_approved_by.username if campaign.template_approved_by else 'user') }} on {{ campaign.template_approved_at.strftime('%Y-%m-%d %H:%M') }}.</div>{% endif %}</div>
+<div>
+<div class="small text-uppercase fw-bold text-muted">Live 360dialog template status</div>
+<h5 class="mb-1" id="templateStatusHeading">
+{% if campaign.template_status == 'Approved' %}<span class="text-success">Approved and active</span>
+{% elif campaign.template_status in ['Rejected','Paused','Disabled','Deleted','Not found'] %}<span class="text-danger">{{ campaign.template_status }}</span>
+{% else %}<span class="text-warning">{{ campaign.template_status or 'Checking...' }}</span>{% endif %}
+</h5>
+<p class="mb-2">The system checks <strong>{{ campaign.whatsapp_template_name }}</strong> directly with the connected WhatsApp provider. The Send button becomes active automatically only when the live status is <strong>Approved</strong>.</p>
+<div id="templateCheckedText" class="small text-muted">{% if campaign.template_checked_at %}Last checked {{ campaign.template_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC.{% else %}Not checked yet.{% endif %}</div>
+<div id="templateStatusError" class="small text-danger mt-1">{{ campaign.template_status_error or '' }}</div>
+</div>
 <form method="post" action="{{ url_for('communications.update_template_status', campaign_id=campaign.id) }}">
-{% if campaign.template_status == 'Approved' %}<input type="hidden" name="template_status" value="Pending"><button class="btn btn-outline-warning">Reset to pending</button>{% else %}<input type="hidden" name="template_status" value="Approved"><button class="btn btn-success" onclick="return confirm('Have you checked 360dialog and confirmed that this exact template is Approved and active?')">I confirmed it is approved</button>{% endif %}
-</form></div></div></div></div></div></div></div>{% endif %}
+<button id="refreshTemplateButton" class="btn btn-outline-primary">Check status now</button>
+</form>
+</div>
+</div>
+</div></div></div></div></div>{% endif %}
 <div class="stat-grid mb-3"><div class="stat-card"><div>Recipients</div><strong>{{ metrics.total }}</strong></div><div class="stat-card"><div>WhatsApp sent</div><strong>{{ metrics.wa_sent }}</strong></div><div class="stat-card"><div>Email sent</div><strong>{{ metrics.email_sent }}</strong></div><div class="stat-card"><div>Callbacks</div><strong>{{ metrics.callbacks }}</strong></div><div class="stat-card"><div>Not interested</div><strong>{{ metrics.not_interested }}</strong></div><div class="stat-card"><div>Opt-outs</div><strong>{{ metrics.opt_outs }}</strong></div></div>
 <div class="card mb-3"><div class="card-header d-flex justify-content-between"><b>Selected recipient{% if recipients|length != 1 %}s{% endif %}</b>{% if campaign.audience_type == 'group' %}<form method="post" action="{{ url_for('communications.schedule_follow_up', campaign_id=campaign.id) }}" class="d-flex gap-2"><select name="channel" class="form-select form-select-sm"><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><input name="days" value="3" type="number" min="1" max="30" class="form-control form-control-sm" style="width:80px"><button class="btn btn-sm btn-outline-primary">Schedule follow-up</button></form>{% endif %}</div><div class="table-responsive"><table class="table mb-0"><thead><tr><th>Client</th><th>Cell</th><th>Email</th><th>WhatsApp</th><th>Email</th><th>Response</th></tr></thead><tbody>{% for r in recipients %}<tr><td>{{ r.policy.initials }} {{ r.policy.surname }}</td><td>{{ r.policy.cell_number or '-' }}</td><td>{{ r.policy.email_address or '-' }}</td><td>{{ r.whatsapp_status }}</td><td>{{ r.email_status }}</td><td>{{ r.response_type or '-' }}{% if r.response_channel %} ({{ r.response_channel }}){% endif %}</td></tr>{% else %}<tr><td colspan="6">No recipient selected yet.</td></tr>{% endfor %}</tbody></table></div></div>
 <form method="get" class="recipient-picker mb-3"><div class="picker-toolbar"><div class="row g-2"><div class="col-lg-5"><input name="q" value="{{ request.args.get('q','') }}" class="form-control" placeholder="Search name, cell or email"></div><div class="col-lg-3"><select name="status" class="form-select"><option value="">All statuses</option>{% for s in ['New','Callback','Contacted','Closed'] %}<option value="{{ s }}" {% if request.args.get('status')==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div><div class="col-lg-3"><select name="branch" class="form-select"><option value="">All branches</option>{% for b in branches %}<option value="{{ b }}" {% if request.args.get('branch')==b %}selected{% endif %}>{{ b }}</option>{% endfor %}</select></div><div class="col-lg-1 d-grid"><button class="btn btn-outline-primary">Filter</button></div></div></div></form>
@@ -22,4 +32,48 @@
 <div class="d-flex gap-2 mt-3 flex-wrap"><form method="post" action="{{ url_for('communications.duplicate_campaign', campaign_id=campaign.id) }}"><label><input type="checkbox" name="copy_recipients" value="1"> Copy recipients</label> <button class="btn btn-outline-secondary">Duplicate campaign</button></form><form method="post" action="{{ url_for('communications.archive_campaign', campaign_id=campaign.id) }}"><button class="btn btn-outline-warning">Archive</button></form><button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteCampaignModal">Delete campaign</button></div>
 <div class="modal fade" id="deleteCampaignModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form method="post" action="{{ url_for('communications.delete_campaign', campaign_id=campaign.id) }}"><div class="modal-header"><h5 class="modal-title">Permanently delete campaign</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="alert alert-danger">This permanently deletes the campaign, recipients, message events, follow-ups and uploaded advert image. Opt-out and suppression history is retained.</div><label class="form-label">Type the exact campaign name to confirm:</label><div class="fw-bold mb-2">{{ campaign.name }}</div><input class="form-control" name="confirm_name" required autocomplete="off"></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-danger">Permanently delete</button></div></form></div></div></div>
 <script>document.querySelectorAll('.individual-radio').forEach(r=>r.addEventListener('change',()=>{document.querySelectorAll('tbody tr').forEach(tr=>tr.classList.remove('recipient-row-selected'));r.closest('tr').classList.add('recipient-row-selected')}));</script>
+
+<script>
+(function(){
+  const checkUrl = {{ url_for('communications.check_template_status', campaign_id=campaign.id)|tojson }};
+  const hasRecipients = {{ (recipients|length > 0)|tojson }};
+  const sendButton = document.getElementById('sendCampaignButton');
+  const card = document.getElementById('templateStatusCard');
+  const heading = document.getElementById('templateStatusHeading');
+  const checked = document.getElementById('templateCheckedText');
+  const errorBox = document.getElementById('templateStatusError');
+  const refreshButton = document.getElementById('refreshTemplateButton');
+
+  function applyStatus(data) {
+    const approved = data.approved === true;
+    if (sendButton) sendButton.disabled = !hasRecipients || !approved;
+    if (heading) {
+      const cls = approved ? 'text-success' : ['Rejected','Paused','Disabled','Deleted','Not found'].includes(data.status) ? 'text-danger' : 'text-warning';
+      heading.innerHTML = '<span class="' + cls + '">' + (approved ? 'Approved and active' : data.status) + '</span>';
+    }
+    if (card) {
+      card.classList.remove('border-success','border-warning','border-danger');
+      card.classList.add(approved ? 'border-success' : ['Rejected','Paused','Disabled','Deleted','Not found'].includes(data.status) ? 'border-danger' : 'border-warning');
+    }
+    if (checked && data.checked_at) checked.textContent = 'Last checked ' + new Date(data.checked_at).toLocaleString() + '.';
+    if (errorBox) errorBox.textContent = data.error || '';
+  }
+
+  async function checkStatus(showWorking) {
+    if (showWorking && refreshButton) { refreshButton.disabled = true; refreshButton.textContent = 'Checking...'; }
+    try {
+      const response = await fetch(checkUrl, {method:'POST', headers:{'Accept':'application/json'}});
+      const data = await response.json();
+      applyStatus(data);
+    } catch (error) {
+      if (errorBox) errorBox.textContent = 'Could not check 360dialog right now. Please try again.';
+    } finally {
+      if (refreshButton) { refreshButton.disabled = false; refreshButton.textContent = 'Check status now'; }
+    }
+  }
+
+  if (refreshButton) refreshButton.addEventListener('click', function(event){ event.preventDefault(); checkStatus(true); });
+  if (card) checkStatus(false);
+})();
+</script>
 {% endblock %}

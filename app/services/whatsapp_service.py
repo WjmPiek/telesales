@@ -117,3 +117,87 @@ def send_whatsapp_template_image(to_number: str, template_name: str, language_co
         return SendResult(True, message_id=message_id, response_json=data)
     except requests.RequestException as exc:
         return SendResult(False, error=f"WhatsApp provider request failed: {exc}")
+
+
+@dataclass
+class TemplateStatusResult:
+    ok: bool
+    status: str = "Unknown"
+    raw_status: str | None = None
+    error: str | None = None
+    template: dict | None = None
+
+
+def get_whatsapp_template_status(template_name: str, language_code: str = "en_US") -> TemplateStatusResult:
+    """Read the live template state from 360dialog or Meta.
+
+    For 360dialog, D360_TEMPLATE_API_URL can override the default template endpoint.
+    The parser accepts the common 360dialog response containers: waba_templates,
+    templates, and data.
+    """
+    name = (template_name or "").strip()
+    language = (language_code or "en_US").strip()
+    if not name:
+        return TemplateStatusResult(False, error="No WhatsApp template name is configured.")
+
+    def normalize(value: str | None) -> str:
+        raw = (value or "UNKNOWN").strip().upper().replace("-", "_").replace(" ", "_")
+        if raw in {"APPROVED", "ACTIVE"}:
+            return "Approved"
+        if raw in {"PENDING", "IN_REVIEW", "PENDING_REVIEW", "IN_APPEAL"}:
+            return "Pending"
+        if raw == "REJECTED":
+            return "Rejected"
+        if raw == "PAUSED":
+            return "Paused"
+        if raw == "DISABLED":
+            return "Disabled"
+        if raw == "DELETED":
+            return "Deleted"
+        return raw.title().replace("_", " ") if raw else "Unknown"
+
+    if _provider() == "360dialog":
+        api_key = os.getenv("D360_API_KEY")
+        if not api_key:
+            return TemplateStatusResult(False, error="D360_API_KEY is not configured.")
+        base = os.getenv("D360_API_BASE_URL", "https://waba-v2.360dialog.io").rstrip("/")
+        url = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
+        headers = {"D360-API-KEY": api_key, "Accept": "application/json"}
+    else:
+        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+        waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        if not token or not waba_id:
+            return TemplateStatusResult(False, error="Meta template credentials are incomplete. Configure WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID.")
+        url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=25)
+        data = response.json() if response.content else {}
+        if response.status_code >= 400:
+            message = data.get("error", {}).get("message") if isinstance(data, dict) else None
+            return TemplateStatusResult(False, error=message or response.text or f"HTTP {response.status_code}")
+
+        if isinstance(data, list):
+            templates = data
+        elif isinstance(data, dict):
+            templates = data.get("waba_templates") or data.get("templates") or data.get("data") or []
+        else:
+            templates = []
+
+        for item in templates:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get("name") or item.get("template_name") or "").strip()
+            item_language = item.get("language") or item.get("language_code") or item.get("languageCode") or ""
+            if isinstance(item_language, dict):
+                item_language = item_language.get("code") or item_language.get("language_code") or ""
+            name_matches = item_name.casefold() == name.casefold()
+            language_matches = not item_language or str(item_language).casefold() == language.casefold()
+            if name_matches and language_matches:
+                raw_status = item.get("status") or item.get("state") or item.get("template_status")
+                return TemplateStatusResult(True, status=normalize(raw_status), raw_status=str(raw_status or "UNKNOWN"), template=item)
+
+        return TemplateStatusResult(False, status="Not found", error=f"Template '{name}' ({language}) was not found in the connected WhatsApp Business Account.")
+    except requests.RequestException as exc:
+        return TemplateStatusResult(False, error=f"Template status request failed: {exc}")

@@ -17,10 +17,35 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image
+from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status
 from app.services.branch_access import scope_by_branch
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
+
+
+def _refresh_template_status(campaign):
+    """Synchronise a campaign template with the live provider state."""
+    result = get_whatsapp_template_status(
+        campaign.whatsapp_template_name,
+        campaign.whatsapp_template_language or "en_US",
+    )
+    campaign.template_checked_at = datetime.utcnow()
+    campaign.template_status_error = result.error
+    if result.ok:
+        campaign.template_status = result.status
+        if result.status == "Approved":
+            if not campaign.template_approved_at:
+                campaign.template_approved_at = datetime.utcnow()
+            campaign.template_approved_by_id = None
+        else:
+            campaign.template_approved_at = None
+            campaign.template_approved_by_id = None
+    elif result.status == "Not found":
+        campaign.template_status = "Not found"
+        campaign.template_approved_at = None
+        campaign.template_approved_by_id = None
+    db.session.commit()
+    return result
 
 
 def _is_manager():
@@ -193,22 +218,33 @@ def duplicate_campaign(campaign_id):
 @communications_bp.route("/<int:campaign_id>/template-status", methods=["POST"])
 @login_required
 def update_template_status(campaign_id):
+    """Backward-compatible form endpoint: now performs a live provider check."""
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
-    new_status = (request.form.get("template_status") or "Pending").strip()
-    if new_status not in {"Pending", "Approved"}:
-        abort(400)
-    campaign.template_status = new_status
-    if new_status == "Approved":
-        campaign.template_approved_at = datetime.utcnow()
-        campaign.template_approved_by_id = current_user.id
-        flash("Template marked as approved and active. You may now send after confirming the same status in 360dialog.", "success")
+    result = _refresh_template_status(campaign)
+    if result.ok:
+        if result.status == "Approved":
+            flash("Template is Approved and active. The Send button is now available.", "success")
+        else:
+            flash(f"Live template status: {result.status}. Sending remains blocked.", "warning")
     else:
-        campaign.template_approved_at = None
-        campaign.template_approved_by_id = None
-        flash("Template status reset to pending. Sending is blocked until it is approved and active.", "warning")
-    db.session.commit()
+        flash(f"Could not confirm the template status: {result.error}", "danger")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
+@communications_bp.route("/<int:campaign_id>/template-status/check", methods=["POST"])
+@login_required
+def check_template_status(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    result = _refresh_template_status(campaign)
+    return jsonify({
+        "ok": result.ok,
+        "status": campaign.template_status,
+        "approved": campaign.template_status == "Approved",
+        "checked_at": campaign.template_checked_at.isoformat() if campaign.template_checked_at else None,
+        "error": result.error,
+    }), (200 if result.ok else 422)
 
 
 @communications_bp.route("/<int:campaign_id>/delete", methods=["POST"])
@@ -327,9 +363,12 @@ def add_filtered_group(campaign_id):
 def send_campaign(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
-    if campaign.send_whatsapp and campaign.template_status != "Approved":
-        flash("Sending blocked: confirm that the template is Approved and active in 360dialog first.", "danger")
-        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    if campaign.send_whatsapp:
+        result = _refresh_template_status(campaign)
+        if not result.ok or campaign.template_status != "Approved":
+            reason = result.error or f"Current live status is {campaign.template_status}."
+            flash(f"Sending blocked: the template is not Approved and active in 360dialog. {reason}", "danger")
+            return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     sent_email = sent_whatsapp = 0
     for recipient in campaign.recipients:
         if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed"}:
