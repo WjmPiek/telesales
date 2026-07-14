@@ -158,8 +158,16 @@ def create_campaign():
         if not campaign.name or not campaign.message_body:
             flash("Campaign name and message are required.", "danger")
             return render_template("communications/create.html")
-        if campaign.send_whatsapp and (not campaign.whatsapp_template_name or not campaign.image_url):
-            flash("For a WhatsApp image campaign, upload an image and enter the approved template name.", "danger")
+        # During creation image_url is assigned only after the campaign has an ID.
+        # Validate the uploaded binary here, not image_url, otherwise every new
+        # WhatsApp image campaign is rejected before it can be saved.
+        if campaign.send_whatsapp and (not campaign.whatsapp_template_name or not campaign.image_data):
+            missing = []
+            if not campaign.image_data:
+                missing.append("advert image")
+            if not campaign.whatsapp_template_name:
+                missing.append("approved template name")
+            flash("Please provide the " + " and ".join(missing) + " for this WhatsApp image campaign.", "danger")
             return render_template("communications/create.html")
         if not campaign.send_whatsapp and not campaign.send_email:
             flash("Select at least one delivery channel.", "danger")

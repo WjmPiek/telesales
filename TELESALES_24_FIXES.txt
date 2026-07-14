@@ -1,0 +1,10 @@
+TeleSales 24 - New campaign creation fix
+
+Fixed a regression introduced by database-backed campaign image storage.
+The create route previously required campaign.image_url before the campaign
+had been inserted and assigned an ID. Because image_url is generated only
+after the first database commit, every new WhatsApp image campaign returned
+to the form with the generic missing-image/template warning.
+
+The route now validates campaign.image_data during creation, commits the
+campaign, then generates the permanent public image URL from the campaign ID.
