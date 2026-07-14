@@ -67,3 +67,53 @@ def send_whatsapp_text(to_number: str, message: str) -> SendResult:
 def send_whatsapp_message(to_number: str, message: str) -> bool:
     """Backward-compatible helper used by campaign delivery."""
     return send_whatsapp_text(to_number, message).ok
+
+
+def send_whatsapp_template_image(to_number: str, template_name: str, language_code: str, image_url: str, callback_payload: str, optout_payload: str, customer_name: str = "Customer") -> SendResult:
+    """Send an approved WhatsApp marketing template with image header and two quick-reply buttons."""
+    to_number = normalize_phone(to_number)
+    if not to_number or not template_name or not image_url:
+        return SendResult(False, error="Number, approved template name and public image URL are required.")
+    if os.getenv("WHATSAPP_ENABLED", "false").lower() not in {"true", "1", "yes", "y"}:
+        return SendResult(False, error="WhatsApp is disabled. Set WHATSAPP_ENABLED=true.")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "template",
+        "template": {
+            "name": template_name.strip(),
+            "language": {"code": (language_code or "en_US").strip()},
+            "components": [
+                {"type": "header", "parameters": [{"type": "image", "image": {"link": image_url}}]},
+                {"type": "body", "parameters": [{"type": "text", "text": customer_name or "Customer"}]},
+                {"type": "button", "sub_type": "quick_reply", "index": "0", "parameters": [{"type": "payload", "payload": callback_payload}]},
+                {"type": "button", "sub_type": "quick_reply", "index": "1", "parameters": [{"type": "payload", "payload": optout_payload}]},
+            ],
+        },
+    }
+
+    if _provider() == "360dialog":
+        api_key = os.getenv("D360_API_KEY")
+        if not api_key:
+            return SendResult(False, error="D360_API_KEY is not configured.")
+        url = f"{os.getenv('D360_API_BASE_URL', 'https://waba-v2.360dialog.io').rstrip('/')}/messages"
+        headers = {"D360-API-KEY": api_key, "Content-Type": "application/json"}
+    else:
+        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+        phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        if not token or not phone_number_id:
+            return SendResult(False, error="Meta WhatsApp credentials are incomplete.")
+        url = f"https://graph.facebook.com/v25.0/{phone_number_id}/messages"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        data = response.json() if response.content else {}
+        if response.status_code >= 400:
+            error = data.get("error", {})
+            return SendResult(False, error=error.get("message") or response.text or f"HTTP {response.status_code}", response_json=data)
+        message_id = ((data.get("messages") or [{}])[0]).get("id")
+        return SendResult(True, message_id=message_id, response_json=data)
+    except requests.RequestException as exc:
+        return SendResult(False, error=f"WhatsApp provider request failed: {exc}")

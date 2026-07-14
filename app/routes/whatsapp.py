@@ -8,8 +8,9 @@ from flask_login import current_user, login_required
 from sqlalchemy import or_
 
 from app import db
-from app.models import User, WhatsAppContact, WhatsAppConversation, WhatsAppMessage, WhatsAppWebhookEvent
+from app.models import User, WhatsAppContact, WhatsAppConversation, WhatsAppMessage, WhatsAppWebhookEvent, CampaignRecipient, AgentNotification
 from app.services.whatsapp_service import normalize_phone, send_whatsapp_text
+from app.services.communication_service import record_callback, record_opt_out
 
 whatsapp_bp = Blueprint("whatsapp", __name__, url_prefix="/whatsapp")
 
@@ -51,6 +52,27 @@ def _get_open_conversation(contact):
     return conversation
 
 
+
+def _process_campaign_button(payload_id, contact):
+    """Translate template quick-reply payloads into callback or opt-out actions."""
+    if not payload_id or ":" not in str(payload_id):
+        return
+    action, token = str(payload_id).split(":", 1)
+    recipient = CampaignRecipient.query.filter_by(secure_token=token).first()
+    if not recipient:
+        return
+    if action == "callback":
+        record_callback(recipient, "whatsapp")
+        contact.tags = ", ".join(dict.fromkeys([x.strip() for x in ((contact.tags or "") + ", callback, hot").split(",") if x.strip()]))
+        contact.status = "Callback Requested"
+    elif action in {"optout", "opt_out"}:
+        record_opt_out(recipient, "whatsapp")
+        contact.opted_out = True
+        contact.status = "Opted Out"
+    else:
+        return
+
+
 def _process_payload(payload):
     entries = payload.get("entry") or []
     changes = []
@@ -83,11 +105,15 @@ def _process_payload(payload):
                 mime = media.get("mime_type")
                 body = media.get("caption") or f"[{message_type.title()} received]"
             elif message_type == "button":
-                body = (item.get("button") or {}).get("text") or "[Button response]"
+                button = item.get("button") or {}
+                body = button.get("text") or "[Button response]"
+                payload_id = button.get("payload") or button.get("id")
+                _process_campaign_button(payload_id, contact)
             elif message_type == "interactive":
                 interactive = item.get("interactive") or {}
                 reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
                 body = reply.get("title") or reply.get("id") or "[Interactive response]"
+                _process_campaign_button(reply.get("id"), contact)
             else:
                 body = f"[{message_type.title()} message]"
 

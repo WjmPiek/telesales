@@ -263,3 +263,7 @@ After a proper migration workflow is confirmed, change:
 ```bash
 AUTO_CREATE_TABLES=0
 ```
+
+
+## WhatsApp image campaigns
+Create the approved 360dialog template with an IMAGE header and two QUICK_REPLY buttons in this order: `YES, CALL ME BACK`, `NO THANKS, OPT OUT`. The campaign sender supplies per-recipient payloads so button clicks create callbacks or suppress future marketing. Set `BASE_URL` to the public Render/custom domain so 360dialog can fetch uploaded images. For permanent image retention on Render, attach a persistent disk or use object storage.

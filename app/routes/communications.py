@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 import csv
 import io
 import secrets
+import os
+from werkzeug.utils import secure_filename
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response
 from flask_login import login_required, current_user
 from sqlalchemy import func
@@ -15,7 +17,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message
+from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image
 from app.services.branch_access import scope_by_branch
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
@@ -44,11 +46,23 @@ def _send_to_recipient(campaign, recipient, channel):
         _event(recipient, "suppressed", channel, "Contact is opted out or on suppression list")
         return False, "Suppressed"
     links = callback_links(recipient.secure_token)
+    error = None
     text = f"{campaign.message_body}\n\nCall me back: {links['callback']}\nNot interested: {links['not_interested']}\nOpt out: {links['opt_out']}"
     if channel == "whatsapp":
         if not pref.whatsapp_allowed or not policy.cell_number:
             return False, "No permitted WhatsApp number"
-        ok = send_whatsapp_message(policy.cell_number, text)
+        if campaign.whatsapp_template_name and campaign.image_url:
+            result = send_whatsapp_template_image(
+                policy.cell_number, campaign.whatsapp_template_name,
+                campaign.whatsapp_template_language or "en_US", campaign.image_url,
+                f"callback:{recipient.secure_token}", f"optout:{recipient.secure_token}",
+                f"{policy.initials or ''} {policy.surname or ''}".strip() or "Customer",
+            )
+            ok = result.ok
+            error = result.error
+        else:
+            ok = send_whatsapp_message(policy.cell_number, text)
+            error = None if ok else "Provider returned failure"
         recipient.whatsapp_status = "Sent" if ok else "Failed"
     else:
         if not pref.email_allowed or not policy.email_address:
@@ -56,8 +70,9 @@ def _send_to_recipient(campaign, recipient, channel):
         html = render_template("communications/email_message.html", policy=policy, campaign=campaign, links=links)
         ok = send_email(policy.email_address, campaign.subject, text, html_body=html)
         recipient.email_status = "Sent" if ok else "Failed"
-    _event(recipient, "sent" if ok else "failed", channel)
-    return ok, None if ok else "Provider returned failure"
+        error = None if ok else "Email provider returned failure"
+    _event(recipient, "sent" if ok else "failed", channel, None if ok else error)
+    return ok, None if ok else (error or "Provider returned failure")
 
 
 @communications_bp.route("/")
@@ -80,10 +95,28 @@ def index():
 def create_campaign():
     if not _is_manager(): abort(403)
     if request.method == "POST":
+        image = request.files.get("campaign_image")
+        image_filename = None
+        image_url = None
+        if image and image.filename:
+            ext = os.path.splitext(image.filename)[1].lower()
+            if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+                flash("Campaign image must be JPG, PNG or WEBP.", "danger")
+                return render_template("communications/create.html")
+            image_filename = f"campaign_{datetime.utcnow():%Y%m%d%H%M%S}_{secrets.token_hex(5)}{ext}"
+            folder = os.path.join(current_app.root_path, "static", "uploads", "campaigns")
+            os.makedirs(folder, exist_ok=True)
+            image.save(os.path.join(folder, secure_filename(image_filename)))
+            base = request.url_root.rstrip("/")
+            image_url = f"{base}/static/uploads/campaigns/{image_filename}"
+
         campaign = CommunicationCampaign(
             name=(request.form.get("name") or "").strip(),
             subject=(request.form.get("subject") or "Funeral policy callback").strip(),
             message_body=(request.form.get("message_body") or "").strip(),
+            whatsapp_template_name=(request.form.get("whatsapp_template_name") or "").strip() or None,
+            whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en_US").strip(),
+            image_filename=image_filename, image_url=image_url,
             send_whatsapp=bool(request.form.get("send_whatsapp")),
             send_email=bool(request.form.get("send_email")),
             branch=(request.form.get("branch") or current_user.branch or "").strip() or None,
@@ -91,6 +124,9 @@ def create_campaign():
         )
         if not campaign.name or not campaign.message_body:
             flash("Campaign name and message are required.", "danger")
+            return render_template("communications/create.html")
+        if campaign.send_whatsapp and (not campaign.whatsapp_template_name or not campaign.image_url):
+            flash("For a WhatsApp image campaign, upload an image and enter the approved template name.", "danger")
             return render_template("communications/create.html")
         if not campaign.send_whatsapp and not campaign.send_email:
             flash("Select at least one delivery channel.", "danger")
@@ -133,7 +169,8 @@ def duplicate_campaign(campaign_id):
     if not _is_manager(): abort(403)
     source = CommunicationCampaign.query.get_or_404(campaign_id)
     clone = CommunicationCampaign(name=f"Copy of {source.name}", subject=source.subject, message_body=source.message_body,
-        send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
+        whatsapp_template_name=source.whatsapp_template_name, whatsapp_template_language=source.whatsapp_template_language,
+        image_filename=source.image_filename, image_url=source.image_url, send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
         created_by_id=current_user.id, status="Draft")
     db.session.add(clone); db.session.flush()
     if request.form.get("copy_recipients"):

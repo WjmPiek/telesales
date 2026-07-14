@@ -37,6 +37,26 @@ def _ensure_lapsed_policy_contact_columns(app):
             app.logger.exception("Could not ensure lapsed policy contact/suspense columns")
 
 
+def _ensure_communication_campaign_columns(app):
+    """Keep existing Render databases compatible with image-template campaigns."""
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_name VARCHAR(160)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_language VARCHAR(20) DEFAULT 'en_US'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_filename VARCHAR(255)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_url VARCHAR(1000)",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure communication campaign columns")
+
+
 def _ensure_client_fica_document_columns(app):
     """Render/PostgreSQL safety patch for existing databases.
 
@@ -127,6 +147,10 @@ def create_app():
             except Exception:
                 pass
             try:
+                _ensure_communication_campaign_columns(app)
+            except Exception:
+                pass
+            try:
                 from app.models import Role, User
                 super_role = Role.query.filter_by(name="Super Admin").first()
                 if not super_role:
@@ -149,6 +173,10 @@ def create_app():
         pass
     try:
         _ensure_client_fica_document_columns(app)
+    except Exception:
+        pass
+    try:
+        _ensure_communication_campaign_columns(app)
     except Exception:
         pass
 
