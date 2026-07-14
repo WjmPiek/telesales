@@ -691,6 +691,9 @@ class CommunicationCampaign(db.Model):
     image_filename = db.Column(db.String(255))
     image_url = db.Column(db.String(1000))
     audience_type = db.Column(db.String(20), default="group", nullable=False)
+    template_status = db.Column(db.String(30), default="Pending", nullable=False)
+    template_approved_at = db.Column(db.DateTime)
+    template_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     send_whatsapp = db.Column(db.Boolean, default=True, nullable=False)
     send_email = db.Column(db.Boolean, default=True, nullable=False)
     branch = db.Column(db.String(120))
@@ -698,7 +701,8 @@ class CommunicationCampaign(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     sent_at = db.Column(db.DateTime)
-    created_by = db.relationship("User")
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    template_approved_by = db.relationship("User", foreign_keys=[template_approved_by_id])
 
 class CampaignRecipient(db.Model):
     __tablename__ = "campaign_recipients"

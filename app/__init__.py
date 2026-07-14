@@ -50,7 +50,11 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_filename VARCHAR(255)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_url VARCHAR(1000)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS audience_type VARCHAR(20) DEFAULT 'group'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_status VARCHAR(30) DEFAULT 'Pending'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approved_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approved_by_id INTEGER REFERENCES users(id)",
                 "UPDATE communication_campaigns SET audience_type = 'group' WHERE audience_type IS NULL OR TRIM(audience_type) = ''",
+                "UPDATE communication_campaigns SET template_status = 'Pending' WHERE template_status IS NULL OR TRIM(template_status) = ''",
             ]
             with db.engine.begin() as conn:
                 for stmt in statements:

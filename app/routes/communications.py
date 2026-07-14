@@ -177,7 +177,9 @@ def duplicate_campaign(campaign_id):
     source = CommunicationCampaign.query.get_or_404(campaign_id)
     clone = CommunicationCampaign(name=f"Copy of {source.name}", subject=source.subject, message_body=source.message_body,
         whatsapp_template_name=source.whatsapp_template_name, whatsapp_template_language=source.whatsapp_template_language,
-        image_filename=source.image_filename, image_url=source.image_url, audience_type=source.audience_type or "group", send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
+        image_filename=source.image_filename, image_url=source.image_url, audience_type=source.audience_type or "group",
+        template_status="Pending", template_approved_at=None, template_approved_by_id=None,
+        send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
         created_by_id=current_user.id, status="Draft")
     db.session.add(clone); db.session.flush()
     if request.form.get("copy_recipients"):
@@ -186,6 +188,63 @@ def duplicate_campaign(campaign_id):
     db.session.commit()
     flash("Campaign duplicated.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=clone.id))
+
+
+@communications_bp.route("/<int:campaign_id>/template-status", methods=["POST"])
+@login_required
+def update_template_status(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    new_status = (request.form.get("template_status") or "Pending").strip()
+    if new_status not in {"Pending", "Approved"}:
+        abort(400)
+    campaign.template_status = new_status
+    if new_status == "Approved":
+        campaign.template_approved_at = datetime.utcnow()
+        campaign.template_approved_by_id = current_user.id
+        flash("Template marked as approved and active. You may now send after confirming the same status in 360dialog.", "success")
+    else:
+        campaign.template_approved_at = None
+        campaign.template_approved_by_id = None
+        flash("Template status reset to pending. Sending is blocked until it is approved and active.", "warning")
+    db.session.commit()
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
+@communications_bp.route("/<int:campaign_id>/delete", methods=["POST"])
+@login_required
+def delete_campaign(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    confirmation = (request.form.get("confirm_name") or "").strip()
+    if confirmation != campaign.name:
+        flash("Campaign was not deleted. Enter the exact campaign name to confirm permanent deletion.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+    image_path = None
+    if campaign.image_filename:
+        image_path = os.path.join(current_app.root_path, "static", "uploads", "campaigns", campaign.image_filename)
+
+    recipient_ids = [r.id for r in campaign.recipients]
+    # Keep suppression history for POPIA compliance, but remove the deleted campaign link.
+    ContactSuppression.query.filter_by(campaign_id=campaign.id).update({ContactSuppression.campaign_id: None}, synchronize_session=False)
+    if recipient_ids:
+        CommunicationFollowUp.query.filter(CommunicationFollowUp.recipient_id.in_(recipient_ids)).delete(synchronize_session=False)
+        CommunicationEvent.query.filter(CommunicationEvent.recipient_id.in_(recipient_ids)).delete(synchronize_session=False)
+    CommunicationEvent.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+    CommunicationFollowUp.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+    CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+    AgentNotification.query.filter_by(entity_type="campaign", entity_id=campaign.id).delete(synchronize_session=False)
+    db.session.delete(campaign)
+    db.session.commit()
+
+    if image_path and os.path.isfile(image_path):
+        try:
+            os.remove(image_path)
+        except OSError:
+            current_app.logger.warning("Could not remove campaign image %s", image_path)
+    flash("Campaign permanently deleted. Opt-out and suppression history was retained.", "success")
+    return redirect(url_for("communications.index"))
 
 
 @communications_bp.route("/<int:campaign_id>/archive", methods=["POST"])
@@ -268,6 +327,9 @@ def add_filtered_group(campaign_id):
 def send_campaign(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if campaign.send_whatsapp and campaign.template_status != "Approved":
+        flash("Sending blocked: confirm that the template is Approved and active in 360dialog first.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     sent_email = sent_whatsapp = 0
     for recipient in campaign.recipients:
         if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed"}:
