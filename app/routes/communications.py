@@ -23,6 +23,57 @@ from app.services.branch_access import scope_by_branch
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
 
 
+
+
+def _normalise_za_phone(value):
+    """Return a South African mobile number in +27 international format."""
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    if digits.startswith("0027"):
+        digits = digits[2:]
+    if digits.startswith("27") and len(digits) == 11:
+        return "+" + digits
+    if digits.startswith("0") and len(digits) == 10:
+        return "+27" + digits[1:]
+    if len(digits) == 9:
+        return "+27" + digits
+    return None
+
+
+def _get_or_create_manual_policy(first_name, surname, phone):
+    """Create a lightweight lead for an individual campaign, or reuse an existing lead."""
+    normalised = _normalise_za_phone(phone)
+    if not normalised:
+        return None, "Enter a valid South African contact number, for example 0676200748."
+    last_nine = normalised[-9:]
+    policy = LapsedPolicy.query.filter(
+        db.or_(
+            LapsedPolicy.cell_number == normalised,
+            LapsedPolicy.cell_number == "0" + last_nine,
+            LapsedPolicy.cell_number.ilike(f"%{last_nine}"),
+        )
+    ).first()
+    if policy:
+        if first_name:
+            policy.initials = first_name.strip()
+        if surname:
+            policy.surname = surname.strip()
+        policy.cell_number = normalised
+        return policy, None
+    policy = LapsedPolicy(
+        member_id=f"MANUAL-{datetime.utcnow():%Y%m%d%H%M%S}-{secrets.token_hex(3)}",
+        initials=(first_name or "").strip(),
+        surname=(surname or "").strip(),
+        cell_number=normalised,
+        branch=(current_user.branch or "").strip() or None,
+        assigned_agent_id=current_user.id,
+        recovery_status="New",
+        comments="Created from an individual WhatsApp campaign.",
+    )
+    db.session.add(policy)
+    db.session.flush()
+    return policy, None
+
+
 def _refresh_template_status(campaign):
     """Synchronise a campaign template with the live provider state."""
     result = get_whatsapp_template_status(
@@ -176,8 +227,55 @@ def create_campaign():
         db.session.commit()
         if campaign.image_data:
             campaign.image_url = request.url_root.rstrip("/") + url_for("communications.campaign_image", campaign_id=campaign.id)
-            db.session.commit()
-        flash("Campaign created. Add recipients and send it from the campaign page.", "success")
+
+        individual_recipient = None
+        if campaign.audience_type == "individual":
+            policy, phone_error = _get_or_create_manual_policy(
+                request.form.get("individual_first_name"),
+                request.form.get("individual_surname"),
+                request.form.get("individual_phone"),
+            )
+            if phone_error:
+                db.session.rollback()
+                db.session.delete(campaign)
+                db.session.commit()
+                flash(phone_error, "danger")
+                return render_template("communications/create.html")
+            if is_suppressed(policy) or preference_for(policy).opted_out_all:
+                db.session.rollback()
+                db.session.delete(campaign)
+                db.session.commit()
+                flash("This number is opted out or suppressed and cannot receive marketing messages.", "danger")
+                return render_template("communications/create.html")
+            individual_recipient = CampaignRecipient(
+                campaign_id=campaign.id,
+                lapsed_policy_id=policy.id,
+                secure_token=secrets.token_urlsafe(32),
+            )
+            db.session.add(individual_recipient)
+            db.session.flush()
+            _event(individual_recipient, "recipient_added", details="Added from the individual campaign form")
+
+        db.session.commit()
+
+        quick_send = campaign.audience_type == "individual" and request.form.get("action") == "send_now"
+        if quick_send and individual_recipient:
+            result = _refresh_template_status(campaign)
+            if result.ok and campaign.template_status == "Approved":
+                ok, error = _send_to_recipient(campaign, individual_recipient, "whatsapp")
+                if ok:
+                    campaign.status = "Sent"
+                    campaign.sent_at = datetime.utcnow()
+                    db.session.commit()
+                    flash("Campaign created and sent to the individual client.", "success")
+                else:
+                    db.session.commit()
+                    flash(f"Campaign created, but the message could not be sent: {error or 'Provider returned failure'}", "danger")
+            else:
+                reason = result.error or f"Current live status is {campaign.template_status}."
+                flash(f"Campaign and client were saved, but sending is blocked until the template is Approved. {reason}", "warning")
+        else:
+            flash("Campaign created. Add recipients and send it from the campaign page.", "success")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     return render_template("communications/create.html")
 

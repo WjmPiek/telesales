@@ -11,6 +11,15 @@
 <label class="audience-option"><input type="radio" name="audience_type" value="individual" required><div class="audience-card"><div class="audience-icon">1</div><div class="fw-bold">One individual client</div><div class="hint mt-1">Search for and select one specific client after creating the campaign.</div></div></label>
 <label class="audience-option"><input type="radio" name="audience_type" value="group" checked><div class="audience-card"><div class="audience-icon">👥</div><div class="fw-bold">A group of clients</div><div class="hint mt-1">Select clients manually or add all clients matching your filters.</div></div></label>
 </div></div>
+<div id="individualFields" class="border rounded-4 p-3 mb-3" style="display:none;background:#f8fbfa">
+<div class="fw-bold mb-2">Individual client details</div>
+<div class="row g-3">
+<div class="col-md-4"><label class="form-label">Name</label><input class="form-control" name="individual_first_name" id="individualFirstName" placeholder="Wjm"></div>
+<div class="col-md-4"><label class="form-label">Surname</label><input class="form-control" name="individual_surname" id="individualSurname" placeholder="Piek"></div>
+<div class="col-md-4"><label class="form-label">Contact number</label><input class="form-control" name="individual_phone" id="individualPhone" inputmode="tel" placeholder="0676200748"></div>
+</div>
+<div class="hint mt-2">The number is saved in international format and checked against the opt-out and suppression lists before sending.</div>
+</div>
 <div class="upload-drop mb-3"><label class="form-label fw-bold d-block">Advert image</label><input class="form-control" type="file" name="campaign_image" id="campaignImage" accept="image/png,image/jpeg,image/webp" required><div class="hint mt-2">JPG, PNG or WEBP. Use a portrait image for the best WhatsApp presentation.</div></div>
 <div class="row g-3"><div class="col-md-7"><label class="form-label fw-bold">Approved WhatsApp template name</label><input class="form-control" name="whatsapp_template_name" required placeholder="funeral_policy_offer_v1"><div class="hint">This must exactly match the approved template in 360dialog.</div></div><div class="col-md-5"><label class="form-label fw-bold">Template language</label><select class="form-select" name="whatsapp_template_language"><option value="en_US">English (en_US)</option><option value="en">English (en)</option></select></div></div>
 <div class="mt-3"><label class="form-label fw-bold">Preview text</label><textarea class="form-control" rows="7" name="message_body" id="messageBody" required>Hello {{1}},
@@ -20,12 +29,32 @@ Give your family dignity, not debt. Martin's Funerals offers affordable funeral 
 Tap below if you would like a consultant to call you with a free quotation.</textarea><div class="hint mt-1">The approved template controls the actual message. Keep this preview text the same as the approved template wording.</div></div>
 <input type="hidden" name="subject" value="Martin's Funerals policy offer"><input type="hidden" name="send_whatsapp" value="1">
 <div class="form-check mt-3"><input class="form-check-input" type="checkbox" name="send_email" id="em"><label class="form-check-label" for="em">Also send an email copy</label></div>
-<div class="d-grid mt-4"><button class="btn btn-success btn-lg">Create campaign and choose clients</button></div></div></div>
+<div class="d-grid gap-2 mt-4">
+<button class="btn btn-success btn-lg" type="submit" name="action" value="save" id="saveCampaignButton">Create campaign and choose clients</button>
+<button class="btn btn-primary btn-lg" type="submit" name="action" value="send_now" id="sendIndividualButton" style="display:none">Create campaign and send now</button>
+</div></div></div>
 <div class="builder-card"><div class="builder-head"><h4 class="mb-1">Customer preview</h4><div class="opacity-75">This is how the image, text and buttons will be arranged.</div></div><div class="builder-body"><div class="wa-preview"><div class="wa-card"><div id="previewPlaceholder" class="p-5 text-center text-muted">Your uploaded image will appear here</div><img id="previewImage" alt="Campaign preview" style="display:none"><div class="wa-copy" id="previewText"></div></div><div class="wa-btn">YES, CALL ME BACK</div><div class="wa-btn">NO THANKS, OPT OUT</div></div><div class="alert alert-info mt-3 mb-0"><strong>Important:</strong> the buttons shown here are official WhatsApp quick-reply buttons configured in your approved template. They are not clickable areas inside the image.</div></div></div>
 </form>
 <script>
 const input=document.getElementById('campaignImage'),img=document.getElementById('previewImage'),ph=document.getElementById('previewPlaceholder'),body=document.getElementById('messageBody'),preview=document.getElementById('previewText');
-function updateText(){preview.textContent=body.value.replace('{{1}}','Customer');}updateText();body.addEventListener('input',updateText);
+const audienceRadios=[...document.querySelectorAll('input[name="audience_type"]')];
+const individualFields=document.getElementById('individualFields');
+const firstName=document.getElementById('individualFirstName');
+const surname=document.getElementById('individualSurname');
+const phone=document.getElementById('individualPhone');
+const saveButton=document.getElementById('saveCampaignButton');
+const sendButton=document.getElementById('sendIndividualButton');
+function selectedAudience(){const selected=audienceRadios.find(r=>r.checked);return selected?selected.value:'group';}
+function updateAudience(){
+  const individual=selectedAudience()==='individual';
+  individualFields.style.display=individual?'block':'none';
+  sendButton.style.display=individual?'block':'none';
+  saveButton.textContent=individual?'Create campaign and save client':'Create campaign and choose clients';
+  [firstName,surname,phone].forEach(el=>el.required=individual);
+  updateText();
+}
+function updateText(){const customer=selectedAudience()==='individual'&&firstName.value.trim()?firstName.value.trim():'Customer';preview.textContent=body.value.replace('{{1}}',customer);}
+updateText();body.addEventListener('input',updateText);firstName.addEventListener('input',updateText);audienceRadios.forEach(r=>r.addEventListener('change',updateAudience));updateAudience();
 input.addEventListener('change',()=>{const f=input.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{img.src=e.target.result;img.style.display='block';ph.style.display='none'};r.readAsDataURL(f)});
 </script>
 {% endblock %}
