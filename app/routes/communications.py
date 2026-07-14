@@ -525,18 +525,43 @@ def delete_campaign(campaign_id):
     if campaign.image_filename:
         image_path = os.path.join(current_app.root_path, "static", "uploads", "campaigns", campaign.image_filename)
 
-    recipient_ids = [r.id for r in campaign.recipients]
-    # Keep suppression history for POPIA compliance, but remove the deleted campaign link.
-    ContactSuppression.query.filter_by(campaign_id=campaign.id).update({ContactSuppression.campaign_id: None}, synchronize_session=False)
-    if recipient_ids:
-        CommunicationFollowUp.query.filter(CommunicationFollowUp.recipient_id.in_(recipient_ids)).delete(synchronize_session=False)
-        CommunicationEvent.query.filter(CommunicationEvent.recipient_id.in_(recipient_ids)).delete(synchronize_session=False)
-    CommunicationEvent.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
-    CommunicationFollowUp.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
-    CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
-    AgentNotification.query.filter_by(entity_type="campaign", entity_id=campaign.id).delete(synchronize_session=False)
-    db.session.delete(campaign)
-    db.session.commit()
+    # Query only recipient IDs. Do not load campaign.recipients and then bulk-delete
+    # those rows, because SQLAlchemy would retain stale recipient objects in the
+    # identity map and try to UPDATE them while deleting the parent campaign.
+    recipient_ids = [row[0] for row in db.session.query(CampaignRecipient.id).filter_by(campaign_id=campaign.id).all()]
+
+    try:
+        # Keep suppression history for POPIA compliance, but remove the deleted campaign link.
+        ContactSuppression.query.filter_by(campaign_id=campaign.id).update(
+            {ContactSuppression.campaign_id: None}, synchronize_session=False
+        )
+        if recipient_ids:
+            CommunicationFollowUp.query.filter(
+                CommunicationFollowUp.recipient_id.in_(recipient_ids)
+            ).delete(synchronize_session=False)
+            CommunicationEvent.query.filter(
+                CommunicationEvent.recipient_id.in_(recipient_ids)
+            ).delete(synchronize_session=False)
+
+        CommunicationEvent.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        CommunicationFollowUp.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        AgentNotification.query.filter_by(
+            entity_type="campaign", entity_id=campaign.id
+        ).delete(synchronize_session=False)
+
+        # Clear any relationship state that may have been populated by an earlier
+        # request hook or template helper before deleting the parent row.
+        if "recipients" in campaign.__dict__:
+            db.session.expire(campaign, ["recipients"])
+
+        db.session.delete(campaign)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Could not delete communication campaign %s", campaign.id)
+        flash("The campaign could not be deleted because related records are still being updated. Please try again.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
     if image_path and os.path.isfile(image_path):
         try:
