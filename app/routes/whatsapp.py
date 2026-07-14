@@ -229,6 +229,11 @@ def webhook():
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
         configured = current_app.config.get("WHATSAPP_VERIFY_TOKEN") or os.getenv("WHATSAPP_VERIFY_TOKEN")
+
+        # A normal browser/health-check request should confirm that the endpoint exists.
+        # Meta verification requests still require the configured verify token.
+        if not token and not challenge:
+            return jsonify({"ok": True, "service": "whatsapp-webhook"}), 200
         if configured and token == configured:
             return challenge or "OK", 200
         return "Invalid verification token", 403

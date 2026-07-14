@@ -203,6 +203,17 @@ def create_app():
     app.register_blueprint(communications_bp)
     app.register_blueprint(whatsapp_bp)
 
+    # 360dialog is configured with the public root URL /webhook. The WhatsApp
+    # module itself lives under /whatsapp, so expose the same webhook handler at
+    # both /webhook and /whatsapp/webhook without changing the inbox URLs.
+    from app.routes.whatsapp import webhook as whatsapp_webhook
+    app.add_url_rule(
+        "/webhook",
+        endpoint="whatsapp_webhook_root",
+        view_func=whatsapp_webhook,
+        methods=["GET", "POST"],
+    )
+
     @app.context_processor
     def communication_badges():
         try:
