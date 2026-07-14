@@ -49,6 +49,8 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_language VARCHAR(20) DEFAULT 'en_US'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_filename VARCHAR(255)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_url VARCHAR(1000)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_data BYTEA",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_mimetype VARCHAR(100)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS audience_type VARCHAR(20) DEFAULT 'group'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_status VARCHAR(30) DEFAULT 'Pending'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_checked_at TIMESTAMP",

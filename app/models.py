@@ -690,6 +690,8 @@ class CommunicationCampaign(db.Model):
     whatsapp_template_language = db.Column(db.String(20), default="en_US")
     image_filename = db.Column(db.String(255))
     image_url = db.Column(db.String(1000))
+    image_data = db.Column(db.LargeBinary)
+    image_mimetype = db.Column(db.String(100))
     audience_type = db.Column(db.String(20), default="group", nullable=False)
     template_status = db.Column(db.String(30), default="Pending", nullable=False)
     template_checked_at = db.Column(db.DateTime)

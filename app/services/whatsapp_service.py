@@ -185,6 +185,17 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
         else:
             templates = []
 
+        def normalized_name(value):
+            import re
+            return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().casefold()).strip("_")
+
+        def normalized_language(value):
+            return str(value or "").strip().replace("-", "_").casefold()
+
+        wanted_name = normalized_name(name)
+        wanted_language = normalized_language(language)
+        same_name = []
+        available = []
         for item in templates:
             if not isinstance(item, dict):
                 continue
@@ -192,12 +203,23 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
             item_language = item.get("language") or item.get("language_code") or item.get("languageCode") or ""
             if isinstance(item_language, dict):
                 item_language = item_language.get("code") or item_language.get("language_code") or ""
-            name_matches = item_name.casefold() == name.casefold()
-            language_matches = not item_language or str(item_language).casefold() == language.casefold()
-            if name_matches and language_matches:
+            if item_name:
+                available.append(f"{item_name} ({item_language or 'language not supplied'})")
+            if normalized_name(item_name) != wanted_name:
+                continue
+            same_name.append((item, str(item_language or "")))
+            actual_language = normalized_language(item_language)
+            exact_language = not actual_language or actual_language == wanted_language
+            same_base_language = actual_language.split("_")[0] == wanted_language.split("_")[0]
+            if exact_language or same_base_language:
                 raw_status = item.get("status") or item.get("state") or item.get("template_status")
                 return TemplateStatusResult(True, status=normalize(raw_status), raw_status=str(raw_status or "UNKNOWN"), template=item)
 
-        return TemplateStatusResult(False, status="Not found", error=f"Template '{name}' ({language}) was not found in the connected WhatsApp Business Account.")
+        if same_name:
+            langs = ", ".join(sorted({lang or "unspecified" for _, lang in same_name}))
+            return TemplateStatusResult(True, status="Not found", error=f"Template '{name}' exists, but not for language '{language}'. Available language(s): {langs}.")
+        suggestions = ", ".join(available[:8])
+        suffix = f" Available templates: {suggestions}." if suggestions else " No templates were returned by the connected account."
+        return TemplateStatusResult(True, status="Not found", error=f"Template '{name}' ({language}) was not found in the connected WhatsApp Business Account.{suffix}")
     except requests.RequestException as exc:
         return TemplateStatusResult(False, error=f"Template status request failed: {exc}")

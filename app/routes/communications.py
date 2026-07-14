@@ -4,7 +4,7 @@ import io
 import secrets
 import os
 from werkzeug.utils import secure_filename
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response, send_file
 from flask_login import login_required, current_user
 from sqlalchemy import func
 from app import db
@@ -123,17 +123,22 @@ def create_campaign():
         image = request.files.get("campaign_image")
         image_filename = None
         image_url = None
+        image_data = None
+        image_mimetype = None
         if image and image.filename:
             ext = os.path.splitext(image.filename)[1].lower()
             if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
                 flash("Campaign image must be JPG, PNG or WEBP.", "danger")
                 return render_template("communications/create.html")
-            image_filename = f"campaign_{datetime.utcnow():%Y%m%d%H%M%S}_{secrets.token_hex(5)}{ext}"
-            folder = os.path.join(current_app.root_path, "static", "uploads", "campaigns")
-            os.makedirs(folder, exist_ok=True)
-            image.save(os.path.join(folder, secure_filename(image_filename)))
-            base = request.url_root.rstrip("/")
-            image_url = f"{base}/static/uploads/campaigns/{image_filename}"
+            image_filename = secure_filename(f"campaign_{datetime.utcnow():%Y%m%d%H%M%S}_{secrets.token_hex(5)}{ext}")
+            image_data = image.read()
+            if not image_data:
+                flash("The uploaded campaign image was empty.", "danger")
+                return render_template("communications/create.html")
+            if len(image_data) > 12 * 1024 * 1024:
+                flash("Campaign image is too large. Maximum size is 12 MB.", "danger")
+                return render_template("communications/create.html")
+            image_mimetype = image.mimetype or {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".webp":"image/webp"}.get(ext, "application/octet-stream")
 
         campaign = CommunicationCampaign(
             name=(request.form.get("name") or "").strip(),
@@ -141,7 +146,7 @@ def create_campaign():
             message_body=(request.form.get("message_body") or "").strip(),
             whatsapp_template_name=(request.form.get("whatsapp_template_name") or "").strip() or None,
             whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en_US").strip(),
-            image_filename=image_filename, image_url=image_url,
+            image_filename=image_filename, image_url=image_url, image_data=image_data, image_mimetype=image_mimetype,
             audience_type=(request.form.get("audience_type") or "group").strip().lower(),
             send_whatsapp=bool(request.form.get("send_whatsapp")),
             send_email=bool(request.form.get("send_email")),
@@ -161,6 +166,9 @@ def create_campaign():
             return render_template("communications/create.html")
         db.session.add(campaign)
         db.session.commit()
+        if campaign.image_data:
+            campaign.image_url = request.url_root.rstrip("/") + url_for("communications.campaign_image", campaign_id=campaign.id)
+            db.session.commit()
         flash("Campaign created. Add recipients and send it from the campaign page.", "success")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     return render_template("communications/create.html")
@@ -195,6 +203,48 @@ def view_campaign(campaign_id):
     return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches)
 
 
+@communications_bp.route("/<int:campaign_id>/image")
+def campaign_image(campaign_id):
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if campaign.image_data:
+        return send_file(
+            io.BytesIO(campaign.image_data),
+            mimetype=campaign.image_mimetype or "application/octet-stream",
+            download_name=campaign.image_filename or f"campaign-{campaign.id}.jpg",
+            max_age=3600,
+            conditional=True,
+        )
+    if campaign.image_url:
+        return redirect(campaign.image_url)
+    abort(404)
+
+
+@communications_bp.route("/<int:campaign_id>/image/replace", methods=["POST"])
+@login_required
+def replace_campaign_image(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    image = request.files.get("campaign_image")
+    if not image or not image.filename:
+        flash("Choose a JPG, PNG or WEBP image.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    ext = os.path.splitext(image.filename)[1].lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        flash("Campaign image must be JPG, PNG or WEBP.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    data = image.read()
+    if not data or len(data) > 12 * 1024 * 1024:
+        flash("Image is empty or larger than 12 MB.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    campaign.image_filename = secure_filename(f"campaign_{datetime.utcnow():%Y%m%d%H%M%S}_{secrets.token_hex(5)}{ext}")
+    campaign.image_data = data
+    campaign.image_mimetype = image.mimetype or {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".webp":"image/webp"}.get(ext)
+    campaign.image_url = request.url_root.rstrip("/") + url_for("communications.campaign_image", campaign_id=campaign.id)
+    db.session.commit()
+    flash("Campaign image replaced and stored safely in the database.", "success")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
 @communications_bp.route("/<int:campaign_id>/duplicate", methods=["POST"])
 @login_required
 def duplicate_campaign(campaign_id):
@@ -202,7 +252,7 @@ def duplicate_campaign(campaign_id):
     source = CommunicationCampaign.query.get_or_404(campaign_id)
     clone = CommunicationCampaign(name=f"Copy of {source.name}", subject=source.subject, message_body=source.message_body,
         whatsapp_template_name=source.whatsapp_template_name, whatsapp_template_language=source.whatsapp_template_language,
-        image_filename=source.image_filename, image_url=source.image_url, audience_type=source.audience_type or "group",
+        image_filename=source.image_filename, image_url=source.image_url, image_data=source.image_data, image_mimetype=source.image_mimetype, audience_type=source.audience_type or "group",
         template_status="Pending", template_approved_at=None, template_approved_by_id=None,
         send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
         created_by_id=current_user.id, status="Draft")
@@ -213,6 +263,32 @@ def duplicate_campaign(campaign_id):
     db.session.commit()
     flash("Campaign duplicated.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=clone.id))
+
+
+@communications_bp.route("/<int:campaign_id>/template-settings", methods=["POST"])
+@login_required
+def update_template_settings(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    name = (request.form.get("whatsapp_template_name") or "").strip()
+    language = (request.form.get("whatsapp_template_language") or "en_US").strip()
+    if not name:
+        flash("Enter the exact 360dialog template name.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    campaign.whatsapp_template_name = name
+    campaign.whatsapp_template_language = language
+    campaign.template_status = "Pending"
+    campaign.template_checked_at = None
+    campaign.template_status_error = None
+    campaign.template_approved_at = None
+    campaign.template_approved_by_id = None
+    db.session.commit()
+    result = _refresh_template_status(campaign)
+    if result.status == "Approved":
+        flash("Template details updated. The template is approved and sending is enabled.", "success")
+    else:
+        flash(f"Template details updated. Current live status: {result.status}.", "warning")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
 
 @communications_bp.route("/<int:campaign_id>/template-status", methods=["POST"])
