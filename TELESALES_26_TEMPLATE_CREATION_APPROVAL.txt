@@ -1,0 +1,25 @@
+TeleSales 26 - Template creation and approval workflow
+
+Added:
+- Create and submit a WhatsApp image marketing template directly from TeleSales.
+- Supports image header, {{1}} customer-name body variable, callback button and opt-out button.
+- Stores provider template ID and submission time.
+- Live status polling every 60 seconds while pending.
+- Creates an in-system notification when submitted.
+- Creates an in-system notification when the provider status changes to Approved.
+- Send remains blocked until a live provider check returns Approved.
+- Campaign creator can choose Create new template or Use existing template.
+- Provider errors are shown on the campaign page for correction.
+
+Required Render variables:
+WHATSAPP_ENABLED=true
+WHATSAPP_PROVIDER=360dialog
+D360_API_KEY=<channel API key>
+D360_API_BASE_URL=https://waba-v2.360dialog.io
+BASE_URL=https://telesales.onrender.com
+
+Optional override:
+D360_TEMPLATE_API_URL=https://waba-v2.360dialog.io/v1/configs/templates
+
+Important:
+Meta/360dialog controls approval. TeleSales submits and monitors the template but cannot approve it itself.

@@ -23,9 +23,17 @@
 <div id="templateCheckedText" class="small text-muted">{% if campaign.template_checked_at %}Last checked {{ campaign.template_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC.{% else %}Not checked yet.{% endif %}</div>
 <div id="templateStatusError" class="small text-danger mt-1">{{ campaign.template_status_error or '' }}</div>
 </div>
+<div class="d-flex gap-2 flex-wrap">
 <form method="post" action="{{ url_for('communications.update_template_status', campaign_id=campaign.id) }}">
 <button id="refreshTemplateButton" class="btn btn-outline-primary">Check status now</button>
 </form>
+{% if campaign.template_status in ['Pending','Not found','Submission failed','Rejected'] and not campaign.template_submitted_at %}
+<form method="post" action="{{ url_for('communications.create_campaign_template', campaign_id=campaign.id) }}" onsubmit="return confirm('Submit this image, wording and buttons to 360dialog/Meta for approval?')">
+<button class="btn btn-success">Create and submit template</button>
+</form>
+{% endif %}
+</div>
+{% if campaign.template_submitted_at %}<div class="small text-muted mt-2">Submitted {{ campaign.template_submitted_at.strftime('%Y-%m-%d %H:%M') }} UTC{% if campaign.template_provider_id %} · Provider ID {{ campaign.template_provider_id }}{% endif %}. TeleSales checks automatically while approval is pending.</div>{% endif %}
 </div>
 </div>
 </div></div></div></div></div>{% endif %}
@@ -78,7 +86,13 @@
   }
 
   if (refreshButton) refreshButton.addEventListener('click', function(event){ event.preventDefault(); checkStatus(true); });
-  if (card) checkStatus(false);
+  if (card) {
+    checkStatus(false);
+    const pendingStates = ['Pending','In review','Submission failed'];
+    if (pendingStates.includes({{ campaign.template_status|tojson }})) {
+      window.setInterval(() => checkStatus(false), 60000);
+    }
+  }
 })();
 </script>
 {% endblock %}

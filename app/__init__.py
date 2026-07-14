@@ -57,6 +57,9 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_status_error VARCHAR(1000)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approved_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approved_by_id INTEGER REFERENCES users(id)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_provider_id VARCHAR(160)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_submitted_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approval_notified_at TIMESTAMP",
                 "UPDATE communication_campaigns SET audience_type = 'group' WHERE audience_type IS NULL OR TRIM(audience_type) = ''",
                 "UPDATE communication_campaigns SET template_status = 'Pending' WHERE template_status IS NULL OR TRIM(template_status) = ''",
             ]

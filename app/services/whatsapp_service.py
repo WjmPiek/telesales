@@ -223,3 +223,86 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
         return TemplateStatusResult(True, status="Not found", error=f"Template '{name}' ({language}) was not found in the connected WhatsApp Business Account.{suffix}")
     except requests.RequestException as exc:
         return TemplateStatusResult(False, error=f"Template status request failed: {exc}")
+
+@dataclass
+class TemplateCreateResult:
+    ok: bool
+    status: str = "Unknown"
+    template_id: str | None = None
+    error: str | None = None
+    response_json: dict | None = None
+
+
+def create_whatsapp_image_template(template_name: str, language_code: str, body_text: str, image_example_url: str) -> TemplateCreateResult:
+    """Submit an image marketing template with callback and opt-out quick replies.
+
+    360dialog accepts the WhatsApp/Meta components schema at its template
+    configuration endpoint. Provider validation errors are returned verbatim so
+    the campaign page can explain exactly what must be corrected.
+    """
+    name = (template_name or "").strip().lower()
+    language = (language_code or "en").strip()
+    body = (body_text or "").strip()
+    if not name or not body or not image_example_url:
+        return TemplateCreateResult(False, error="Template name, body text and a public example image are required.")
+    if not __import__('re').fullmatch(r"[a-z0-9_]+", name):
+        return TemplateCreateResult(False, error="Template name may contain only lowercase letters, numbers and underscores.")
+    if "{{1}}" not in body:
+        return TemplateCreateResult(False, error="The template body must contain {{1}} for the customer's name.")
+
+    payload = {
+        "name": name,
+        "category": "MARKETING",
+        "language": language,
+        "components": [
+            {
+                "type": "HEADER",
+                "format": "IMAGE",
+                "example": {"header_handle": [image_example_url]},
+            },
+            {
+                "type": "BODY",
+                "text": body,
+                "example": {"body_text": [["Wjm"]]},
+            },
+            {
+                "type": "BUTTONS",
+                "buttons": [
+                    {"type": "QUICK_REPLY", "text": "YES, CALL ME BACK"},
+                    {"type": "QUICK_REPLY", "text": "NO THANKS, OPT OUT"},
+                ],
+            },
+        ],
+    }
+
+    if _provider() == "360dialog":
+        api_key = os.getenv("D360_API_KEY")
+        if not api_key:
+            return TemplateCreateResult(False, error="D360_API_KEY is not configured.")
+        base = os.getenv("D360_API_BASE_URL", "https://waba-v2.360dialog.io").rstrip("/")
+        url = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
+        headers = {"D360-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
+    else:
+        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+        waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        if not token or not waba_id:
+            return TemplateCreateResult(False, error="Meta template credentials are incomplete.")
+        url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=40)
+        data = response.json() if response.content else {}
+        if response.status_code >= 400:
+            error = data.get("error") if isinstance(data, dict) else None
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("error_user_msg")
+            else:
+                message = str(error or "")
+            return TemplateCreateResult(False, error=message or response.text or f"HTTP {response.status_code}", response_json=data)
+        template_id = str(data.get("id") or data.get("template_id") or data.get("message_template_id") or "") or None
+        raw_status = str(data.get("status") or data.get("state") or "PENDING").upper()
+        status = "Approved" if raw_status in {"APPROVED", "ACTIVE"} else "Pending"
+        return TemplateCreateResult(True, status=status, template_id=template_id, response_json=data)
+    except requests.RequestException as exc:
+        return TemplateCreateResult(False, error=f"Template submission failed: {exc}")

@@ -17,7 +17,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status
+from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template
 from app.services.branch_access import scope_by_branch
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
@@ -76,6 +76,7 @@ def _get_or_create_manual_policy(first_name, surname, phone):
 
 def _refresh_template_status(campaign):
     """Synchronise a campaign template with the live provider state."""
+    previous_status = campaign.template_status
     result = get_whatsapp_template_status(
         campaign.whatsapp_template_name,
         campaign.whatsapp_template_language or "en_US",
@@ -88,6 +89,16 @@ def _refresh_template_status(campaign):
             if not campaign.template_approved_at:
                 campaign.template_approved_at = datetime.utcnow()
             campaign.template_approved_by_id = None
+            if previous_status != "Approved" and not campaign.template_approval_notified_at:
+                db.session.add(AgentNotification(
+                    user_id=campaign.created_by_id,
+                    title="WhatsApp template approved",
+                    message=f"Template {campaign.whatsapp_template_name} for campaign {campaign.name} is approved. You can now send the campaign.",
+                    notification_type="whatsapp_template_approved",
+                    entity_type="campaign",
+                    entity_id=campaign.id,
+                ))
+                campaign.template_approval_notified_at = datetime.utcnow()
         else:
             campaign.template_approved_at = None
             campaign.template_approved_by_id = None
@@ -227,6 +238,32 @@ def create_campaign():
         db.session.commit()
         if campaign.image_data:
             campaign.image_url = request.url_root.rstrip("/") + url_for("communications.campaign_image", campaign_id=campaign.id)
+
+        template_mode = (request.form.get("template_mode") or "create").strip().lower()
+        if campaign.send_whatsapp and template_mode == "create":
+            creation = create_whatsapp_image_template(
+                campaign.whatsapp_template_name,
+                campaign.whatsapp_template_language or "en",
+                campaign.message_body,
+                campaign.image_url,
+            )
+            campaign.template_checked_at = datetime.utcnow()
+            if creation.ok:
+                campaign.template_provider_id = creation.template_id
+                campaign.template_submitted_at = datetime.utcnow()
+                campaign.template_status = creation.status or "Pending"
+                campaign.template_status_error = None
+                db.session.add(AgentNotification(
+                    user_id=current_user.id,
+                    title="WhatsApp template submitted",
+                    message=f"Template {campaign.whatsapp_template_name} was submitted to Meta for approval.",
+                    notification_type="whatsapp_template_submitted",
+                    entity_type="campaign",
+                    entity_id=campaign.id,
+                ))
+            else:
+                campaign.template_status = "Submission failed"
+                campaign.template_status_error = creation.error
 
         individual_recipient = None
         if campaign.audience_type == "individual":
@@ -394,6 +431,51 @@ def update_template_settings(campaign_id):
         flash("Template details updated. The template is approved and sending is enabled.", "success")
     else:
         flash(f"Template details updated. Current live status: {result.status}.", "warning")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
+
+
+@communications_bp.route("/<int:campaign_id>/template/create", methods=["POST"])
+@login_required
+def create_campaign_template(campaign_id):
+    """Submit the campaign's image template to 360dialog/Meta for approval."""
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not campaign.send_whatsapp:
+        flash("This campaign is not configured for WhatsApp.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    if not campaign.image_data or not campaign.image_url:
+        flash("Upload the campaign image before creating the WhatsApp template.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    result = create_whatsapp_image_template(
+        campaign.whatsapp_template_name,
+        campaign.whatsapp_template_language or "en",
+        campaign.message_body,
+        campaign.image_url,
+    )
+    campaign.template_checked_at = datetime.utcnow()
+    if result.ok:
+        campaign.template_provider_id = result.template_id
+        campaign.template_submitted_at = datetime.utcnow()
+        campaign.template_status = result.status or "Pending"
+        campaign.template_status_error = None
+        campaign.template_approval_notified_at = None
+        db.session.add(AgentNotification(
+            user_id=campaign.created_by_id,
+            title="WhatsApp template submitted",
+            message=f"Template {campaign.whatsapp_template_name} was submitted for Meta review.",
+            notification_type="whatsapp_template_submitted",
+            entity_type="campaign",
+            entity_id=campaign.id,
+        ))
+        db.session.commit()
+        flash("Template submitted successfully. TeleSales will keep checking until Meta approves it.", "success")
+    else:
+        campaign.template_status = "Submission failed"
+        campaign.template_status_error = result.error
+        db.session.commit()
+        flash(f"Template could not be submitted: {result.error}", "danger")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
 
