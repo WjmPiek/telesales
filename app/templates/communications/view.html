@@ -4,7 +4,19 @@
 </style>
 <div class="d-flex justify-content-between flex-wrap gap-2 mb-3"><div><h2>{{ campaign.name }}</h2><p class="text-muted mb-0">WhatsApp image campaign · Template: <strong>{{ campaign.whatsapp_template_name or 'Not configured' }}</strong></p></div><div><a class="btn btn-outline-secondary" href="{{ url_for('communications.campaign_report', campaign_id=campaign.id) }}">Analytics</a> <a class="btn btn-outline-secondary" href="{{ url_for('communications.export_campaign', campaign_id=campaign.id) }}">Export CSV</a> <form class="d-inline" method="post" action="{{ url_for('communications.send_campaign', campaign_id=campaign.id) }}" onsubmit="return confirm('Send this campaign to {{ recipients|length }} selected client(s)?')"><button id="sendCampaignButton" class="btn btn-success" {% if not recipients or (campaign.send_whatsapp and campaign.template_status != 'Approved') %}disabled{% endif %}>Send / retry</button></form></div></div>
 <div class="audience-banner mb-3 d-flex justify-content-between align-items-center flex-wrap gap-3"><div><div class="small text-uppercase fw-bold text-success">Audience</div><h5 class="mb-1">{% if campaign.audience_type == 'individual' %}One individual client{% else %}A group of clients{% endif %}</h5><div class="text-muted">{% if campaign.audience_type == 'individual' %}Select one specific person. Only one recipient can be added to this campaign.{% else %}Select clients manually or add every client matching the current filters.{% endif %}</div></div><span class="badge rounded-pill text-bg-success px-3 py-2">{{ recipients|length }} selected</span></div>
-{% if campaign.image_url or campaign.image_data %}<div class="card mb-3"><div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap"><b>Campaign preview</b><form method="post" action="{{ url_for('communications.replace_campaign_image', campaign_id=campaign.id) }}" enctype="multipart/form-data" class="d-flex gap-2 align-items-center"><input class="form-control form-control-sm" type="file" name="campaign_image" accept="image/png,image/jpeg,image/webp" required><button class="btn btn-sm btn-outline-primary">Replace image</button></form></div><div class="card-body"><div class="row g-4 align-items-start"><div class="col-lg-5"><img src="{{ url_for('communications.campaign_image', campaign_id=campaign.id) if campaign.image_data else campaign.image_url }}" class="img-fluid rounded-4 border" style="max-height:560px;object-fit:contain;width:100%" onerror="this.style.display='none';document.getElementById('missingCampaignImage').classList.remove('d-none')"><div id="missingCampaignImage" class="alert alert-warning d-none">This image was stored on Render's temporary filesystem and disappeared after deployment. Use <strong>Replace image</strong> above. The replacement will be stored safely in PostgreSQL.</div></div><div class="col-lg-7"><div class="p-4 rounded-4" style="background:#efeae2"><div class="bg-white rounded-3 p-3 shadow-sm" style="white-space:pre-line">{{ campaign.message_body }}</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">YES, CALL ME BACK</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">NO THANKS, OPT OUT</div></div><div id="templateStatusCard" class="card mt-3 border-{% if campaign.template_status == 'Approved' %}success{% elif campaign.template_status in ['Rejected','Paused','Disabled','Deleted','Not found'] %}danger{% else %}warning{% endif %}">
+{% if campaign.image_url or campaign.image_data %}<div class="card mb-3"><div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap"><b>Campaign preview</b><form method="post" action="{{ url_for('communications.replace_campaign_image', campaign_id=campaign.id) }}" enctype="multipart/form-data" class="d-flex gap-2 align-items-center"><input class="form-control form-control-sm" type="file" name="campaign_image" accept="image/png,image/jpeg,image/webp" required><button class="btn btn-sm btn-outline-primary">Replace image</button></form></div><div class="card-body"><div class="row g-4 align-items-start"><div class="col-lg-5"><img src="{{ url_for('communications.campaign_image', campaign_id=campaign.id) if campaign.image_data else campaign.image_url }}" class="img-fluid rounded-4 border" style="max-height:560px;object-fit:contain;width:100%" onerror="this.style.display='none';document.getElementById('missingCampaignImage').classList.remove('d-none')"><div id="missingCampaignImage" class="alert alert-warning d-none">This image was stored on Render's temporary filesystem and disappeared after deployment. Use <strong>Replace image</strong> above. The replacement will be stored safely in PostgreSQL.</div></div><div class="col-lg-7"><div class="p-4 rounded-4" style="background:#efeae2"><div class="bg-white rounded-3 p-3 shadow-sm" style="white-space:pre-line">{{ campaign.message_body }}</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">YES, CALL ME BACK</div><div class="bg-white rounded-3 p-3 text-center fw-bold mt-2" style="color:#087b65">NO THANKS, OPT OUT</div></div><div class="card mt-3 border-info">
+<div class="card-body">
+<div class="small text-uppercase fw-bold text-info mb-1">360dialog header image URL</div>
+<p class="mb-2 small text-muted">Copy this public image link and paste it into the <strong>Header image URL</strong> field in 360dialog when requested.</p>
+<div class="input-group">
+<input id="campaignImageUrl" class="form-control" type="text" readonly value="{{ campaign.image_url or (request.url_root.rstrip('/') ~ url_for('communications.campaign_image', campaign_id=campaign.id)) }}">
+<button id="copyCampaignImageUrl" class="btn btn-outline-info" type="button">Copy URL</button>
+<a class="btn btn-outline-secondary" target="_blank" rel="noopener" href="{{ campaign.image_url or url_for('communications.campaign_image', campaign_id=campaign.id) }}">Open image</a>
+</div>
+<div id="copyCampaignImageUrlMessage" class="small text-success mt-2 d-none">Image URL copied.</div>
+</div>
+</div>
+<div id="templateStatusCard" class="card mt-3 border-{% if campaign.template_status == 'Approved' %}success{% elif campaign.template_status in ['Rejected','Paused','Disabled','Deleted','Not found'] %}danger{% else %}warning{% endif %}">
 <div class="card-body">
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
 <div>
@@ -48,6 +60,25 @@
 
 <script>
 (function(){
+  const copyButton = document.getElementById('copyCampaignImageUrl');
+  const imageUrlInput = document.getElementById('campaignImageUrl');
+  const copyMessage = document.getElementById('copyCampaignImageUrlMessage');
+  if (copyButton && imageUrlInput) {
+    copyButton.addEventListener('click', async function(){
+      try {
+        await navigator.clipboard.writeText(imageUrlInput.value);
+      } catch (error) {
+        imageUrlInput.focus();
+        imageUrlInput.select();
+        document.execCommand('copy');
+      }
+      if (copyMessage) {
+        copyMessage.classList.remove('d-none');
+        window.setTimeout(() => copyMessage.classList.add('d-none'), 2500);
+      }
+    });
+  }
+
   const checkUrl = {{ url_for('communications.check_template_status', campaign_id=campaign.id)|tojson }};
   const hasRecipients = {{ (recipients|length > 0)|tojson }};
   const sendButton = document.getElementById('sendCampaignButton');

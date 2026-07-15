@@ -453,14 +453,23 @@ def create_campaign_template(campaign_id):
     public_base = (os.getenv("BASE_URL") or request.url_root).rstrip("/")
     public_image_url = public_base + url_for("communications.campaign_image", campaign_id=campaign.id)
     campaign.image_url = public_image_url
-    image_ok, image_error = validate_public_image_url(public_image_url)
-    if not image_ok:
-        campaign.template_status = "Submission failed"
-        campaign.template_status_error = image_error
-        campaign.template_checked_at = datetime.utcnow()
-        db.session.commit()
-        flash(f"Template could not be submitted: {image_error}", "danger")
-        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    # Do not make the Render web service call itself while using a single sync
+    # Gunicorn worker. That self-request can deadlock until the 25-second timeout.
+    # The campaign image is already stored in PostgreSQL and served by the public
+    # campaign_image route, so only perform an external reachability test when the
+    # image host differs from the current request host.
+    from urllib.parse import urlparse
+    image_host = (urlparse(public_image_url).netloc or "").lower()
+    request_host = (request.host or "").lower()
+    if image_host and request_host and image_host != request_host:
+        image_ok, image_error = validate_public_image_url(public_image_url)
+        if not image_ok:
+            campaign.template_status = "Submission failed"
+            campaign.template_status_error = image_error
+            campaign.template_checked_at = datetime.utcnow()
+            db.session.commit()
+            flash(f"Template could not be submitted: {image_error}", "danger")
+            return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
     result = create_whatsapp_image_template(
         campaign.whatsapp_template_name,
