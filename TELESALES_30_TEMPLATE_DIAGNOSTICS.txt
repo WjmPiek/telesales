@@ -1,0 +1,13 @@
+TELESALES 30 - LIVE TEMPLATE DIAGNOSTICS AND APPROVAL ALERTS
+
+Changes:
+- Added a live Meta/360dialog template diagnostics panel to every campaign.
+- Displays provider, template ID, provider request ID, category, language,
+  quality rating, public header image URL, submission time, approval time,
+  and moderation/rejection reason when returned by the provider.
+- Existing 60-second automatic status polling remains active for pending templates.
+- Existing internal AgentNotification is created when approval is first detected.
+- Added an on-page approval alert and optional browser desktop notification.
+- Send / retry remains disabled until live status is Approved.
+
+No database migration is required.

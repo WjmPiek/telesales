@@ -525,12 +525,29 @@ def check_template_status(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
     result = _refresh_template_status(campaign)
+    template = result.template or {}
+    components = template.get("components") if isinstance(template, dict) else None
     return jsonify({
         "ok": result.ok,
         "status": campaign.template_status,
+        "raw_status": result.raw_status,
         "approved": campaign.template_status == "Approved",
         "checked_at": campaign.template_checked_at.isoformat() if campaign.template_checked_at else None,
+        "submitted_at": campaign.template_submitted_at.isoformat() if campaign.template_submitted_at else None,
+        "approved_at": campaign.template_approved_at.isoformat() if campaign.template_approved_at else None,
         "error": result.error,
+        "diagnostics": {
+            "provider": result.provider or os.getenv("WHATSAPP_PROVIDER", "360dialog"),
+            "provider_request_id": result.provider_request_id,
+            "template_id": result.template_id,
+            "template_name": campaign.whatsapp_template_name,
+            "category": result.category or (template.get("category") if isinstance(template, dict) else None),
+            "language": result.language or campaign.whatsapp_template_language,
+            "rejection_reason": result.rejection_reason,
+            "quality_score": result.quality_score,
+            "image_url": campaign.image_url or (request.url_root.rstrip("/") + url_for("communications.campaign_image", campaign_id=campaign.id)),
+            "components": components if isinstance(components, list) else [],
+        },
     }), (200 if result.ok else 422)
 
 

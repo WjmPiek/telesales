@@ -147,6 +147,13 @@ class TemplateStatusResult:
     raw_status: str | None = None
     error: str | None = None
     template: dict | None = None
+    provider: str | None = None
+    provider_request_id: str | None = None
+    template_id: str | None = None
+    category: str | None = None
+    language: str | None = None
+    rejection_reason: str | None = None
+    quality_score: str | None = None
 
 
 def get_whatsapp_template_status(template_name: str, language_code: str = "en_US") -> TemplateStatusResult:
@@ -180,7 +187,7 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
     if _provider() == "360dialog":
         api_key = os.getenv("D360_API_KEY")
         if not api_key:
-            return TemplateStatusResult(False, error="D360_API_KEY is not configured.")
+            return TemplateStatusResult(False, error="D360_API_KEY is not configured.", provider="360dialog")
         base = os.getenv("D360_API_BASE_URL", "https://waba-v2.360dialog.io").rstrip("/")
         url = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
         headers = {"D360-API-KEY": api_key, "Accept": "application/json"}
@@ -188,7 +195,7 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
         token = os.getenv("WHATSAPP_ACCESS_TOKEN")
         waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
         if not token or not waba_id:
-            return TemplateStatusResult(False, error="Meta template credentials are incomplete. Configure WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID.")
+            return TemplateStatusResult(False, error="Meta template credentials are incomplete. Configure WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID.", provider="meta")
         url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
@@ -234,7 +241,34 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
             same_base_language = actual_language.split("_")[0] == wanted_language.split("_")[0]
             if exact_language or same_base_language:
                 raw_status = item.get("status") or item.get("state") or item.get("template_status")
-                return TemplateStatusResult(True, status=normalize(raw_status), raw_status=str(raw_status or "UNKNOWN"), template=item)
+                reason = (
+                    item.get("rejected_reason") or item.get("rejection_reason") or
+                    item.get("reason") or item.get("status_reason") or
+                    item.get("last_error")
+                )
+                if isinstance(reason, dict):
+                    reason = reason.get("message") or reason.get("reason") or str(reason)
+                quality = item.get("quality_score") or item.get("quality_rating") or item.get("quality")
+                if isinstance(quality, dict):
+                    quality = quality.get("score") or quality.get("rating") or str(quality)
+                request_id = (
+                    response.headers.get("x-request-id") or
+                    response.headers.get("x-fb-trace-id") or
+                    response.headers.get("x-business-use-case-usage")
+                )
+                return TemplateStatusResult(
+                    True,
+                    status=normalize(raw_status),
+                    raw_status=str(raw_status or "UNKNOWN"),
+                    template=item,
+                    provider=_provider(),
+                    provider_request_id=request_id,
+                    template_id=str(item.get("id") or item.get("template_id") or item.get("message_template_id") or "") or None,
+                    category=str(item.get("category") or "") or None,
+                    language=str(item_language or "") or None,
+                    rejection_reason=str(reason or "") or None,
+                    quality_score=str(quality or "") or None,
+                )
 
         if same_name:
             langs = ", ".join(sorted({lang or "unspecified" for _, lang in same_name}))

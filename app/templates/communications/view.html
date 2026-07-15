@@ -34,6 +34,30 @@
 <p class="mb-2">The system checks <strong>{{ campaign.whatsapp_template_name }}</strong> directly with the connected WhatsApp provider. The Send button becomes active automatically only when the live status is <strong>Approved</strong>.</p>
 <div id="templateCheckedText" class="small text-muted">{% if campaign.template_checked_at %}Last checked {{ campaign.template_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC.{% else %}Not checked yet.{% endif %}</div>
 <div id="templateStatusError" class="small text-danger mt-1">{{ campaign.template_status_error or '' }}</div>
+<div id="templateApprovalNotice" class="alert alert-success mt-3 d-none mb-0" role="alert"><strong>Template approved.</strong> This campaign is now ready to send.</div>
+<div class="card mt-3 bg-light border-0">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+      <div>
+        <div class="small text-uppercase fw-bold text-muted">Meta template diagnostics</div>
+        <div class="small text-muted">Live technical details returned by the connected WhatsApp provider.</div>
+      </div>
+      <span id="diagProviderBadge" class="badge text-bg-secondary">360dialog</span>
+    </div>
+    <div class="row g-3 small">
+      <div class="col-md-4"><div class="text-muted">Template name</div><strong id="diagTemplateName">{{ campaign.whatsapp_template_name or '-' }}</strong></div>
+      <div class="col-md-4"><div class="text-muted">Template ID</div><strong id="diagTemplateId">Waiting for provider</strong></div>
+      <div class="col-md-4"><div class="text-muted">Provider request ID</div><strong id="diagRequestId">Waiting for provider</strong></div>
+      <div class="col-md-4"><div class="text-muted">Category</div><strong id="diagCategory">Marketing</strong></div>
+      <div class="col-md-4"><div class="text-muted">Language</div><strong id="diagLanguage">{{ campaign.whatsapp_template_language or 'en' }}</strong></div>
+      <div class="col-md-4"><div class="text-muted">Quality rating</div><strong id="diagQuality">Not available yet</strong></div>
+      <div class="col-12"><div class="text-muted">Header image URL sent to provider</div><a id="diagImageUrl" class="text-break" target="_blank" rel="noopener" href="#">Waiting for status check</a></div>
+      <div class="col-12"><div class="text-muted">Moderation / rejection reason</div><strong id="diagReason">Waiting for Meta review</strong></div>
+      <div class="col-md-6"><div class="text-muted">Submitted</div><strong id="diagSubmitted">{% if campaign.template_submitted_at %}{{ campaign.template_submitted_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Not recorded{% endif %}</strong></div>
+      <div class="col-md-6"><div class="text-muted">Approved</div><strong id="diagApproved">{% if campaign.template_approved_at %}{{ campaign.template_approved_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Not approved yet{% endif %}</strong></div>
+    </div>
+  </div>
+</div>
 </div>
 <div class="d-flex gap-2 flex-wrap">
 <form method="post" action="{{ url_for('communications.update_template_status', campaign_id=campaign.id) }}">
@@ -87,6 +111,21 @@
   const checked = document.getElementById('templateCheckedText');
   const errorBox = document.getElementById('templateStatusError');
   const refreshButton = document.getElementById('refreshTemplateButton');
+  const approvalNotice = document.getElementById('templateApprovalNotice');
+  const diag = {
+    provider: document.getElementById('diagProviderBadge'),
+    templateName: document.getElementById('diagTemplateName'),
+    templateId: document.getElementById('diagTemplateId'),
+    requestId: document.getElementById('diagRequestId'),
+    category: document.getElementById('diagCategory'),
+    language: document.getElementById('diagLanguage'),
+    quality: document.getElementById('diagQuality'),
+    imageUrl: document.getElementById('diagImageUrl'),
+    reason: document.getElementById('diagReason'),
+    submitted: document.getElementById('diagSubmitted'),
+    approved: document.getElementById('diagApproved')
+  };
+  let lastKnownApproved = {{ (campaign.template_status == 'Approved')|tojson }};
 
   function applyStatus(data) {
     const approved = data.approved === true;
@@ -101,6 +140,25 @@
     }
     if (checked && data.checked_at) checked.textContent = 'Last checked ' + new Date(data.checked_at).toLocaleString() + '.';
     if (errorBox) errorBox.textContent = data.error || '';
+    const d = data.diagnostics || {};
+    if (diag.provider) diag.provider.textContent = d.provider || 'WhatsApp provider';
+    if (diag.templateName) diag.templateName.textContent = d.template_name || '-';
+    if (diag.templateId) diag.templateId.textContent = d.template_id || 'Not supplied by provider';
+    if (diag.requestId) diag.requestId.textContent = d.provider_request_id || 'Not supplied by provider';
+    if (diag.category) diag.category.textContent = d.category || 'Marketing';
+    if (diag.language) diag.language.textContent = d.language || '-';
+    if (diag.quality) diag.quality.textContent = d.quality_score || 'Not available yet';
+    if (diag.imageUrl && d.image_url) { diag.imageUrl.textContent = d.image_url; diag.imageUrl.href = d.image_url; }
+    if (diag.reason) diag.reason.textContent = d.rejection_reason || data.error || (approved ? 'Approved by Meta' : 'Waiting for Meta review');
+    if (diag.submitted) diag.submitted.textContent = data.submitted_at ? new Date(data.submitted_at).toLocaleString() : 'Not recorded';
+    if (diag.approved) diag.approved.textContent = data.approved_at ? new Date(data.approved_at).toLocaleString() : 'Not approved yet';
+    if (approved && !lastKnownApproved) {
+      if (approvalNotice) approvalNotice.classList.remove('d-none');
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('WhatsApp template approved', {body: (d.template_name || 'Template') + ' is ready to send.'});
+      }
+    }
+    lastKnownApproved = approved;
   }
 
   async function checkStatus(showWorking) {
@@ -116,7 +174,11 @@
     }
   }
 
-  if (refreshButton) refreshButton.addEventListener('click', function(event){ event.preventDefault(); checkStatus(true); });
+  if (refreshButton) refreshButton.addEventListener('click', function(event){
+    event.preventDefault();
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    checkStatus(true);
+  });
   if (card) {
     checkStatus(false);
     const pendingStates = ['Pending','In review','Submission failed'];
