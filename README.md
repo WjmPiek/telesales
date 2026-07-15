@@ -267,3 +267,27 @@ AUTO_CREATE_TABLES=0
 
 ## WhatsApp image campaigns
 Create the approved 360dialog template with an IMAGE header and two QUICK_REPLY buttons in this order: `YES, CALL ME BACK`, `NO THANKS, OPT OUT`. The campaign sender supplies per-recipient payloads so button clicks create callbacks or suppress future marketing. Set `BASE_URL` to the public Render/custom domain so 360dialog can fetch uploaded images. For permanent image retention on Render, attach a persistent disk or use object storage.
+
+## WhatsApp Enterprise Phases 1-7
+
+This build includes:
+
+- Automatic template naming, `{{1}}` insertion, Meta body examples, 360dialog submission, image type/size/HTTPS validation.
+- Permanent database-backed media, optional Cloudinary HTTPS delivery, checksum-based media versions, and stable campaign image URLs.
+- Automatic template approval polling, retries, notifications, provider diagnostics and job monitoring.
+- Individual/group campaigns, scheduled sends, queue pause/resume/retry, duplicate, archive and safe deletion.
+- Live WhatsApp inbox, callbacks, opt-outs, agent assignment and fixed composer/message history.
+- Enterprise dashboard for template, message, queue, media and provider health statistics.
+- Audit events, provider logs, automatic scheduler recovery and worker CLI support.
+
+### Render deployment
+
+Set `BASE_URL` to the public HTTPS Render service URL. Configure `D360_API_KEY`, `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=360dialog`, and `WHATSAPP_VERIFY_TOKEN`.
+
+For a single web process, leave `ENABLE_WHATSAPP_SCHEDULER=1`. For a dedicated Render background worker, set it to `0` on the web service and run:
+
+```bash
+flask process-whatsapp-jobs
+```
+
+Run the command on a recurring cron/worker loop for provider jobs. Scheduled campaign processing is also available through `app.services.whatsapp_campaign_engine.process_scheduled_campaigns()` and is automatically called by the built-in scheduler.

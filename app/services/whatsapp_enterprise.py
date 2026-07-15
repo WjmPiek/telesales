@@ -22,6 +22,8 @@ from app.models import (
     WhatsAppTemplate,
     WhatsAppMediaAsset,
     WhatsAppProviderJob,
+    WhatsAppMediaVersion,
+    WhatsAppProviderLog,
 )
 from app.services.whatsapp_service import (
     create_whatsapp_image_template,
@@ -123,8 +125,34 @@ def ensure_media_asset(campaign: CommunicationCampaign) -> MediaPublishResult:
         db.session.add(asset)
     if result.ok:
         campaign.image_url = result.url
+    db.session.flush()
+    checksum = hashlib.sha256(campaign.image_data or b"").hexdigest() if campaign.image_data else None
+    last_version = WhatsAppMediaVersion.query.filter_by(media_asset_id=asset.id).order_by(WhatsAppMediaVersion.version_number.desc()).first()
+    if campaign.image_data and (not last_version or last_version.checksum != checksum):
+        db.session.add(WhatsAppMediaVersion(
+            media_asset_id=asset.id,
+            version_number=(last_version.version_number + 1) if last_version else 1,
+            filename=campaign.image_filename,
+            mime_type=campaign.image_mimetype,
+            file_data=campaign.image_data,
+            public_url=result.url,
+            checksum=checksum,
+            created_by_id=campaign.created_by_id,
+        ))
     db.session.commit()
     return result
+
+
+def _provider_log(operation, campaign, status, response=None, error=None, started=None):
+    duration = int((time.monotonic() - started) * 1000) if started else None
+    db.session.add(WhatsAppProviderLog(
+        operation=operation,
+        campaign_id=campaign.id if campaign else None,
+        status=status,
+        response_summary=json.dumps(response or {}, default=str)[:20000],
+        error=error,
+        duration_ms=duration,
+    ))
 
 
 def template_record_for_campaign(campaign: CommunicationCampaign) -> WhatsAppTemplate:
@@ -170,6 +198,7 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
     campaign.image_url = media.url
     db.session.commit()
 
+    provider_started = time.monotonic()
     result = create_whatsapp_image_template(
         campaign.whatsapp_template_name,
         campaign.whatsapp_template_language or "en",
@@ -179,6 +208,7 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
     now = datetime.utcnow()
     template.last_checked_at = now
     template.last_provider_response = json.dumps(result.response_json or {}, default=str)[:20000]
+    _provider_log("submit_template", campaign, "success" if result.ok else "failed", result.response_json, result.error, provider_started)
     if result.ok:
         template.provider_template_id = result.template_id
         template.status = result.status or "Pending"
@@ -215,6 +245,7 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
 
 def sync_campaign_template(campaign: CommunicationCampaign) -> tuple[bool, str]:
     template = template_record_for_campaign(campaign)
+    provider_started = time.monotonic()
     result = get_whatsapp_template_status(template.name, template.language)
     now = datetime.utcnow()
     previous = template.status
@@ -226,6 +257,7 @@ def sync_campaign_template(campaign: CommunicationCampaign) -> tuple[bool, str]:
     template.quality_rating = result.quality_score
     template.rejection_reason = result.rejection_reason
     template.last_error = result.error
+    _provider_log("sync_template", campaign, "success" if result.ok else "failed", result.template, result.error, provider_started)
     if result.ok:
         template.status = result.status
         campaign.template_status = result.status

@@ -29,7 +29,7 @@
       <a class="side-link" href="{{ url_for('recovery.queue') }}"><span>{{ 'My Clients' if not (admin_role or manager_role) else 'Import / Leads' }}</span></a>
       <a class="side-link" href="{{ url_for('recovery.callbacks') }}"><span>Callbacks</span></a>
       <a class="side-link" href="{{ url_for('communications.notifications') }}"><span>Notifications {% if unread_notification_count %}<span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</span></a>
-      {% if admin_role or manager_role %}<a class="side-link" href="{{ url_for('communications.index') }}"><span>Communications</span></a><a class="side-link" href="{{ url_for('communications.whatsapp_dashboard') }}"><span>WhatsApp Enterprise</span></a><a class="side-link" href="{{ url_for('communications.template_library') }}"><span>WhatsApp Templates</span></a>{% endif %}
+      {% if admin_role or manager_role %}<a class="side-link" href="{{ url_for('communications.index') }}"><span>Communications</span></a><a class="side-link" href="{{ url_for('communications.whatsapp_dashboard') }}"><span>WhatsApp Enterprise</span></a><a class="side-link" href="{{ url_for('communications.template_library') }}"><span>WhatsApp Templates</span></a><a class="side-link" href="{{ url_for('communications.media_library') }}"><span>Media Library</span></a>{% endif %}
       <a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span>WhatsApp Centre</span></a>
       <a class="side-link" href="{{ url_for('recovery.pipeline') }}"><span>Pipeline</span></a>
       <a class="side-link" href="{{ url_for('applications.list_applications') }}"><span>Applications</span></a>

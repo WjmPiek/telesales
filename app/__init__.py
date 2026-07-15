@@ -60,8 +60,13 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_provider_id VARCHAR(160)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_submitted_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approval_notified_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS queue_status VARCHAR(30) DEFAULT 'idle'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
                 "UPDATE communication_campaigns SET audience_type = 'group' WHERE audience_type IS NULL OR TRIM(audience_type) = ''",
                 "UPDATE communication_campaigns SET template_status = 'Pending' WHERE template_status IS NULL OR TRIM(template_status) = ''",
+                "UPDATE communication_campaigns SET queue_status = 'idle' WHERE queue_status IS NULL OR TRIM(queue_status) = ''",
             ]
             with db.engine.begin() as conn:
                 for stmt in statements:
@@ -224,6 +229,8 @@ def create_app():
                         from app.services.whatsapp_enterprise import process_provider_jobs, sync_due_templates
                         process_provider_jobs(limit=20)
                         sync_due_templates(limit=25)
+                        from app.services.whatsapp_campaign_engine import process_scheduled_campaigns
+                        process_scheduled_campaigns(limit=10)
                     except Exception:
                         app.logger.exception("Automatic WhatsApp template monitor failed")
             scheduler.add_job(_whatsapp_tick, "interval", seconds=60, id="whatsapp_provider_monitor", replace_existing=True, max_instances=1, coalesce=True)

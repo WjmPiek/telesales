@@ -11,7 +11,8 @@ from app import db
 from app.models import (
     CommunicationCampaign, CampaignRecipient, LapsedPolicy, AgentNotification,
     ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication,
-    WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage
+    WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage,
+    WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent
 )
 from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
@@ -20,6 +21,7 @@ from app.services.communication_service import (
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
+from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
@@ -169,7 +171,11 @@ def _send_to_recipient(campaign, recipient, channel):
 def index():
     if not _is_manager():
         return redirect(url_for("communications.notifications"))
-    campaigns = CommunicationCampaign.query.order_by(CommunicationCampaign.created_at.desc()).all()
+    show_archived = request.args.get("archived") == "1"
+    query = CommunicationCampaign.query
+    if not show_archived:
+        query = query.filter(CommunicationCampaign.status != "Archived")
+    campaigns = query.order_by(CommunicationCampaign.created_at.desc()).all()
     summary = {
         "campaigns": len(campaigns),
         "recipients": db.session.query(func.count(CampaignRecipient.id)).scalar() or 0,
@@ -196,8 +202,14 @@ def whatsapp_dashboard():
         "sent_messages": WhatsAppMessage.query.filter_by(direction="outbound").count(),
         "delivered_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="delivered").count(),
         "read_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="read").count(),
+        "scheduled": CommunicationCampaign.query.filter_by(status="Scheduled").count(),
+        "queue_failed": CommunicationCampaign.query.filter_by(queue_status="retry").count(),
+        "media_assets": WhatsAppMediaAsset.query.count(),
+        "provider_errors": WhatsAppProviderLog.query.filter_by(status="failed").count(),
     }
-    return render_template("communications/whatsapp_dashboard.html", templates=templates, jobs=jobs, stats=stats)
+    recent_audit = WhatsAppAuditEvent.query.order_by(WhatsAppAuditEvent.created_at.desc()).limit(20).all()
+    provider_logs = WhatsAppProviderLog.query.order_by(WhatsAppProviderLog.created_at.desc()).limit(20).all()
+    return render_template("communications/whatsapp_dashboard.html", templates=templates, jobs=jobs, stats=stats, recent_audit=recent_audit, provider_logs=provider_logs)
 
 
 @communications_bp.route("/templates")
@@ -262,11 +274,20 @@ def create_campaign():
                 return render_template("communications/create.html")
             image_mimetype = image.mimetype or {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".webp":"image/webp"}.get(ext, "application/octet-stream")
 
+        campaign_name = (request.form.get("name") or "").strip()
+        message_body = (request.form.get("message_body") or "").strip()
+        if "{{1}}" not in message_body:
+            message_body = "Hello {{1}},\n\n" + message_body
+        requested_template_name = (request.form.get("whatsapp_template_name") or "").strip().lower()
+        if not requested_template_name and campaign_name:
+            import re
+            base_name = re.sub(r"[^a-z0-9]+", "_", campaign_name.lower()).strip("_") or "campaign"
+            requested_template_name = f"{base_name}_{datetime.utcnow():%Y%m%d%H%M%S}"
         campaign = CommunicationCampaign(
-            name=(request.form.get("name") or "").strip(),
+            name=campaign_name,
             subject=(request.form.get("subject") or "Funeral policy callback").strip(),
-            message_body=(request.form.get("message_body") or "").strip(),
-            whatsapp_template_name=(request.form.get("whatsapp_template_name") or "").strip() or None,
+            message_body=message_body,
+            whatsapp_template_name=requested_template_name or None,
             whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en_US").strip(),
             image_filename=image_filename, image_url=image_url, image_data=image_data, image_mimetype=image_mimetype,
             audience_type=(request.form.get("audience_type") or "group").strip().lower(),
@@ -288,7 +309,7 @@ def create_campaign():
             if not campaign.image_data:
                 missing.append("advert image")
             if not campaign.whatsapp_template_name:
-                missing.append("approved template name")
+                missing.append("campaign name so a template name can be generated")
             flash("Please provide the " + " and ".join(missing) + " for this WhatsApp image campaign.", "danger")
             return render_template("communications/create.html")
         if not campaign.send_whatsapp and not campaign.send_email:
@@ -640,6 +661,9 @@ def archive_campaign(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
     campaign.status = "Archived"
+    campaign.archived_at = datetime.utcnow()
+    campaign.queue_status = "idle"
+    audit("campaign_archived", "campaign", campaign.id, current_user.id, campaign.name)
     db.session.commit()
     flash("Campaign archived.", "success")
     return redirect(url_for("communications.index"))
@@ -726,7 +750,8 @@ def send_campaign(campaign_id):
             ok, _ = _send_to_recipient(campaign, recipient, "whatsapp"); sent_whatsapp += int(ok)
         if campaign.send_email and recipient.email_status in {None, "Not Sent", "Failed"}:
             ok, _ = _send_to_recipient(campaign, recipient, "email"); sent_email += int(ok)
-    campaign.status = "Sent"; campaign.sent_at = datetime.utcnow()
+    campaign.status = "Sent"; campaign.sent_at = datetime.utcnow(); campaign.queue_status = "completed"
+    audit("campaign_sent", "campaign", campaign.id, current_user.id, f"WhatsApp {sent_whatsapp}; Email {sent_email}")
     db.session.commit()
     flash(f"Campaign processed: {sent_whatsapp} WhatsApp and {sent_email} email message(s) sent.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
@@ -834,6 +859,74 @@ def suppression_list():
     if not _is_manager(): abort(403)
     items = ContactSuppression.query.order_by(ContactSuppression.suppressed_at.desc()).limit(500).all()
     return render_template("communications/suppression.html", items=items)
+
+
+@communications_bp.route("/<int:campaign_id>/schedule", methods=["POST"])
+@login_required
+def schedule_campaign(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    raw = (request.form.get("scheduled_at") or "").strip()
+    try:
+        scheduled = datetime.fromisoformat(raw)
+    except ValueError:
+        flash("Choose a valid campaign date and time.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    if scheduled <= datetime.utcnow():
+        flash("Scheduled time must be in the future.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    campaign.scheduled_at = scheduled
+    campaign.status = "Scheduled"
+    campaign.queue_status = "queued"
+    audit("campaign_scheduled", "campaign", campaign.id, current_user.id, scheduled.isoformat())
+    db.session.commit()
+    flash("Campaign added to the automatic send queue.", "success")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
+@communications_bp.route("/<int:campaign_id>/queue/<action>", methods=["POST"])
+@login_required
+def campaign_queue_action(campaign_id, action):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if action == "pause":
+        campaign.queue_status = "paused"; campaign.status = "Paused"
+    elif action == "resume":
+        campaign.queue_status = "queued"; campaign.status = "Scheduled"
+    elif action == "retry":
+        campaign.queue_status = "retry"; campaign.status = "Scheduled"
+        campaign.scheduled_at = datetime.utcnow()
+    else:
+        abort(404)
+    audit(f"campaign_{action}", "campaign", campaign.id, current_user.id, campaign.name)
+    db.session.commit()
+    flash(f"Campaign queue action completed: {action}.", "success")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
+
+@communications_bp.route("/media")
+@login_required
+def media_library():
+    if not _is_manager(): abort(403)
+    assets = WhatsAppMediaAsset.query.order_by(WhatsAppMediaAsset.updated_at.desc()).all()
+    return render_template("communications/media_library.html", assets=assets)
+
+
+@communications_bp.route("/media/<int:asset_id>/version/<int:version_id>")
+@login_required
+def media_version_file(asset_id, version_id):
+    version = WhatsAppMediaVersion.query.filter_by(id=version_id, media_asset_id=asset_id).first_or_404()
+    if not version.file_data: abort(404)
+    return Response(version.file_data, mimetype=version.mime_type or "application/octet-stream", headers={"Cache-Control":"public, max-age=31536000, immutable"})
+
+
+@communications_bp.route("/audit")
+@login_required
+def whatsapp_audit():
+    if not _is_manager(): abort(403)
+    events = WhatsAppAuditEvent.query.order_by(WhatsAppAuditEvent.created_at.desc()).limit(500).all()
+    logs = WhatsAppProviderLog.query.order_by(WhatsAppProviderLog.created_at.desc()).limit(500).all()
+    return render_template("communications/whatsapp_audit.html", events=events, logs=logs)
 
 
 @communications_bp.route("/webhooks/whatsapp", methods=["GET", "POST"])

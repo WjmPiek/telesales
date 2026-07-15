@@ -708,6 +708,10 @@ class CommunicationCampaign(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     sent_at = db.Column(db.DateTime)
+    scheduled_at = db.Column(db.DateTime, index=True)
+    queue_status = db.Column(db.String(30), default="idle", nullable=False, index=True)
+    archived_at = db.Column(db.DateTime)
+    deleted_at = db.Column(db.DateTime)
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     template_approved_by = db.relationship("User", foreign_keys=[template_approved_by_id])
 
@@ -921,3 +925,46 @@ class WhatsAppProviderJob(db.Model):
     started_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
     campaign = db.relationship("CommunicationCampaign")
+
+class WhatsAppMediaVersion(db.Model):
+    __tablename__ = "whatsapp_media_versions"
+    id = db.Column(db.Integer, primary_key=True)
+    media_asset_id = db.Column(db.Integer, db.ForeignKey("whatsapp_media_assets.id"), nullable=False, index=True)
+    version_number = db.Column(db.Integer, nullable=False)
+    filename = db.Column(db.String(255))
+    mime_type = db.Column(db.String(120))
+    file_data = db.Column(db.LargeBinary)
+    public_url = db.Column(db.String(1200))
+    checksum = db.Column(db.String(64), index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    media_asset = db.relationship("WhatsAppMediaAsset", backref=db.backref("versions", lazy=True, order_by="WhatsAppMediaVersion.version_number.desc()"))
+    created_by = db.relationship("User")
+    __table_args__ = (db.UniqueConstraint("media_asset_id", "version_number", name="uq_whatsapp_media_version"),)
+
+
+class WhatsAppProviderLog(db.Model):
+    __tablename__ = "whatsapp_provider_logs"
+    id = db.Column(db.Integer, primary_key=True)
+    operation = db.Column(db.String(80), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id"), index=True)
+    provider = db.Column(db.String(80), default="360dialog", nullable=False, index=True)
+    status = db.Column(db.String(30), nullable=False, index=True)
+    request_summary = db.Column(db.Text)
+    response_summary = db.Column(db.Text)
+    error = db.Column(db.Text)
+    duration_ms = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    campaign = db.relationship("CommunicationCampaign")
+
+
+class WhatsAppAuditEvent(db.Model):
+    __tablename__ = "whatsapp_audit_events"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    action = db.Column(db.String(100), nullable=False, index=True)
+    entity_type = db.Column(db.String(60), nullable=False, index=True)
+    entity_id = db.Column(db.Integer, index=True)
+    details = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    user = db.relationship("User")
