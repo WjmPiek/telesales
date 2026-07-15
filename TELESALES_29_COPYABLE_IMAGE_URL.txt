@@ -1,9 +1,0 @@
-TeleSales 29 - Copyable 360dialog Image URL
-
-Changes:
-- Displays the public campaign image URL directly on the campaign page.
-- Adds Copy URL and Open image buttons.
-- Avoids Render self-request deadlocks when only one sync Gunicorn worker is running.
-- Template submission now uses the existing PostgreSQL-backed public image endpoint without first calling itself.
-
-No database migration is required.

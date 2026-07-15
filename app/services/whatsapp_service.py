@@ -303,9 +303,11 @@ def create_whatsapp_image_template(template_name: str, language_code: str, body_
     image_example_url = (image_example_url or "").strip()
     if not name or not body or not image_example_url:
         return TemplateCreateResult(False, error="Template name, body text and a public example image are required.")
-    image_ok, image_error = validate_public_image_url(image_example_url)
-    if not image_ok:
-        return TemplateCreateResult(False, error=image_error)
+    # Do not make a single-worker Render service call its own public URL here.
+    # That can deadlock until timeout. The image bytes were already validated
+    # during upload; 360dialog/Meta will fetch the HTTPS URL during submission.
+    if not image_example_url.lower().startswith("https://"):
+        return TemplateCreateResult(False, error="The template header image must use a public HTTPS URL.")
     if not __import__('re').fullmatch(r"[a-z0-9_]+", name):
         return TemplateCreateResult(False, error="Template name may contain only lowercase letters, numbers and underscores.")
     if "{{1}}" not in body:

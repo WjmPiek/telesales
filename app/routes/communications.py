@@ -10,7 +10,8 @@ from sqlalchemy import func
 from app import db
 from app.models import (
     CommunicationCampaign, CampaignRecipient, LapsedPolicy, AgentNotification,
-    ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication
+    ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication,
+    WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage
 )
 from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
@@ -18,6 +19,7 @@ from app.services.communication_service import (
 )
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url
+from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.branch_access import scope_by_branch
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
@@ -177,6 +179,64 @@ def index():
     return render_template("communications/index.html", campaigns=campaigns, summary=summary)
 
 
+
+
+@communications_bp.route("/whatsapp-dashboard")
+@login_required
+def whatsapp_dashboard():
+    if not _is_manager(): abort(403)
+    templates = WhatsAppTemplate.query.order_by(WhatsAppTemplate.created_at.desc()).limit(100).all()
+    jobs = WhatsAppProviderJob.query.order_by(WhatsAppProviderJob.created_at.desc()).limit(25).all()
+    stats = {
+        "templates": WhatsAppTemplate.query.count(),
+        "pending": WhatsAppTemplate.query.filter(WhatsAppTemplate.status.in_(["Pending", "Submitting"])).count(),
+        "approved": WhatsAppTemplate.query.filter_by(status="Approved").count(),
+        "rejected": WhatsAppTemplate.query.filter_by(status="Rejected").count(),
+        "queued_jobs": WhatsAppProviderJob.query.filter_by(status="pending").count(),
+        "sent_messages": WhatsAppMessage.query.filter_by(direction="outbound").count(),
+        "delivered_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="delivered").count(),
+        "read_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="read").count(),
+    }
+    return render_template("communications/whatsapp_dashboard.html", templates=templates, jobs=jobs, stats=stats)
+
+
+@communications_bp.route("/templates")
+@login_required
+def template_library():
+    if not _is_manager(): abort(403)
+    templates = WhatsAppTemplate.query.order_by(WhatsAppTemplate.updated_at.desc()).all()
+    return render_template("communications/templates.html", templates=templates)
+
+
+@communications_bp.route("/templates/<int:template_id>/sync", methods=["POST"])
+@login_required
+def sync_template_record(template_id):
+    if not _is_manager(): abort(403)
+    template = WhatsAppTemplate.query.get_or_404(template_id)
+    campaign = CommunicationCampaign.query.get_or_404(template.campaign_id)
+    ok, message = sync_campaign_template(campaign)
+    flash(("Template synchronized: " if ok else "Template sync failed: ") + message, "success" if ok else "danger")
+    return redirect(url_for("communications.template_library"))
+
+
+@communications_bp.route("/templates/sync-all", methods=["POST"])
+@login_required
+def sync_all_templates():
+    if not _is_manager(): abort(403)
+    pending = WhatsAppTemplate.query.filter(WhatsAppTemplate.status.in_(["Pending", "Submitting", "Submission failed"])).all()
+    count = 0
+    for item in pending:
+        campaign = db.session.get(CommunicationCampaign, item.campaign_id)
+        if campaign:
+            if item.status == "Submission failed":
+                submit_campaign_template(campaign, force=True)
+            else:
+                sync_campaign_template(campaign)
+            count += 1
+    flash(f"Synchronized {count} WhatsApp template(s).", "success")
+    return redirect(url_for("communications.template_library"))
+
+
 @communications_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def create_campaign():
@@ -241,29 +301,10 @@ def create_campaign():
 
         template_mode = (request.form.get("template_mode") or "create").strip().lower()
         if campaign.send_whatsapp and template_mode == "create":
-            creation = create_whatsapp_image_template(
-                campaign.whatsapp_template_name,
-                campaign.whatsapp_template_language or "en",
-                campaign.message_body,
-                campaign.image_url,
-            )
-            campaign.template_checked_at = datetime.utcnow()
-            if creation.ok:
-                campaign.template_provider_id = creation.template_id
-                campaign.template_submitted_at = datetime.utcnow()
-                campaign.template_status = creation.status or "Pending"
-                campaign.template_status_error = None
-                db.session.add(AgentNotification(
-                    user_id=current_user.id,
-                    title="WhatsApp template submitted",
-                    message=f"Template {campaign.whatsapp_template_name} was submitted to Meta for approval.",
-                    notification_type="whatsapp_template_submitted",
-                    entity_type="campaign",
-                    entity_id=campaign.id,
-                ))
-            else:
-                campaign.template_status = "Submission failed"
-                campaign.template_status_error = creation.error
+            ok, submit_message = submit_campaign_template(campaign)
+            if not ok:
+                queue_provider_job("submit_template", campaign.id, delay_seconds=120, max_attempts=5)
+                flash(f"Campaign saved. Automatic template submission will retry: {submit_message}", "warning")
 
         individual_recipient = None
         if campaign.audience_type == "individual":
@@ -471,34 +512,12 @@ def create_campaign_template(campaign_id):
             flash(f"Template could not be submitted: {image_error}", "danger")
             return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
-    result = create_whatsapp_image_template(
-        campaign.whatsapp_template_name,
-        campaign.whatsapp_template_language or "en",
-        campaign.message_body,
-        public_image_url,
-    )
-    campaign.template_checked_at = datetime.utcnow()
-    if result.ok:
-        campaign.template_provider_id = result.template_id
-        campaign.template_submitted_at = datetime.utcnow()
-        campaign.template_status = result.status or "Pending"
-        campaign.template_status_error = None
-        campaign.template_approval_notified_at = None
-        db.session.add(AgentNotification(
-            user_id=campaign.created_by_id,
-            title="WhatsApp template submitted",
-            message=f"Template {campaign.whatsapp_template_name} was submitted for Meta review with its campaign image example.",
-            notification_type="whatsapp_template_submitted",
-            entity_type="campaign",
-            entity_id=campaign.id,
-        ))
-        db.session.commit()
-        flash("Template submitted successfully. TeleSales will keep checking until Meta approves it.", "success")
+    ok, message = submit_campaign_template(campaign, force=True)
+    if ok:
+        flash("Template submitted automatically to 360dialog/Meta. TeleSales will monitor it until approved.", "success")
     else:
-        campaign.template_status = "Submission failed"
-        campaign.template_status_error = result.error
-        db.session.commit()
-        flash(f"Template could not be submitted: {result.error}", "danger")
+        queue_provider_job("submit_template", campaign.id, delay_seconds=120, max_attempts=5)
+        flash(f"Template submission is queued for automatic retry: {message}", "warning")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
 
@@ -589,6 +608,9 @@ def delete_campaign(campaign_id):
         AgentNotification.query.filter_by(
             entity_type="campaign", entity_id=campaign.id
         ).delete(synchronize_session=False)
+        WhatsAppProviderJob.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        WhatsAppMediaAsset.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        WhatsAppTemplate.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
 
         # Clear any relationship state that may have been populated by an earlier
         # request hook or template helper before deleting the parent row.

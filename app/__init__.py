@@ -204,6 +204,34 @@ def create_app():
             db.session.rollback()
         db.session.remove()
 
+    @app.cli.command("process-whatsapp-jobs")
+    def process_whatsapp_jobs_command():
+        """Process queued 360dialog template submission/status jobs."""
+        from app.services.whatsapp_enterprise import process_provider_jobs, sync_due_templates
+        stats = process_provider_jobs(limit=50)
+        synced = sync_due_templates(limit=50)
+        print({"jobs": stats, "templates_synced": synced})
+
+    # One-worker Render deployments can safely run this lightweight scheduler.
+    # Set ENABLE_WHATSAPP_SCHEDULER=0 if a dedicated worker/cron service is used.
+    if os.getenv("ENABLE_WHATSAPP_SCHEDULER", "1").lower() in {"1", "true", "yes"}:
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+            scheduler = BackgroundScheduler(daemon=True, timezone="UTC")
+            def _whatsapp_tick():
+                with app.app_context():
+                    try:
+                        from app.services.whatsapp_enterprise import process_provider_jobs, sync_due_templates
+                        process_provider_jobs(limit=20)
+                        sync_due_templates(limit=25)
+                    except Exception:
+                        app.logger.exception("Automatic WhatsApp template monitor failed")
+            scheduler.add_job(_whatsapp_tick, "interval", seconds=60, id="whatsapp_provider_monitor", replace_existing=True, max_instances=1, coalesce=True)
+            scheduler.start()
+            app.extensions["whatsapp_scheduler"] = scheduler
+        except Exception:
+            app.logger.exception("Could not start WhatsApp background scheduler")
+
     from app.routes.auth import auth_bp
     from app.routes.main import main_bp
     from app.routes.applications import applications_bp
