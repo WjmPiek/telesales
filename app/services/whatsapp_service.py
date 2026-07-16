@@ -288,56 +288,80 @@ class TemplateCreateResult:
     response_json: dict | None = None
 
 
-def create_whatsapp_image_template(template_name: str, language_code: str, body_text: str, image_example_url: str) -> TemplateCreateResult:
-    """Submit an image marketing template with callback and opt-out quick replies.
-
-    360dialog accepts the WhatsApp/Meta components schema at its template
-    configuration endpoint. Provider validation errors are returned verbatim so
-    the campaign page can explain exactly what must be corrected.
-    """
+def create_whatsapp_image_template(
+    template_name: str,
+    language_code: str,
+    body_text: str,
+    image_example_url: str,
+    category: str = "MARKETING",
+    footer_text: str | None = None,
+    buttons: list[dict] | None = None,
+    allow_category_change: bool = True,
+) -> TemplateCreateResult:
+    """Submit a 360dialog-style media template using the Meta components schema."""
+    import re
     name = (template_name or "").strip().lower()
     language = (language_code or "en").strip()
     if language.lower() in {"en_us", "en-us", "english"}:
         language = "en"
     body = (body_text or "").strip()
     image_example_url = (image_example_url or "").strip()
+    category = (category or "MARKETING").strip().upper()
+    if category not in {"MARKETING", "UTILITY", "AUTHENTICATION"}:
+        return TemplateCreateResult(False, error="Template category must be Marketing, Utility or Authentication.")
     if not name or not body or not image_example_url:
         return TemplateCreateResult(False, error="Template name, body text and a public example image are required.")
-    # Do not make a single-worker Render service call its own public URL here.
-    # That can deadlock until timeout. The image bytes were already validated
-    # during upload; 360dialog/Meta will fetch the HTTPS URL during submission.
     if not image_example_url.lower().startswith("https://"):
         return TemplateCreateResult(False, error="The template header image must use a public HTTPS URL.")
-    if not __import__('re').fullmatch(r"[a-z0-9_]+", name):
+    if not re.fullmatch(r"[a-z0-9_]+", name):
         return TemplateCreateResult(False, error="Template name may contain only lowercase letters, numbers and underscores.")
-    if "{{1}}" not in body:
-        return TemplateCreateResult(False, error="The template body must contain {{1}} for the customer's name.")
+
+    variable_numbers = sorted({int(v) for v in re.findall(r"\{\{(\d+)\}\}", body)})
+    if variable_numbers and variable_numbers != list(range(1, max(variable_numbers) + 1)):
+        return TemplateCreateResult(False, error="Template variables must be sequential: {{1}}, {{2}}, {{3}}.")
+    examples = []
+    defaults = ["Wjm", "Policy quotation", "July 2026", "R250"]
+    for i in range(len(variable_numbers)):
+        examples.append(defaults[i] if i < len(defaults) else f"Example {i+1}")
+
+    components = [
+        {"type": "HEADER", "format": "IMAGE", "example": {"header_handle": [image_example_url]}},
+        {"type": "BODY", "text": body},
+    ]
+    if examples:
+        components[1]["example"] = {"body_text": [examples]}
+    footer = (footer_text or "").strip()[:60]
+    if footer:
+        components.append({"type": "FOOTER", "text": footer})
+
+    normalized_buttons = []
+    for item in (buttons or []):
+        if not isinstance(item, dict):
+            continue
+        btype = str(item.get("type") or "QUICK_REPLY").upper()
+        text = str(item.get("text") or "").strip()[:25]
+        if not text:
+            continue
+        if btype == "URL" and item.get("url"):
+            normalized_buttons.append({"type": "URL", "text": text, "url": str(item["url"]).strip()})
+        elif btype == "PHONE_NUMBER" and item.get("phone_number"):
+            normalized_buttons.append({"type": "PHONE_NUMBER", "text": text, "phone_number": str(item["phone_number"]).strip()})
+        else:
+            normalized_buttons.append({"type": "QUICK_REPLY", "text": text})
+    if not normalized_buttons:
+        normalized_buttons = [
+            {"type": "QUICK_REPLY", "text": "YES, CALL ME BACK"},
+            {"type": "QUICK_REPLY", "text": "NO THANKS, OPT OUT"},
+        ]
+    components.append({"type": "BUTTONS", "buttons": normalized_buttons[:10]})
 
     payload = {
         "name": name,
-        "category": "MARKETING",
+        "category": category,
         "language": language,
-        "components": [
-            {
-                "type": "HEADER",
-                "format": "IMAGE",
-                "example": {"header_handle": [image_example_url]},
-            },
-            {
-                "type": "BODY",
-                "text": body,
-                "example": {"body_text": [["Wjm"]]},
-            },
-            {
-                "type": "BUTTONS",
-                "buttons": [
-                    {"type": "QUICK_REPLY", "text": "YES, CALL ME BACK"},
-                    {"type": "QUICK_REPLY", "text": "NO THANKS, OPT OUT"},
-                ],
-            },
-        ],
+        "allow_category_change": bool(allow_category_change),
+        "components": components,
     }
-
     if _provider() == "360dialog":
         api_key = os.getenv("D360_API_KEY")
         if not api_key:
@@ -352,24 +376,20 @@ def create_whatsapp_image_template(template_name: str, language_code: str, body_
             return TemplateCreateResult(False, error="Meta template credentials are incomplete.")
         url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
-
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=40)
         data = response.json() if response.content else {}
         if response.status_code >= 400:
             error = data.get("error") if isinstance(data, dict) else None
-            if isinstance(error, dict):
-                message = error.get("message") or error.get("error_user_msg")
-            else:
-                message = str(error or "")
+            message = (error.get("message") or error.get("error_user_msg")) if isinstance(error, dict) else str(error or "")
             return TemplateCreateResult(False, error=message or response.text or f"HTTP {response.status_code}", response_json=data)
         template_id = str(data.get("id") or data.get("template_id") or data.get("message_template_id") or "") or None
         raw_status = str(data.get("status") or data.get("state") or "PENDING").upper()
         status = "Approved" if raw_status in {"APPROVED", "ACTIVE"} else "Pending"
-        # Keep the exact public example URL in the response metadata so the UI
-        # can prove which image was submitted without requiring 360dialog login.
         if isinstance(data, dict):
             data.setdefault("submitted_header_image_url", image_example_url)
+            data.setdefault("submitted_payload", payload)
         return TemplateCreateResult(True, status=status, template_id=template_id, response_json=data)
     except requests.RequestException as exc:
         return TemplateCreateResult(False, error=f"Template submission failed: {exc}")
+

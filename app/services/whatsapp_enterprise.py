@@ -42,7 +42,7 @@ class MediaPublishResult:
 
 def _public_campaign_image_url(campaign: CommunicationCampaign) -> str:
     base = (os.getenv("BASE_URL") or current_app.config.get("BASE_URL") or "").rstrip("/")
-    return f"{base}/communications/{campaign.id}/image"
+    return f"{base}/communications/media/{campaign.id}/{campaign.image_filename or ('campaign_'+str(campaign.id)+'.jpg')}"
 
 
 def publish_campaign_image(campaign: CommunicationCampaign) -> MediaPublishResult:
@@ -163,8 +163,11 @@ def template_record_for_campaign(campaign: CommunicationCampaign) -> WhatsAppTem
         campaign_id=campaign.id,
         name=campaign.whatsapp_template_name,
         language=campaign.whatsapp_template_language or "en",
-        category="MARKETING",
+        category=campaign.template_category or "MARKETING",
         body_text=campaign.message_body,
+        footer_text=campaign.template_footer,
+        buttons_json=campaign.template_buttons_json,
+        allow_category_change=campaign.template_allow_category_change,
         button_one_text="YES, CALL ME BACK",
         button_two_text="NO THANKS, OPT OUT",
         status=campaign.template_status or "Draft",
@@ -199,11 +202,19 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
     db.session.commit()
 
     provider_started = time.monotonic()
+    try:
+        buttons = json.loads(campaign.template_buttons_json or "[]")
+    except (TypeError, ValueError):
+        buttons = []
     result = create_whatsapp_image_template(
         campaign.whatsapp_template_name,
         campaign.whatsapp_template_language or "en",
         campaign.message_body,
         media.url,
+        category=campaign.template_category or "MARKETING",
+        footer_text=campaign.template_footer,
+        buttons=buttons,
+        allow_category_change=campaign.template_allow_category_change,
     )
     now = datetime.utcnow()
     template.last_checked_at = now

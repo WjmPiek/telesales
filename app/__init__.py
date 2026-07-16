@@ -47,6 +47,11 @@ def _ensure_communication_campaign_columns(app):
             statements = [
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_name VARCHAR(160)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_language VARCHAR(20) DEFAULT 'en_US'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_category VARCHAR(40) DEFAULT 'MARKETING'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_type VARCHAR(40) DEFAULT 'MEDIA_INTERACTIVE'",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_footer VARCHAR(60)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_buttons_json TEXT",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_allow_category_change BOOLEAN DEFAULT TRUE",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_filename VARCHAR(255)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_url VARCHAR(1000)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS image_data BYTEA",
@@ -73,6 +78,27 @@ def _ensure_communication_campaign_columns(app):
                     conn.execute(text(stmt))
         except Exception:
             app.logger.exception("Could not ensure communication campaign columns")
+
+
+def _ensure_whatsapp_template_columns(app):
+    """Add Enterprise Communications v3 template-builder fields safely."""
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS footer_text VARCHAR(60)",
+                "ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS buttons_json TEXT",
+                "ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS components_json TEXT",
+                "ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS allow_category_change BOOLEAN DEFAULT TRUE",
+                "UPDATE whatsapp_templates SET allow_category_change = TRUE WHERE allow_category_change IS NULL",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure WhatsApp v3 template columns")
 
 
 def _ensure_client_fica_document_columns(app):
@@ -166,6 +192,7 @@ def create_app():
                 pass
             try:
                 _ensure_communication_campaign_columns(app)
+                _ensure_whatsapp_template_columns(app)
             except Exception:
                 pass
             try:
@@ -195,6 +222,7 @@ def create_app():
         pass
     try:
         _ensure_communication_campaign_columns(app)
+        _ensure_whatsapp_template_columns(app)
     except Exception:
         pass
 

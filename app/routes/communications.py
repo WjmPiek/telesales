@@ -3,6 +3,7 @@ import csv
 import io
 import secrets
 import os
+import json
 from werkzeug.utils import secure_filename
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response, send_file
 from flask_login import login_required, current_user
@@ -283,12 +284,36 @@ def create_campaign():
             import re
             base_name = re.sub(r"[^a-z0-9]+", "_", campaign_name.lower()).strip("_") or "campaign"
             requested_template_name = f"{base_name}_{datetime.utcnow():%Y%m%d%H%M%S}"
+        button_texts = request.form.getlist("button_text")
+        button_types = request.form.getlist("button_type")
+        button_values = request.form.getlist("button_value")
+        template_buttons = []
+        for index, text_value in enumerate(button_texts[:10]):
+            text_value = (text_value or "").strip()
+            if not text_value:
+                continue
+            btype = (button_types[index] if index < len(button_types) else "QUICK_REPLY").strip().upper()
+            item = {"type": btype, "text": text_value}
+            extra = (button_values[index] if index < len(button_values) else "").strip()
+            if btype == "URL": item["url"] = extra
+            if btype == "PHONE_NUMBER": item["phone_number"] = extra
+            template_buttons.append(item)
+        if not template_buttons:
+            template_buttons = [
+                {"type": "QUICK_REPLY", "text": "YES, CALL ME BACK"},
+                {"type": "QUICK_REPLY", "text": "NO THANKS, OPT OUT"},
+            ]
         campaign = CommunicationCampaign(
             name=campaign_name,
             subject=(request.form.get("subject") or "Funeral policy callback").strip(),
             message_body=message_body,
             whatsapp_template_name=requested_template_name or None,
-            whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en_US").strip(),
+            whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en").strip(),
+            template_category=(request.form.get("template_category") or "MARKETING").strip().upper(),
+            template_type="MEDIA_INTERACTIVE",
+            template_footer=(request.form.get("template_footer") or "").strip()[:60] or None,
+            template_buttons_json=json.dumps(template_buttons),
+            template_allow_category_change=request.form.get("allow_category_change") == "1",
             image_filename=image_filename, image_url=image_url, image_data=image_data, image_mimetype=image_mimetype,
             audience_type=(request.form.get("audience_type") or "group").strip().lower(),
             send_whatsapp=bool(request.form.get("send_whatsapp")),
@@ -407,6 +432,24 @@ def view_campaign(campaign_id):
     branches = [row[0] for row in db.session.query(LapsedPolicy.branch).filter(LapsedPolicy.branch.isnot(None), LapsedPolicy.branch != "").distinct().order_by(LapsedPolicy.branch).all()]
     return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches)
 
+
+
+@communications_bp.route("/media/<int:campaign_id>/<path:filename>")
+def campaign_media_file(campaign_id, filename):
+    """Stable extension-bearing HTTPS URL for Meta/360dialog media validation."""
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not campaign.image_data:
+        abort(404)
+    response = send_file(
+        io.BytesIO(campaign.image_data),
+        mimetype=campaign.image_mimetype or "image/jpeg",
+        download_name=campaign.image_filename or filename,
+        max_age=86400,
+        conditional=True,
+    )
+    response.headers["Content-Disposition"] = "inline"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 @communications_bp.route("/<int:campaign_id>/image")
 def campaign_image(campaign_id):

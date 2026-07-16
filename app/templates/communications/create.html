@@ -1,61 +1,75 @@
 {% extends 'base.html' %}
 {% block content %}
 <style>
-.campaign-builder{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr);gap:24px}.builder-card{background:#fff;border:1px solid #e5e7eb;border-radius:22px;box-shadow:0 14px 35px rgba(20,34,55,.08);overflow:hidden}.builder-head{padding:22px 24px;background:linear-gradient(135deg,#113f37,#176c59);color:white}.builder-body{padding:24px}.wa-preview{max-width:430px;margin:auto;background:#efeae2;border-radius:22px;padding:18px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.04)}.wa-card{background:white;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.12)}.wa-card img{width:100%;display:block;max-height:430px;object-fit:contain;background:#f7f7f7}.wa-copy{padding:14px 16px;white-space:pre-line}.wa-btn{margin-top:8px;background:white;color:#087b65;text-align:center;padding:12px;border-radius:10px;font-weight:700}.upload-drop{border:2px dashed #b8c7c2;border-radius:16px;padding:20px;text-align:center;background:#f8fbfa}.hint{font-size:.87rem;color:#6b7280}.audience-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.audience-option{position:relative}.audience-option input{position:absolute;opacity:0;pointer-events:none}.audience-card{height:100%;border:2px solid #e5e7eb;border-radius:17px;padding:18px;cursor:pointer;transition:.2s;background:#fff}.audience-card:hover{border-color:#9acdbd;transform:translateY(-1px)}.audience-option input:checked+.audience-card{border-color:#17815f;background:#effaf6;box-shadow:0 0 0 4px rgba(23,129,95,.09)}.audience-icon{width:44px;height:44px;border-radius:13px;background:#e7f7f1;color:#176c59;display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:800;margin-bottom:12px}@media(max-width:980px){.campaign-builder{grid-template-columns:1fr}}@media(max-width:650px){.audience-grid{grid-template-columns:1fr}}
+.v3-shell{max-width:1450px;margin:auto}.v3-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(360px,.85fr);gap:24px}.v3-card{background:#fff;border:1px solid #dfe6eb;border-radius:20px;box-shadow:0 16px 40px rgba(31,48,66,.08);overflow:hidden}.v3-title{padding:22px 26px;border-bottom:1px solid #e7edf1}.v3-body{padding:26px}.builder-section{border:1px dashed #bdcad5;border-radius:14px;margin-top:20px;overflow:hidden}.section-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px;background:#f9fbfc;border-bottom:1px dashed #bdcad5}.section-label{background:#bac8d6;color:#fff;font-weight:700;padding:10px 15px;border-radius:6px}.format-btn{border:1px solid #d0dbe4;background:white;border-radius:9px;min-width:42px;padding:8px 12px;font-weight:700}.editor{width:100%;min-height:130px;border:0;padding:18px;resize:vertical;outline:none}.footer-editor{min-height:85px}.upload-zone{min-height:190px;display:flex;align-items:center;justify-content:center;padding:18px;background:#fbfcfd}.button-row{display:grid;grid-template-columns:150px 1fr 1fr 44px;gap:10px;padding:10px 12px;border-bottom:1px solid #edf1f4}.button-row:last-child{border-bottom:0}.preview-wrap{position:sticky;top:20px}.wa-preview{background:#efeae2;border-radius:18px;padding:22px;min-height:640px;background-image:radial-gradient(#ded8ce 1px,transparent 1px);background-size:18px 18px}.wa-bubble{background:white;border-radius:11px;overflow:hidden;max-width:455px;margin:auto;box-shadow:0 2px 7px rgba(0,0,0,.13)}.wa-bubble img{width:100%;max-height:430px;object-fit:contain;background:#f4f4f4}.wa-text{padding:13px 15px;white-space:pre-wrap;line-height:1.45}.wa-footer{padding:0 15px 12px;color:#8b969e;font-size:.86rem}.wa-button{max-width:455px;margin:7px auto 0;background:#fff;color:#1489a4;text-align:center;padding:12px;border-radius:9px;font-weight:700}.counter{margin-left:auto;color:#7a8792;font-size:.85rem}.top-fields{display:grid;grid-template-columns:1fr 1fr;gap:16px}.toggle-blocks{display:flex;gap:10px;flex-wrap:wrap}.block-pill{background:#18a9c0;color:#fff;border:0;border-radius:10px;padding:10px 16px;font-weight:700}.help{font-size:.86rem;color:#6f7d88}.action-bar{display:flex;justify-content:flex-end;gap:12px;padding:18px 24px;border-top:1px solid #e7edf1;background:#fff}.btn-teal{background:#18a9c0;color:#fff;border:0}.btn-teal:hover{background:#138da1;color:#fff}@media(max-width:1050px){.v3-grid{grid-template-columns:1fr}.preview-wrap{position:static}}@media(max-width:700px){.top-fields{grid-template-columns:1fr}.button-row{grid-template-columns:1fr}.v3-body{padding:18px}}
 </style>
-<div class="d-flex justify-content-between align-items-start mb-4"><div><h2 class="mb-1">New WhatsApp image campaign</h2><p class="text-muted mb-0">Upload the advert, choose one client or a client group, then preview the message before sending.</p></div><a href="{{ url_for('communications.index') }}" class="btn btn-outline-secondary">Back</a></div>
-<form method="post" enctype="multipart/form-data" class="campaign-builder" id="campaignForm">
-<div class="builder-card"><div class="builder-head"><h4 class="mb-1">Campaign details</h4><div class="opacity-75">The image appears first, followed by the approved WhatsApp text and action buttons.</div></div><div class="builder-body">
-<div class="mb-3"><label class="form-label fw-bold">Campaign name</label><input class="form-control form-control-lg" name="name" required placeholder="July funeral policy offer"></div>
-<div class="mb-3"><label class="form-label fw-bold">Who should receive this campaign?</label><div class="audience-grid">
-<label class="audience-option"><input type="radio" name="audience_type" value="individual" required><div class="audience-card"><div class="audience-icon">1</div><div class="fw-bold">One individual client</div><div class="hint mt-1">Search for and select one specific client after creating the campaign.</div></div></label>
-<label class="audience-option"><input type="radio" name="audience_type" value="group" checked><div class="audience-card"><div class="audience-icon">👥</div><div class="fw-bold">A group of clients</div><div class="hint mt-1">Select clients manually or add all clients matching your filters.</div></div></label>
-</div></div>
-<div id="individualFields" class="border rounded-4 p-3 mb-3" style="display:none;background:#f8fbfa">
-<div class="fw-bold mb-2">Individual client details</div>
-<div class="row g-3">
-<div class="col-md-4"><label class="form-label">Name</label><input class="form-control" name="individual_first_name" id="individualFirstName" placeholder="Wjm"></div>
-<div class="col-md-4"><label class="form-label">Surname</label><input class="form-control" name="individual_surname" id="individualSurname" placeholder="Piek"></div>
-<div class="col-md-4"><label class="form-label">Contact number</label><input class="form-control" name="individual_phone" id="individualPhone" inputmode="tel" placeholder="0676200748"></div>
+<div class="v3-shell">
+<div class="d-flex justify-content-between align-items-start mb-4"><div><h2 class="mb-1">Enterprise Communications v3</h2><p class="text-muted mb-0">Create a 360dialog-style WhatsApp template and campaign in one guided screen.</p></div><a class="btn btn-outline-secondary" href="{{ url_for('communications.index') }}">Back</a></div>
+<form method="post" enctype="multipart/form-data" id="templateForm">
+<div class="v3-grid">
+<div class="v3-card">
+<div class="v3-title"><h3 class="mb-1">New template</h3><div class="text-muted">The system validates, versions and submits this template automatically.</div></div>
+<div class="v3-body">
+<div class="mb-3"><label class="form-label fw-bold">Name</label><input class="form-control form-control-lg" id="campaignName" name="name" required placeholder="July funeral policy offer"><div class="help mt-1">The API name is generated automatically, but you can edit it below.</div></div>
+<div class="top-fields">
+<div><label class="form-label fw-bold">Category</label><select class="form-select" name="template_category"><option value="MARKETING">Marketing</option><option value="UTILITY">Utility</option><option value="AUTHENTICATION">Authentication</option></select></div>
+<div><label class="form-label fw-bold">Allow category change</label><select class="form-select" name="allow_category_change"><option value="1">Yes</option><option value="0">No</option></select></div>
+<div><label class="form-label fw-bold">Template type</label><select class="form-select" disabled><option>Media &amp; Interactive</option></select></div>
+<div><label class="form-label fw-bold">Language</label><select class="form-select" name="whatsapp_template_language"><option value="en">English (en)</option><option value="en_US">English (en_US)</option></select></div>
 </div>
-<div class="hint mt-2">The number is saved in international format and checked against the opt-out and suppression lists before sending.</div>
+<div class="mt-3"><label class="form-label fw-bold">Template API name</label><input class="form-control" id="templateName" name="whatsapp_template_name" pattern="[a-z0-9_]+" required placeholder="july_funeral_policy_offer_20260716"><div class="help mt-1">Lowercase letters, numbers and underscores only. Each submission receives a unique name.</div></div>
+<div class="mt-4"><label class="form-label fw-bold">Select message template building blocks</label><div class="toggle-blocks"><button type="button" class="block-pill">✓ Header</button><button type="button" class="block-pill">✓ Body</button><button type="button" class="block-pill">✓ Footer</button><button type="button" class="block-pill">✓ Buttons</button></div></div>
+
+<div class="builder-section">
+<div class="section-toolbar"><span class="section-label">HEADER</span><select class="form-select" style="max-width:220px" disabled><option>Image</option></select></div>
+<div class="upload-zone"><div class="w-100 text-center"><div class="display-5 text-muted mb-2">▧</div><label class="btn btn-outline-primary"><input class="d-none" type="file" name="campaign_image" id="campaignImage" accept="image/jpeg,image/png" required>Choose JPG or PNG image</label><div class="help mt-2">Public media is served with a real .jpg or .png filename so 360dialog can validate it.</div></div></div>
 </div>
-<div class="upload-drop mb-3"><label class="form-label fw-bold d-block">Advert image</label><input class="form-control" type="file" name="campaign_image" id="campaignImage" accept="image/png,image/jpeg,image/webp" required><div class="hint mt-2">JPG, PNG or WEBP. Use a portrait image for the best WhatsApp presentation.</div></div>
-<div class="mb-3"><label class="form-label fw-bold">WhatsApp template</label><div class="row g-2"><div class="col-md-6"><label class="border rounded-3 p-3 w-100"><input class="form-check-input me-2" type="radio" name="template_mode" value="create" checked> <strong>Create and submit a new template</strong><div class="hint ms-4">TeleSales sends it to 360dialog/Meta for approval and notifies you when approved.</div></label></div><div class="col-md-6"><label class="border rounded-3 p-3 w-100"><input class="form-check-input me-2" type="radio" name="template_mode" value="existing"> <strong>Use an existing template</strong><div class="hint ms-4">Use this only when the template already exists in 360dialog.</div></label></div></div></div>
-<div class="row g-3"><div class="col-md-7"><label class="form-label fw-bold">Template API name</label><input class="form-control" name="whatsapp_template_name" required pattern="[a-z0-9_]+" placeholder="funeral_policy_offer_v1"><div class="hint">Lowercase letters, numbers and underscores only.</div></div><div class="col-md-5"><label class="form-label fw-bold">Template language</label><select class="form-select" name="whatsapp_template_language"><option value="en">English (en)</option><option value="en_US">English (en_US)</option></select></div></div>
-<div class="mt-3"><label class="form-label fw-bold">Preview text</label><textarea class="form-control" rows="7" name="message_body" id="messageBody" required>Hello {{1}},
 
-Give your family dignity, not debt. Martin's Funerals offers affordable funeral cover for you and your family.
+<div class="builder-section">
+<div class="section-toolbar"><span class="section-label">BODY</span><button type="button" class="format-btn" data-wrap="*">B</button><button type="button" class="format-btn fst-italic" data-wrap="_">I</button><button type="button" class="format-btn text-decoration-line-through" data-wrap="~">S</button><button type="button" class="format-btn" data-wrap="```">&lt;&gt;</button><button type="button" class="btn btn-outline-secondary" id="addVariable">Add variable</button><span class="counter"><span id="bodyCount">0</span> characters</span></div>
+<textarea class="editor" name="message_body" id="messageBody" required>Hello {{1}},
 
-Tap below if you would like a consultant to call you with a free quotation.</textarea><div class="hint mt-1">TeleSales uses this text to create the template. It must include {{1}} for the customer name.</div></div>
-<input type="hidden" name="subject" value="Martin's Funerals policy offer"><input type="hidden" name="send_whatsapp" value="1">
-<div class="form-check mt-3"><input class="form-check-input" type="checkbox" name="send_email" id="em"><label class="form-check-label" for="em">Also send an email copy</label></div>
-<div class="d-grid gap-2 mt-4">
-<button class="btn btn-success btn-lg" type="submit" name="action" value="save" id="saveCampaignButton">Create campaign and choose clients</button>
-<button class="btn btn-primary btn-lg" type="submit" name="action" value="send_now" id="sendIndividualButton" style="display:none">Create campaign and send now</button>
-</div></div></div>
-<div class="builder-card"><div class="builder-head"><h4 class="mb-1">Customer preview</h4><div class="opacity-75">This is how the image, text and buttons will be arranged.</div></div><div class="builder-body"><div class="wa-preview"><div class="wa-card"><div id="previewPlaceholder" class="p-5 text-center text-muted">Your uploaded image will appear here</div><img id="previewImage" alt="Campaign preview" style="display:none"><div class="wa-copy" id="previewText"></div></div><div class="wa-btn">YES, CALL ME BACK</div><div class="wa-btn">NO THANKS, OPT OUT</div></div><div class="alert alert-info mt-3 mb-0"><strong>Important:</strong> the buttons shown here are official WhatsApp quick-reply buttons configured in your approved template. They are not clickable areas inside the image.</div></div></div>
+Give your family dignity, not debt. *Martin's Funerals* offers affordable funeral cover for you and your family.
+
+Tap below if you would like a *consultant to call you* with a free quotation.</textarea>
+</div>
+
+<div class="builder-section">
+<div class="section-toolbar"><span class="section-label">FOOTER</span><span class="counter"><span id="footerCount">0</span> / 60 characters</span></div>
+<textarea class="editor footer-editor" maxlength="60" name="template_footer" id="templateFooter" placeholder="Martin's Funerals Sales"></textarea>
+</div>
+
+<div class="builder-section">
+<div class="section-toolbar"><span class="section-label">BUTTONS</span><button class="btn btn-teal" type="button" id="addButton">⊞ Add button</button><span class="counter"><span id="buttonCount">2</span> / 10 buttons</span></div>
+<div id="buttonList">
+<div class="button-row"><select class="form-select" name="button_type"><option value="QUICK_REPLY">Quick reply</option></select><input class="form-control button-text" name="button_text" value="YES, CALL ME BACK" maxlength="25"><input class="form-control" name="button_value" placeholder="No value required" disabled><button type="button" class="btn btn-outline-secondary" disabled>×</button></div>
+<div class="button-row"><select class="form-select" name="button_type"><option value="QUICK_REPLY">Quick reply</option></select><input class="form-control button-text" name="button_text" value="NO THANKS, OPT OUT" maxlength="25"><input class="form-control" name="button_value" placeholder="No value required" disabled><button type="button" class="btn btn-outline-secondary" disabled>×</button></div>
+</div>
+</div>
+
+<div class="mt-4 border rounded-4 p-3 bg-light">
+<div class="fw-bold mb-2">Campaign delivery</div><div class="top-fields"><div><label class="form-label">Audience</label><select class="form-select" name="audience_type" id="audienceType"><option value="group">Group of clients</option><option value="individual">One individual client</option></select></div><div><label class="form-label">Email copy</label><select class="form-select" name="send_email"><option value="">WhatsApp only</option><option value="1">WhatsApp and email</option></select></div></div>
+<div id="individualFields" class="top-fields mt-3" style="display:none"><input class="form-control" name="individual_first_name" placeholder="Client name"><input class="form-control" name="individual_surname" placeholder="Surname"><input class="form-control" name="individual_phone" placeholder="0676200748"></div>
+</div>
+<input type="hidden" name="subject" value="Martin's Funerals policy offer"><input type="hidden" name="send_whatsapp" value="1"><input type="hidden" name="template_mode" value="create">
+</div>
+<div class="action-bar"><button class="btn btn-outline-secondary" type="reset">Discard changes</button><button class="btn btn-teal btn-lg" type="submit" name="action" value="save">Preview and submit</button></div>
+</div>
+
+<div class="preview-wrap"><div class="v3-card"><div class="v3-title"><h4 class="mb-0">Preview</h4></div><div class="v3-body"><div class="wa-preview"><div class="wa-bubble"><div id="imagePlaceholder" class="text-center text-muted py-5">Your header image will appear here</div><img id="previewImage" style="display:none" alt="Template image"><div class="wa-text" id="previewText"></div><div class="wa-footer" id="previewFooter"></div></div><div id="previewButtons"></div></div><div class="alert alert-info mt-3 mb-0"><strong>Automatic:</strong> example values, media validation, unique template naming, submission, approval polling and retries are handled by TeleSales.</div></div></div></div>
+</div>
 </form>
+</div>
 <script>
-const input=document.getElementById('campaignImage'),img=document.getElementById('previewImage'),ph=document.getElementById('previewPlaceholder'),body=document.getElementById('messageBody'),preview=document.getElementById('previewText');
-const audienceRadios=[...document.querySelectorAll('input[name="audience_type"]')];
-const individualFields=document.getElementById('individualFields');
-const firstName=document.getElementById('individualFirstName');
-const surname=document.getElementById('individualSurname');
-const phone=document.getElementById('individualPhone');
-const saveButton=document.getElementById('saveCampaignButton');
-const sendButton=document.getElementById('sendIndividualButton');
-function selectedAudience(){const selected=audienceRadios.find(r=>r.checked);return selected?selected.value:'group';}
-function updateAudience(){
-  const individual=selectedAudience()==='individual';
-  individualFields.style.display=individual?'block':'none';
-  sendButton.style.display=individual?'block':'none';
-  saveButton.textContent=individual?'Create campaign and save client':'Create campaign and choose clients';
-  [firstName,surname,phone].forEach(el=>el.required=individual);
-  updateText();
-}
-function updateText(){const customer=selectedAudience()==='individual'&&firstName.value.trim()?firstName.value.trim():'Customer';preview.textContent=body.value.replace('{{1}}',customer);}
-updateText();body.addEventListener('input',updateText);firstName.addEventListener('input',updateText);audienceRadios.forEach(r=>r.addEventListener('change',updateAudience));updateAudience();
-input.addEventListener('change',()=>{const f=input.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{img.src=e.target.result;img.style.display='block';ph.style.display='none'};r.readAsDataURL(f)});
+const body=document.getElementById('messageBody'), footer=document.getElementById('templateFooter'), previewText=document.getElementById('previewText'), previewFooter=document.getElementById('previewFooter'), previewButtons=document.getElementById('previewButtons'), buttonList=document.getElementById('buttonList');
+function render(){previewText.textContent=body.value.replaceAll('{{1}}','Customer').replace(/\*([^*]+)\*/g,'$1').replace(/_([^_]+)_/g,'$1').replace(/~([^~]+)~/g,'$1');previewFooter.textContent=footer.value;document.getElementById('bodyCount').textContent=body.value.length;document.getElementById('footerCount').textContent=footer.value.length;previewButtons.innerHTML='';document.querySelectorAll('.button-text').forEach(i=>{if(i.value.trim()){const d=document.createElement('div');d.className='wa-button';d.textContent=i.value;previewButtons.appendChild(d)}});document.getElementById('buttonCount').textContent=document.querySelectorAll('.button-row').length}
+body.addEventListener('input',render);footer.addEventListener('input',render);buttonList.addEventListener('input',render);
+document.querySelectorAll('[data-wrap]').forEach(btn=>btn.onclick=()=>{const w=btn.dataset.wrap,s=body.selectionStart,e=body.selectionEnd;body.setRangeText(w+body.value.slice(s,e)+w,s,e,'end');body.focus();render()});
+document.getElementById('addVariable').onclick=()=>{const nums=[...body.value.matchAll(/\{\{(\d+)\}\}/g)].map(m=>Number(m[1]));const n=nums.length?Math.max(...nums)+1:1;body.setRangeText(`{{${n}}}`,body.selectionStart,body.selectionEnd,'end');render()};
+document.getElementById('addButton').onclick=()=>{if(document.querySelectorAll('.button-row').length>=10)return;const row=document.createElement('div');row.className='button-row';row.innerHTML='<select class="form-select button-type" name="button_type"><option value="QUICK_REPLY">Quick reply</option><option value="URL">Website URL</option><option value="PHONE_NUMBER">Phone number</option></select><input class="form-control button-text" name="button_text" placeholder="Button text" maxlength="25"><input class="form-control button-value" name="button_value" placeholder="No value required" disabled><button type="button" class="btn btn-outline-danger remove-button">×</button>';buttonList.appendChild(row);render()};
+buttonList.addEventListener('change',e=>{if(e.target.classList.contains('button-type')){const row=e.target.closest('.button-row'),v=row.querySelector('.button-value');v.disabled=e.target.value==='QUICK_REPLY';v.placeholder=e.target.value==='URL'?'https://example.com':e.target.value==='PHONE_NUMBER'?'+27123456789':'No value required'}});buttonList.addEventListener('click',e=>{if(e.target.classList.contains('remove-button')){e.target.closest('.button-row').remove();render()}});
+document.getElementById('campaignImage').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=x=>{document.getElementById('previewImage').src=x.target.result;document.getElementById('previewImage').style.display='block';document.getElementById('imagePlaceholder').style.display='none'};r.readAsDataURL(f)});
+const cname=document.getElementById('campaignName'),tname=document.getElementById('templateName');cname.addEventListener('input',()=>{const base=cname.value.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');const stamp=new Date().toISOString().replace(/[-:TZ.]/g,'').slice(0,14);tname.value=(base||'campaign')+'_'+stamp});
+document.getElementById('audienceType').addEventListener('change',e=>document.getElementById('individualFields').style.display=e.target.value==='individual'?'grid':'none');render();
 </script>
 {% endblock %}

@@ -291,3 +291,21 @@ flask process-whatsapp-jobs
 ```
 
 Run the command on a recurring cron/worker loop for provider jobs. Scheduled campaign processing is also available through `app.services.whatsapp_campaign_engine.process_scheduled_campaigns()` and is automatically called by the built-in scheduler.
+
+## Enterprise Communications v3
+
+This build adds a 360dialog-style template builder to **Communications > New Campaign**:
+
+- Marketing, Utility and Authentication category selection
+- Category-change permission setting
+- Media & Interactive image header
+- WhatsApp body formatting controls
+- Sequential dynamic variables such as `{{1}}`, `{{2}}`
+- Automatic Meta example values
+- Optional 60-character footer
+- Up to 10 quick reply, URL or phone buttons
+- Live WhatsApp preview
+- Extension-bearing public media URLs for JPG/PNG validation
+- Automatic unique template API names, submission, polling and retry
+
+Existing Render PostgreSQL databases are upgraded safely during application startup with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. No data is deleted.
