@@ -83,40 +83,110 @@ class MetaConnectionResult:
     error: str | None = None
     phone: dict | None = None
     business: dict | None = None
+    diagnostics: list[dict] | None = None
+
+
+def _safe_json_response(response) -> tuple[dict | list | None, str]:
+    """Parse a provider response without hiding non-JSON error bodies."""
+    text = (response.text or "").strip()
+    if not text:
+        return None, "Empty response body"
+    try:
+        return response.json(), text
+    except ValueError:
+        return None, text[:2000]
+
+
+def _meta_error_message(data, raw_text: str, status_code: int) -> str:
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("error_user_msg")
+            code = error.get("code")
+            subcode = error.get("error_subcode")
+            trace = error.get("fbtrace_id")
+            details = []
+            if code is not None:
+                details.append(f"code {code}")
+            if subcode is not None:
+                details.append(f"subcode {subcode}")
+            if trace:
+                details.append(f"trace {trace}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            if message:
+                return f"{message}{suffix}"
+        if data.get("message"):
+            return str(data["message"])
+    body = (raw_text or "").strip()
+    return body[:1000] if body else f"HTTP {status_code} with an empty response body"
+
+
+def _diagnostic_step(name: str, url: str, response) -> tuple[dict, dict | list | None]:
+    data, raw = _safe_json_response(response)
+    step = {
+        "name": name,
+        "ok": 200 <= response.status_code < 300,
+        "status_code": response.status_code,
+        "endpoint": url,
+        "response": data if data is not None else raw,
+    }
+    if not step["ok"]:
+        step["error"] = _meta_error_message(data, raw, response.status_code)
+    return step, data
 
 
 def get_meta_connection_status() -> MetaConnectionResult:
-    """Validate Meta credentials and retrieve non-secret phone/WABA metadata."""
+    """Run transparent Meta Cloud API diagnostics without exposing the access token."""
     token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
     phone_number_id = os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     waba_id = os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
-    if not token or not phone_number_id or not waba_id:
-        return MetaConnectionResult(False, error="META_ACCESS_TOKEN, META_PHONE_NUMBER_ID and META_WABA_ID are required.")
-    version = os.getenv("META_GRAPH_API_VERSION", "v25.0")
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    try:
-        phone_response = requests.get(
-            f"https://graph.facebook.com/{version}/{phone_number_id}",
-            params={"fields": "display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,throughput"},
-            headers=headers, timeout=25,
-        )
-        phone_data = phone_response.json() if phone_response.content else {}
-        if phone_response.status_code >= 400:
-            error = phone_data.get("error", {}) if isinstance(phone_data, dict) else {}
-            return MetaConnectionResult(False, error=error.get("message") or phone_response.text or f"HTTP {phone_response.status_code}")
-        waba_response = requests.get(
-            f"https://graph.facebook.com/{version}/{waba_id}",
-            params={"fields": "id,name,timezone_id,message_template_namespace"},
-            headers=headers, timeout=25,
-        )
-        waba_data = waba_response.json() if waba_response.content else {}
-        if waba_response.status_code >= 400:
-            error = waba_data.get("error", {}) if isinstance(waba_data, dict) else {}
-            return MetaConnectionResult(False, error=error.get("message") or waba_response.text or f"HTTP {waba_response.status_code}", phone=phone_data)
-        return MetaConnectionResult(True, phone=phone_data, business=waba_data)
-    except requests.RequestException as exc:
-        return MetaConnectionResult(False, error=f"Meta connection test failed: {exc}")
+    diagnostics = []
+    missing = [name for name, value in (
+        ("META_ACCESS_TOKEN / WHATSAPP_ACCESS_TOKEN", token),
+        ("META_PHONE_NUMBER_ID / WHATSAPP_PHONE_NUMBER_ID", phone_number_id),
+        ("META_WABA_ID / WHATSAPP_BUSINESS_ACCOUNT_ID", waba_id),
+    ) if not value]
+    if missing:
+        return MetaConnectionResult(False, error="Missing Render variables: " + ", ".join(missing), diagnostics=diagnostics)
 
+    version = (os.getenv("META_GRAPH_API_VERSION") or "v25.0").strip()
+    if not version.startswith("v"):
+        version = "v" + version
+    base = f"https://graph.facebook.com/{version}"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    checks = [
+        ("Access token", f"{base}/me", {"fields": "id,name"}),
+        ("Phone number", f"{base}/{phone_number_id}", {"fields": "id,display_phone_number,verified_name,quality_rating"}),
+        ("WhatsApp Business Account", f"{base}/{waba_id}", {"fields": "id,name,timezone_id"}),
+        ("Template access", f"{base}/{waba_id}/message_templates", {"limit": 1, "fields": "id,name,status,language,category"}),
+    ]
+    phone_data = None
+    waba_data = None
+    try:
+        for name, url, params in checks:
+            response = requests.get(url, params=params, headers=headers, timeout=25)
+            step, data = _diagnostic_step(name, url, response)
+            diagnostics.append(step)
+            if name == "Phone number" and isinstance(data, dict):
+                phone_data = data
+            elif name == "WhatsApp Business Account" and isinstance(data, dict):
+                waba_data = data
+            if not step["ok"]:
+                return MetaConnectionResult(
+                    False,
+                    error=f"{name} failed: {step.get('error')}",
+                    phone=phone_data,
+                    business=waba_data,
+                    diagnostics=diagnostics,
+                )
+        return MetaConnectionResult(True, phone=phone_data, business=waba_data, diagnostics=diagnostics)
+    except requests.Timeout:
+        diagnostics.append({"name": "Network", "ok": False, "status_code": None, "endpoint": None, "error": "Meta did not respond within 25 seconds."})
+        return MetaConnectionResult(False, error="Meta request timed out.", phone=phone_data, business=waba_data, diagnostics=diagnostics)
+    except requests.RequestException as exc:
+        diagnostics.append({"name": "Network", "ok": False, "status_code": None, "endpoint": None, "error": str(exc)})
+        return MetaConnectionResult(False, error=f"Meta connection request failed: {exc}", phone=phone_data, business=waba_data, diagnostics=diagnostics)
 
 def validate_public_image_url(image_url: str) -> tuple[bool, str | None]:
     """Confirm the template example image is publicly reachable by Meta."""

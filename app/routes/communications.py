@@ -5,7 +5,7 @@ import secrets
 import os
 import json
 from werkzeug.utils import secure_filename
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response, send_file
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response, send_file, session
 from flask_login import login_required, current_user
 from sqlalchemy import func
 from app import db
@@ -1105,6 +1105,13 @@ def whatsapp_settings():
         if action == "sync":
             return redirect(url_for("communications.sync_all_templates"), code=307)
         result = get_meta_connection_status()
+        session["meta_connection_diagnostics"] = {
+            "ok": result.ok,
+            "error": result.error,
+            "steps": result.diagnostics or [],
+            "tested_at": datetime.utcnow().strftime("%d %b %Y %H:%M UTC"),
+        }
+        session.modified = True
         if result.ok:
             phone = result.phone or {}
             label = phone.get("display_phone_number") or phone.get("verified_name") or "configured number"
@@ -1125,7 +1132,8 @@ def whatsapp_settings():
         "templates": WhatsAppTemplate.query.count(),
         "last_sync": db.session.query(func.max(WhatsAppTemplate.last_checked_at)).scalar(),
     }
-    return render_template("communications/whatsapp_settings.html", config=config)
+    diagnostics = session.get("meta_connection_diagnostics")
+    return render_template("communications/whatsapp_settings.html", config=config, diagnostics=diagnostics)
 
 @communications_bp.route("/webhooks/whatsapp", methods=["GET", "POST"])
 def whatsapp_webhook():
