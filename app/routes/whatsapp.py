@@ -1,5 +1,6 @@
 from datetime import datetime
 import hashlib
+import hmac
 import json
 import os
 
@@ -264,9 +265,12 @@ def webhook():
             return challenge or "OK", 200
         return "Invalid verification token", 403
 
-    expected_secret = os.getenv("D360_WEBHOOK_SECRET")
-    if expected_secret and request.headers.get("X-Webhook-Secret") != expected_secret:
-        return jsonify({"ok": False}), 403
+    app_secret = os.getenv("META_APP_SECRET")
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if app_secret:
+        expected = "sha256=" + hmac.new(app_secret.encode("utf-8"), request.get_data(), hashlib.sha256).hexdigest()
+        if not signature or not hmac.compare_digest(signature, expected):
+            return jsonify({"ok": False, "error": "Invalid Meta webhook signature"}), 403
     payload = request.get_json(silent=True) or {}
     raw = json.dumps(payload, sort_keys=True)
     event_key = hashlib.sha256(raw.encode("utf-8")).hexdigest()

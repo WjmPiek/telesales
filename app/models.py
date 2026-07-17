@@ -957,7 +957,7 @@ class WhatsAppProviderLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     operation = db.Column(db.String(80), nullable=False, index=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id"), index=True)
-    provider = db.Column(db.String(80), default="360dialog", nullable=False, index=True)
+    provider = db.Column(db.String(80), default="meta", nullable=False, index=True)
     status = db.Column(db.String(30), nullable=False, index=True)
     request_summary = db.Column(db.Text)
     response_summary = db.Column(db.Text)

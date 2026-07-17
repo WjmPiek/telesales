@@ -266,13 +266,13 @@ AUTO_CREATE_TABLES=0
 
 
 ## WhatsApp image campaigns
-Create the approved 360dialog template with an IMAGE header and two QUICK_REPLY buttons in this order: `YES, CALL ME BACK`, `NO THANKS, OPT OUT`. The campaign sender supplies per-recipient payloads so button clicks create callbacks or suppress future marketing. Set `BASE_URL` to the public Render/custom domain so 360dialog can fetch uploaded images. For permanent image retention on Render, attach a persistent disk or use object storage.
+Create the approved Meta Cloud API template with an IMAGE header and two QUICK_REPLY buttons in this order: `YES, CALL ME BACK`, `NO THANKS, OPT OUT`. The campaign sender supplies per-recipient payloads so button clicks create callbacks or suppress future marketing. Set `BASE_URL` to the public Render/custom domain so Meta Cloud API can fetch uploaded images. For permanent image retention on Render, attach a persistent disk or use object storage.
 
 ## WhatsApp Enterprise Phases 1-7
 
 This build includes:
 
-- Automatic template naming, `{{1}}` insertion, Meta body examples, 360dialog submission, image type/size/HTTPS validation.
+- Automatic template naming, `{{1}}` insertion, Meta body examples, Meta Cloud API submission, image type/size/HTTPS validation.
 - Permanent database-backed media, optional Cloudinary HTTPS delivery, checksum-based media versions, and stable campaign image URLs.
 - Automatic template approval polling, retries, notifications, provider diagnostics and job monitoring.
 - Individual/group campaigns, scheduled sends, queue pause/resume/retry, duplicate, archive and safe deletion.
@@ -282,7 +282,7 @@ This build includes:
 
 ### Render deployment
 
-Set `BASE_URL` to the public HTTPS Render service URL. Configure `D360_API_KEY`, `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=360dialog`, and `WHATSAPP_VERIFY_TOKEN`.
+Set `BASE_URL` to the public HTTPS Render service URL. Configure `D360_API_KEY`, `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=Meta Cloud API`, and `WHATSAPP_VERIFY_TOKEN`.
 
 For a single web process, leave `ENABLE_WHATSAPP_SCHEDULER=1`. For a dedicated Render background worker, set it to `0` on the web service and run:
 
@@ -294,7 +294,7 @@ Run the command on a recurring cron/worker loop for provider jobs. Scheduled cam
 
 ## Enterprise Communications v3
 
-This build adds a 360dialog-style template builder to **Communications > New Campaign**:
+This build adds a Meta Cloud API-style template builder to **Communications > New Campaign**:
 
 - Marketing, Utility and Authentication category selection
 - Category-change permission setting
@@ -309,3 +309,23 @@ This build adds a 360dialog-style template builder to **Communications > New Cam
 - Automatic unique template API names, submission, polling and retry
 
 Existing Render PostgreSQL databases are upgraded safely during application startup with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. No data is deleted.
+
+## Meta WhatsApp Cloud API deployment
+
+Configure these Render environment variables before using WhatsApp:
+
+- `WHATSAPP_ENABLED=true`
+- `WHATSAPP_PROVIDER=meta`
+- `META_WABA_ID`
+- `META_PHONE_NUMBER_ID`
+- `META_ACCESS_TOKEN` (permanent system-user token)
+- `META_APP_SECRET`
+- `META_GRAPH_API_VERSION=v25.0`
+- `WHATSAPP_VERIFY_TOKEN`
+- `BASE_URL=https://your-service.onrender.com`
+
+Register this webhook in Meta:
+
+`https://your-service.onrender.com/whatsapp/webhook`
+
+Subscribe the WhatsApp Business Account to message events. The webhook validates Meta's `X-Hub-Signature-256` header when `META_APP_SECRET` is configured.

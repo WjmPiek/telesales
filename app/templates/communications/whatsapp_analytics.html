@@ -1,0 +1,18 @@
+{% extends 'base.html' %}{% block content %}
+{% include 'communications/_whatsapp_nav.html' %}
+<style>
+.wa-metric,.chart-card,.campaign-card{background:#fff;border:1px solid #e4ebe8;border-radius:18px;box-shadow:0 8px 24px rgba(20,48,40,.06)}.wa-metric{padding:18px;height:100%}.wa-metric strong{font-size:1.75rem;color:#123f36}.chart-card{padding:22px}.chart-wrap{height:360px}.rate{font-size:.78rem;color:#65766f}.campaign-card{padding:16px}
+</style>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4"><div><h2 class="mb-1">WhatsApp Analytics</h2><p class="text-muted mb-0">Delivery, reading, responses, callbacks and opt-outs from Meta Cloud API activity.</p></div><form method="get"><select class="form-select" name="days" onchange="this.form.submit()">{% for value,label in [(7,'Last 7 days'),(30,'Last 30 days'),(90,'Last 90 days'),(365,'Last year')] %}<option value="{{ value }}" {{ 'selected' if days==value }}>{{ label }}</option>{% endfor %}</select></form></div>
+<div class="row g-3 mb-4">
+{% for label,key,rate_key in [('Sent','sent',None),('Delivered','delivered','delivery_rate'),('Read','read','read_rate'),('Replies','replies','reply_rate'),('Failed','failed',None),('Callbacks','callbacks',None),('Opt-outs','opt_outs',None)] %}
+<div class="col-xl-3 col-md-4 col-6"><div class="wa-metric"><div class="small text-uppercase fw-bold text-muted">{{ label }}</div><strong>{{ metrics[key] }}</strong>{% if rate_key %}<div class="rate">{{ metrics[rate_key] }}% of sent</div>{% endif %}</div></div>{% endfor %}
+</div>
+<div class="chart-card mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><div><h4 class="mb-1">Message performance</h4><div class="small text-muted">Daily activity for the selected period</div></div></div><div class="chart-wrap"><canvas id="waPerformance"></canvas></div></div>
+<div class="chart-card"><h4 class="mb-3">Recent campaigns</h4><div class="row g-3">{% for campaign in campaigns %}<div class="col-xl-4 col-md-6"><a class="campaign-card d-block text-decoration-none text-dark h-100" href="{{ url_for('communications.view_campaign', campaign_id=campaign.id) }}"><div class="d-flex justify-content-between gap-2"><strong>{{ campaign.name }}</strong><span class="badge text-bg-light">{{ campaign.status }}</span></div><div class="small text-muted mt-2">{{ campaign.created_at.strftime('%d %b %Y') }} · {{ campaign.recipients|length }} recipients</div></a></div>{% else %}<p class="text-muted">No campaigns were created in this period.</p>{% endfor %}</div></div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const data={{ chart|tojson }};
+new Chart(document.getElementById('waPerformance'),{type:'line',data:{labels:data.labels,datasets:[{label:'Sent',data:data.sent,tension:.3},{label:'Delivered',data:data.delivered,tension:.3},{label:'Read',data:data.read,tension:.3},{label:'Replies',data:data.inbound,tension:.3}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+</script>
+{% endblock %}

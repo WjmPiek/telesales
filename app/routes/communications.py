@@ -13,7 +13,7 @@ from app.models import (
     CommunicationCampaign, CampaignRecipient, LapsedPolicy, AgentNotification,
     ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication,
     WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage,
-    WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent
+    WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent, WhatsAppConversation, WhatsAppContact
 )
 from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
@@ -316,7 +316,7 @@ def sync_all_templates():
             campaign.template_footer = footer
             campaign.template_buttons_json = template.buttons_json
     db.session.commit()
-    flash(f"360dialog sync complete: {imported} imported and {updated} updated.", "success")
+    flash(f"Meta template sync complete: {imported} imported and {updated} updated.", "success")
     return redirect(url_for("communications.template_library"))
 
 
@@ -607,7 +607,7 @@ def update_template_settings(campaign_id):
     name = (request.form.get("whatsapp_template_name") or "").strip()
     language = (request.form.get("whatsapp_template_language") or "en_US").strip()
     if not name:
-        flash("Enter the exact 360dialog template name.", "danger")
+        flash("Enter the exact Meta template name.", "danger")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     campaign.whatsapp_template_name = name
     campaign.whatsapp_template_language = language
@@ -706,7 +706,7 @@ def check_template_status(campaign_id):
         "approved_at": campaign.template_approved_at.isoformat() if campaign.template_approved_at else None,
         "error": result.error,
         "diagnostics": {
-            "provider": result.provider or os.getenv("WHATSAPP_PROVIDER", "360dialog"),
+            "provider": result.provider or os.getenv("WHATSAPP_PROVIDER", "meta"),
             "provider_request_id": result.provider_request_id,
             "template_id": result.template_id,
             "template_name": campaign.whatsapp_template_name,
@@ -871,7 +871,7 @@ def send_campaign(campaign_id):
         result = _refresh_template_status(campaign)
         if not result.ok or campaign.template_status != "Approved":
             reason = result.error or f"Current live status is {campaign.template_status}."
-            flash(f"Sending blocked: the template is not Approved and active in 360dialog. {reason}", "danger")
+            flash(f"Sending blocked: the template is not Approved and active in Meta. {reason}", "danger")
             return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     sent_email = sent_whatsapp = 0
     for recipient in campaign.recipients:
@@ -1057,6 +1057,70 @@ def whatsapp_audit():
     logs = WhatsAppProviderLog.query.order_by(WhatsAppProviderLog.created_at.desc()).limit(500).all()
     return render_template("communications/whatsapp_audit.html", events=events, logs=logs)
 
+
+
+@communications_bp.route("/analytics")
+@login_required
+def whatsapp_analytics():
+    if not _is_manager(): abort(403)
+    days = request.args.get("days", 30, type=int)
+    days = days if days in {7, 30, 90, 365} else 30
+    start = datetime.utcnow() - timedelta(days=days - 1)
+    messages = WhatsAppMessage.query.filter(WhatsAppMessage.created_at >= start).all()
+    outbound = [m for m in messages if m.direction == "outbound"]
+    inbound = [m for m in messages if m.direction == "inbound"]
+    delivered = [m for m in outbound if m.status in {"delivered", "read"} or m.delivered_at]
+    read = [m for m in outbound if m.status == "read" or m.read_at]
+    failed = [m for m in outbound if m.status == "failed"]
+    callbacks = CampaignRecipient.query.filter(CampaignRecipient.responded_at >= start, CampaignRecipient.response_type == "callback").count()
+    opt_outs = CampaignRecipient.query.filter(CampaignRecipient.responded_at >= start, CampaignRecipient.response_type == "opt_out").count()
+    campaigns = CommunicationCampaign.query.filter(CommunicationCampaign.created_at >= start).order_by(CommunicationCampaign.created_at.desc()).limit(12).all()
+    labels=[]; sent_series=[]; delivered_series=[]; read_series=[]; inbound_series=[]
+    for offset in range(days):
+        day=(start + timedelta(days=offset)).date(); labels.append(day.strftime("%d %b"))
+        daily=[m for m in messages if m.created_at and m.created_at.date()==day]
+        out=[m for m in daily if m.direction=="outbound"]
+        sent_series.append(len(out))
+        delivered_series.append(sum(1 for m in out if m.status in {"delivered","read"} or m.delivered_at))
+        read_series.append(sum(1 for m in out if m.status=="read" or m.read_at))
+        inbound_series.append(sum(1 for m in daily if m.direction=="inbound"))
+    total=len(outbound)
+    metrics={
+        "sent": total, "delivered": len(delivered), "read": len(read), "failed": len(failed),
+        "replies": len(inbound), "callbacks": callbacks, "opt_outs": opt_outs,
+        "delivery_rate": round(len(delivered)*100/total,1) if total else 0,
+        "read_rate": round(len(read)*100/total,1) if total else 0,
+        "reply_rate": round(len(inbound)*100/total,1) if total else 0,
+    }
+    chart={"labels":labels,"sent":sent_series,"delivered":delivered_series,"read":read_series,"inbound":inbound_series}
+    return render_template("communications/whatsapp_analytics.html", metrics=metrics, chart=chart, days=days, campaigns=campaigns)
+
+
+@communications_bp.route("/whatsapp-settings", methods=["GET", "POST"])
+@login_required
+def whatsapp_settings():
+    if not _is_manager(): abort(403)
+    if request.method == "POST":
+        action=(request.form.get("action") or "test").strip()
+        if action == "sync":
+            return redirect(url_for("communications.sync_all_templates"), code=307)
+        result=list_whatsapp_templates()
+        flash("Meta Cloud API connection successful." if result.ok else f"Meta connection failed: {result.error}", "success" if result.ok else "danger")
+        return redirect(url_for("communications.whatsapp_settings"))
+    token=os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    config={
+        "enabled": os.getenv("WHATSAPP_ENABLED", "false").lower() in {"1","true","yes","y"},
+        "provider": os.getenv("WHATSAPP_PROVIDER", "meta"),
+        "waba_id": os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID"),
+        "phone_number_id": os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+        "graph_version": os.getenv("META_GRAPH_API_VERSION", "v25.0"),
+        "token_set": bool(token),
+        "verify_token_set": bool(os.getenv("WHATSAPP_VERIFY_TOKEN")),
+        "webhook_url": f"{current_app.config.get('BASE_URL','').rstrip('/')}/whatsapp/webhook",
+        "templates": WhatsAppTemplate.query.count(),
+        "last_sync": db.session.query(func.max(WhatsAppTemplate.last_checked_at)).scalar(),
+    }
+    return render_template("communications/whatsapp_settings.html", config=config)
 
 @communications_bp.route("/webhooks/whatsapp", methods=["GET", "POST"])
 def whatsapp_webhook():

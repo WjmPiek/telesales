@@ -6,7 +6,9 @@
   <a class="{{ 'active' if request.endpoint=='whatsapp.inbox' }}" href="{{ url_for('whatsapp.inbox') }}">Conversations</a>
   <a href="{{ url_for('recovery.callbacks') }}">Callbacks</a>
   <a class="{{ 'active' if request.endpoint=='communications.suppression_list' }}" href="{{ url_for('communications.suppression_list') }}">Opt-outs</a>
+  <a class="{{ 'active' if request.endpoint=='communications.whatsapp_analytics' }}" href="{{ url_for('communications.whatsapp_analytics') }}">Analytics</a>
   <a class="{{ 'active' if request.endpoint=='communications.whatsapp_audit' }}" href="{{ url_for('communications.whatsapp_audit') }}">History & Logs</a>
+  <a class="{{ 'active' if request.endpoint=='communications.whatsapp_settings' }}" href="{{ url_for('communications.whatsapp_settings') }}">Settings</a>
 </div>
 <style>
 .wa-subnav{display:flex;gap:.45rem;overflow-x:auto;padding:.45rem;background:#fff;border:1px solid #e5ebe8;border-radius:16px;box-shadow:0 7px 20px rgba(18,63,54,.05)}

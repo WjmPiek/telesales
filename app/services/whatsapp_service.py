@@ -20,7 +20,7 @@ def normalize_phone(value: str) -> str:
 
 
 def _provider() -> str:
-    return os.getenv("WHATSAPP_PROVIDER", "360dialog").strip().lower()
+    return os.getenv("WHATSAPP_PROVIDER", "meta").strip().lower()
 
 
 
@@ -44,11 +44,11 @@ def list_whatsapp_templates() -> TemplateListResult:
         headers = {"D360-API-KEY": api_key, "Accept": "application/json"}
         provider = "360dialog"
     else:
-        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        waba_id = os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
         if not token or not waba_id:
             return TemplateListResult(False, error="Meta template credentials are incomplete.", provider="meta")
-        url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates?limit=250"
+        url = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}/{waba_id}/message_templates?limit=250"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         provider = "meta"
     found = []
@@ -116,11 +116,11 @@ def send_whatsapp_text(to_number: str, message: str) -> SendResult:
             "text": {"preview_url": True, "body": message.strip()},
         }
     else:
-        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        phone_number_id = os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
         if not token or not phone_number_id:
             return SendResult(False, error="Meta WhatsApp credentials are incomplete.")
-        url = f"https://graph.facebook.com/v25.0/{phone_number_id}/messages"
+        url = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}/{phone_number_id}/messages"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         payload = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"preview_url": True, "body": message.strip()}}
 
@@ -171,11 +171,11 @@ def send_whatsapp_template_image(to_number: str, template_name: str, language_co
         url = f"{os.getenv('D360_API_BASE_URL', 'https://waba-v2.360dialog.io').rstrip('/')}/messages"
         headers = {"D360-API-KEY": api_key, "Content-Type": "application/json"}
     else:
-        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        phone_number_id = os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
         if not token or not phone_number_id:
             return SendResult(False, error="Meta WhatsApp credentials are incomplete.")
-        url = f"https://graph.facebook.com/v25.0/{phone_number_id}/messages"
+        url = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}/{phone_number_id}/messages"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     try:
@@ -242,11 +242,11 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
         url = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
         headers = {"D360-API-KEY": api_key, "Accept": "application/json"}
     else:
-        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        waba_id = os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
         if not token or not waba_id:
             return TemplateStatusResult(False, error="Meta template credentials are incomplete. Configure WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID.", provider="meta")
-        url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates"
+        url = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}/{waba_id}/message_templates"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
     try:
@@ -420,11 +420,11 @@ def create_whatsapp_image_template(
         url = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
         headers = {"D360-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
     else:
-        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        waba_id = os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
         if not token or not waba_id:
             return TemplateCreateResult(False, error="Meta template credentials are incomplete.")
-        url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates"
+        url = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}/{waba_id}/message_templates"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=40)

@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+{% include 'communications/_whatsapp_nav.html' %}
+<style>.setting-card{background:#fff;border:1px solid #e3ebe7;border-radius:18px;padding:20px;box-shadow:0 8px 22px rgba(18,63,54,.06)}.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}.ok{background:#18a66a}.bad{background:#dc3545}.config-row{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #edf1ef}.config-row:last-child{border:0}.config-row span:last-child{text-align:right;word-break:break-all}</style>
+<div class="mb-4"><h2 class="mb-1">WhatsApp Settings</h2><p class="text-muted mb-0">Meta Cloud API connection and webhook diagnostics. Secrets are managed in Render and are never displayed here.</p></div>
+<div class="row g-4"><div class="col-lg-7"><div class="setting-card h-100"><h4>Meta Cloud API configuration</h4>
+<div class="config-row"><strong>WhatsApp enabled</strong><span><i class="status-dot {{ 'ok' if config.enabled else 'bad' }}"></i>{{ 'Yes' if config.enabled else 'No' }}</span></div>
+<div class="config-row"><strong>Provider</strong><span>{{ config.provider }}</span></div>
+<div class="config-row"><strong>Graph API version</strong><span>{{ config.graph_version }}</span></div>
+<div class="config-row"><strong>WABA ID</strong><span>{{ config.waba_id or 'Not configured' }}</span></div>
+<div class="config-row"><strong>Phone Number ID</strong><span>{{ config.phone_number_id or 'Not configured' }}</span></div>
+<div class="config-row"><strong>Permanent access token</strong><span><i class="status-dot {{ 'ok' if config.token_set else 'bad' }}"></i>{{ 'Configured' if config.token_set else 'Missing' }}</span></div>
+<div class="config-row"><strong>Webhook verify token</strong><span><i class="status-dot {{ 'ok' if config.verify_token_set else 'bad' }}"></i>{{ 'Configured' if config.verify_token_set else 'Missing' }}</span></div>
+<div class="config-row"><strong>Webhook URL</strong><span><code>{{ config.webhook_url }}</code></span></div></div></div>
+<div class="col-lg-5"><div class="setting-card mb-4"><h4>Connection tools</h4><p class="text-muted">Test credentials against Meta or retrieve the latest templates.</p><div class="d-grid gap-2"><form method="post"><input type="hidden" name="action" value="test"><button class="btn btn-success w-100">Test Meta connection</button></form><form method="post"><input type="hidden" name="action" value="sync"><button class="btn btn-outline-success w-100">Sync templates from Meta</button></form></div></div><div class="setting-card"><h4>Template status</h4><div class="display-6 fw-bold">{{ config.templates }}</div><div class="text-muted">templates stored locally</div><hr><div class="small">Last sync: <strong>{{ config.last_sync.strftime('%d %b %Y %H:%M') if config.last_sync else 'Never' }}</strong></div></div></div></div>
+{% endblock %}
