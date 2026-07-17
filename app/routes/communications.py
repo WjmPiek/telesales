@@ -20,7 +20,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url
+from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
@@ -207,6 +207,8 @@ def whatsapp_dashboard():
         "queue_failed": CommunicationCampaign.query.filter_by(queue_status="retry").count(),
         "media_assets": WhatsAppMediaAsset.query.count(),
         "provider_errors": WhatsAppProviderLog.query.filter_by(status="failed").count(),
+        "callbacks": CampaignRecipient.query.filter_by(response_type="callback").count(),
+        "opt_outs": CampaignRecipient.query.filter_by(response_type="opt_out").count(),
     }
     recent_audit = WhatsAppAuditEvent.query.order_by(WhatsAppAuditEvent.created_at.desc()).limit(20).all()
     provider_logs = WhatsAppProviderLog.query.order_by(WhatsAppProviderLog.created_at.desc()).limit(20).all()
@@ -217,8 +219,23 @@ def whatsapp_dashboard():
 @login_required
 def template_library():
     if not _is_manager(): abort(403)
-    templates = WhatsAppTemplate.query.order_by(WhatsAppTemplate.updated_at.desc()).all()
-    return render_template("communications/templates.html", templates=templates)
+    query = WhatsAppTemplate.query
+    status = (request.args.get("status") or "").strip()
+    category = (request.args.get("category") or "").strip()
+    search = (request.args.get("q") or "").strip()
+    if status: query = query.filter(WhatsAppTemplate.status == status)
+    if category: query = query.filter(WhatsAppTemplate.category == category)
+    if search: query = query.filter(db.or_(WhatsAppTemplate.name.ilike(f"%{search}%"), WhatsAppTemplate.body_text.ilike(f"%{search}%")))
+    templates = query.order_by(WhatsAppTemplate.updated_at.desc()).all()
+    cards = []
+    for t in templates:
+        try: buttons = json.loads(t.buttons_json or "[]")
+        except Exception: buttons = []
+        try: components = json.loads(t.components_json or "[]")
+        except Exception: components = []
+        header = next((c for c in components if str(c.get("type", "")).upper() == "HEADER"), {})
+        cards.append({"record": t, "buttons": buttons, "header": header})
+    return render_template("communications/templates.html", templates=templates, cards=cards, selected_status=status, selected_category=category, search=search)
 
 
 @communications_bp.route("/templates/<int:template_id>/sync", methods=["POST"])
@@ -236,17 +253,70 @@ def sync_template_record(template_id):
 @login_required
 def sync_all_templates():
     if not _is_manager(): abort(403)
-    pending = WhatsAppTemplate.query.filter(WhatsAppTemplate.status.in_(["Pending", "Submitting", "Submission failed"])).all()
-    count = 0
-    for item in pending:
-        campaign = db.session.get(CommunicationCampaign, item.campaign_id)
+    result = list_whatsapp_templates()
+    if not result.ok:
+        flash(f"Template synchronization failed: {result.error}", "danger")
+        return redirect(url_for("communications.template_library"))
+
+    imported = updated = 0
+    for raw in result.templates or []:
+        name = str(raw.get("name") or raw.get("template_name") or "").strip()
+        language = raw.get("language") or raw.get("language_code") or "en"
+        if isinstance(language, dict):
+            language = language.get("code") or "en"
+        if not name:
+            continue
+        components = raw.get("components") or []
+        body = next((c.get("text", "") for c in components if str(c.get("type", "")).upper() == "BODY"), "")
+        footer = next((c.get("text", "") for c in components if str(c.get("type", "")).upper() == "FOOTER"), None)
+        header = next((c for c in components if str(c.get("type", "")).upper() == "HEADER"), {})
+        buttons_component = next((c for c in components if str(c.get("type", "")).upper() == "BUTTONS"), {})
+        buttons = buttons_component.get("buttons") or raw.get("buttons") or []
+        status_raw = str(raw.get("status") or raw.get("state") or "Unknown").upper()
+        status_map = {"APPROVED":"Approved", "ACTIVE":"Approved", "PENDING":"Pending", "IN_REVIEW":"Pending", "REJECTED":"Rejected", "PAUSED":"Paused", "DISABLED":"Disabled", "DELETED":"Deleted"}
+        status = status_map.get(status_raw, status_raw.title().replace("_", " "))
+        provider_id = str(raw.get("id") or raw.get("template_id") or raw.get("message_template_id") or "").strip() or None
+        template = WhatsAppTemplate.query.filter_by(name=name, language=str(language)).first()
+        if not template:
+            campaign = CommunicationCampaign(
+                name=f"Template: {name}", subject="WhatsApp template", message_body=body or name,
+                whatsapp_template_name=name, whatsapp_template_language=str(language),
+                template_category=str(raw.get("category") or "MARKETING").upper(),
+                template_footer=footer, template_buttons_json=json.dumps(buttons),
+                send_whatsapp=True, send_email=False, audience_type="group",
+                template_status=status, template_provider_id=provider_id,
+                status="Template Library", branch=current_user.branch, created_by_id=current_user.id,
+            )
+            db.session.add(campaign); db.session.flush()
+            template = WhatsAppTemplate(campaign_id=campaign.id, name=name, language=str(language), body_text=body or name, created_by_id=current_user.id)
+            db.session.add(template); imported += 1
+        else:
+            campaign = db.session.get(CommunicationCampaign, template.campaign_id)
+            updated += 1
+        template.category = str(raw.get("category") or "MARKETING").upper()
+        template.status = status
+        template.body_text = body or template.body_text or name
+        template.footer_text = footer
+        template.buttons_json = json.dumps(buttons)
+        template.components_json = json.dumps(components)
+        template.provider_template_id = provider_id
+        template.quality_rating = str(raw.get("quality_score") or raw.get("quality_rating") or "") or None
+        template.rejection_reason = raw.get("rejected_reason") or raw.get("rejection_reason")
+        template.last_provider_response = json.dumps(raw)
+        template.last_checked_at = datetime.utcnow()
+        if status == "Approved" and not template.approved_at:
+            template.approved_at = datetime.utcnow()
         if campaign:
-            if item.status == "Submission failed":
-                submit_campaign_template(campaign, force=True)
-            else:
-                sync_campaign_template(campaign)
-            count += 1
-    flash(f"Synchronized {count} WhatsApp template(s).", "success")
+            campaign.message_body = template.body_text
+            campaign.whatsapp_template_name = name
+            campaign.whatsapp_template_language = str(language)
+            campaign.template_category = template.category
+            campaign.template_status = status
+            campaign.template_provider_id = provider_id
+            campaign.template_footer = footer
+            campaign.template_buttons_json = template.buttons_json
+    db.session.commit()
+    flash(f"360dialog sync complete: {imported} imported and {updated} updated.", "success")
     return redirect(url_for("communications.template_library"))
 
 
@@ -254,6 +324,12 @@ def sync_all_templates():
 @login_required
 def create_campaign():
     if not _is_manager(): abort(403)
+    selected_template = None
+    template_id = request.args.get("template_id", type=int) or request.form.get("template_id", type=int)
+    if template_id:
+        selected_template = WhatsAppTemplate.query.get_or_404(template_id)
+        if selected_template.status != "Approved":
+            flash("Only approved templates can be used for sending.", "warning")
     if request.method == "POST":
         image = request.files.get("campaign_image")
         image_filename = None
@@ -277,9 +353,14 @@ def create_campaign():
 
         campaign_name = (request.form.get("name") or "").strip()
         message_body = (request.form.get("message_body") or "").strip()
+        if selected_template:
+            message_body = selected_template.body_text
+            requested_existing_name = selected_template.name
+        else:
+            requested_existing_name = None
         if "{{1}}" not in message_body:
             message_body = "Hello {{1}},\n\n" + message_body
-        requested_template_name = (request.form.get("whatsapp_template_name") or "").strip().lower()
+        requested_template_name = requested_existing_name or (request.form.get("whatsapp_template_name") or "").strip().lower()
         if not requested_template_name and campaign_name:
             import re
             base_name = re.sub(r"[^a-z0-9]+", "_", campaign_name.lower()).strip("_") or "campaign"
@@ -308,11 +389,11 @@ def create_campaign():
             subject=(request.form.get("subject") or "Funeral policy callback").strip(),
             message_body=message_body,
             whatsapp_template_name=requested_template_name or None,
-            whatsapp_template_language=(request.form.get("whatsapp_template_language") or "en").strip(),
-            template_category=(request.form.get("template_category") or "MARKETING").strip().upper(),
+            whatsapp_template_language=(selected_template.language if selected_template else (request.form.get("whatsapp_template_language") or "en")).strip(),
+            template_category=(selected_template.category if selected_template else (request.form.get("template_category") or "MARKETING")).strip().upper(),
             template_type="MEDIA_INTERACTIVE",
-            template_footer=(request.form.get("template_footer") or "").strip()[:60] or None,
-            template_buttons_json=json.dumps(template_buttons),
+            template_footer=(selected_template.footer_text if selected_template else (request.form.get("template_footer") or "").strip()[:60] or None),
+            template_buttons_json=(selected_template.buttons_json if selected_template else json.dumps(template_buttons)),
             template_allow_category_change=request.form.get("allow_category_change") == "1",
             image_filename=image_filename, image_url=image_url, image_data=image_data, image_mimetype=image_mimetype,
             audience_type=(request.form.get("audience_type") or "group").strip().lower(),
@@ -329,7 +410,7 @@ def create_campaign():
         # During creation image_url is assigned only after the campaign has an ID.
         # Validate the uploaded binary here, not image_url, otherwise every new
         # WhatsApp image campaign is rejected before it can be saved.
-        if campaign.send_whatsapp and (not campaign.whatsapp_template_name or not campaign.image_data):
+        if campaign.send_whatsapp and not selected_template and (not campaign.whatsapp_template_name or not campaign.image_data):
             missing = []
             if not campaign.image_data:
                 missing.append("advert image")
@@ -346,7 +427,12 @@ def create_campaign():
             campaign.image_url = request.url_root.rstrip("/") + url_for("communications.campaign_image", campaign_id=campaign.id)
 
         template_mode = (request.form.get("template_mode") or "create").strip().lower()
-        if campaign.send_whatsapp and template_mode == "create":
+        if selected_template:
+            campaign.template_status = "Approved"
+            campaign.template_provider_id = selected_template.provider_template_id
+            campaign.template_approved_at = selected_template.approved_at or datetime.utcnow()
+            db.session.commit()
+        if campaign.send_whatsapp and template_mode == "create" and not selected_template:
             ok, submit_message = submit_campaign_template(campaign)
             if not ok:
                 queue_provider_job("submit_template", campaign.id, delay_seconds=120, max_attempts=5)
@@ -401,7 +487,7 @@ def create_campaign():
         else:
             flash("Campaign created. Add recipients and send it from the campaign page.", "success")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
-    return render_template("communications/create.html")
+    return render_template("communications/create.html", selected_template=selected_template)
 
 
 @communications_bp.route("/<int:campaign_id>")

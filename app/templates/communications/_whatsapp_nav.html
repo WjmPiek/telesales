@@ -1,0 +1,14 @@
+<div class="wa-subnav mb-4">
+  <a class="{{ 'active' if request.endpoint=='communications.whatsapp_dashboard' }}" href="{{ url_for('communications.whatsapp_dashboard') }}">Overview</a>
+  <a class="{{ 'active' if request.endpoint=='communications.create_campaign' }}" href="{{ url_for('communications.create_campaign') }}">Send WhatsApp</a>
+  <a class="{{ 'active' if request.endpoint=='communications.template_library' }}" href="{{ url_for('communications.template_library') }}">Templates</a>
+  <a class="{{ 'active' if request.endpoint in ['communications.index','communications.view_campaign'] }}" href="{{ url_for('communications.index') }}">Campaigns</a>
+  <a class="{{ 'active' if request.endpoint=='whatsapp.inbox' }}" href="{{ url_for('whatsapp.inbox') }}">Conversations</a>
+  <a href="{{ url_for('recovery.callbacks') }}">Callbacks</a>
+  <a class="{{ 'active' if request.endpoint=='communications.suppression_list' }}" href="{{ url_for('communications.suppression_list') }}">Opt-outs</a>
+  <a class="{{ 'active' if request.endpoint=='communications.whatsapp_audit' }}" href="{{ url_for('communications.whatsapp_audit') }}">History & Logs</a>
+</div>
+<style>
+.wa-subnav{display:flex;gap:.45rem;overflow-x:auto;padding:.45rem;background:#fff;border:1px solid #e5ebe8;border-radius:16px;box-shadow:0 7px 20px rgba(18,63,54,.05)}
+.wa-subnav a{white-space:nowrap;text-decoration:none;color:#49615b;font-weight:700;padding:.65rem .85rem;border-radius:11px}.wa-subnav a:hover,.wa-subnav a.active{background:#eaf6f1;color:#126b52}
+</style>

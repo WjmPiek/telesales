@@ -25,6 +25,56 @@ def _provider() -> str:
 
 
 
+@dataclass
+class TemplateListResult:
+    ok: bool
+    templates: list | None = None
+    error: str | None = None
+    provider: str | None = None
+
+
+def list_whatsapp_templates() -> TemplateListResult:
+    """Retrieve all templates from the configured WhatsApp provider."""
+    if _provider() == "360dialog":
+        api_key = os.getenv("D360_API_KEY")
+        if not api_key:
+            return TemplateListResult(False, error="D360_API_KEY is not configured.", provider="360dialog")
+        base = os.getenv("D360_API_BASE_URL", "https://waba-v2.360dialog.io").rstrip("/")
+        url = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
+        headers = {"D360-API-KEY": api_key, "Accept": "application/json"}
+        provider = "360dialog"
+    else:
+        token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+        waba_id = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        if not token or not waba_id:
+            return TemplateListResult(False, error="Meta template credentials are incomplete.", provider="meta")
+        url = f"https://graph.facebook.com/v25.0/{waba_id}/message_templates?limit=250"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        provider = "meta"
+    found = []
+    try:
+        while url:
+            response = requests.get(url, headers=headers, timeout=30)
+            data = response.json() if response.content else {}
+            if response.status_code >= 400:
+                message = data.get("error", {}).get("message") if isinstance(data, dict) else None
+                return TemplateListResult(False, templates=found, error=message or response.text or f"HTTP {response.status_code}", provider=provider)
+            if isinstance(data, list):
+                batch = data
+                next_url = None
+            else:
+                batch = data.get("waba_templates") or data.get("templates") or data.get("data") or []
+                paging = data.get("paging") or {}
+                next_url = paging.get("next")
+            found.extend(item for item in batch if isinstance(item, dict))
+            url = next_url
+            if provider == "360dialog":
+                break
+        return TemplateListResult(True, templates=found, provider=provider)
+    except requests.RequestException as exc:
+        return TemplateListResult(False, templates=found, error=f"Template retrieval failed: {exc}", provider=provider)
+
+
 def validate_public_image_url(image_url: str) -> tuple[bool, str | None]:
     """Confirm the template example image is publicly reachable by Meta/360dialog."""
     value = (image_url or "").strip()
