@@ -20,7 +20,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates
+from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
@@ -1104,8 +1104,13 @@ def whatsapp_settings():
         action=(request.form.get("action") or "test").strip()
         if action == "sync":
             return redirect(url_for("communications.sync_all_templates"), code=307)
-        result=list_whatsapp_templates()
-        flash("Meta Cloud API connection successful." if result.ok else f"Meta connection failed: {result.error}", "success" if result.ok else "danger")
+        result = get_meta_connection_status()
+        if result.ok:
+            phone = result.phone or {}
+            label = phone.get("display_phone_number") or phone.get("verified_name") or "configured number"
+            flash(f"Meta Cloud API connection successful for {label}.", "success")
+        else:
+            flash(f"Meta connection failed: {result.error}", "danger")
         return redirect(url_for("communications.whatsapp_settings"))
     token=os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
     config={
@@ -1124,24 +1129,6 @@ def whatsapp_settings():
 
 @communications_bp.route("/webhooks/whatsapp", methods=["GET", "POST"])
 def whatsapp_webhook():
-    if request.method == "GET":
-        verify_token = current_app.config.get("WHATSAPP_VERIFY_TOKEN") or __import__('os').getenv("WHATSAPP_VERIFY_TOKEN")
-        if request.args.get("hub.verify_token") == verify_token:
-            return request.args.get("hub.challenge", "")
-        abort(403)
-    payload = request.get_json(silent=True) or {}
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            for msg in (change.get("value", {}) or {}).get("messages", []):
-                interactive = msg.get("interactive") or {}
-                text = ((msg.get("text") or {}).get("body") or (msg.get("button") or {}).get("payload") or (interactive.get("button_reply") or {}).get("id") or "").strip()
-                upper = text.upper()
-                for prefix, action in (("CALLBACK:", "callback"), ("NOTINTERESTED:", "not-interested"), ("OPTOUT:", "opt-out"), ("STOP:", "opt-out")):
-                    if upper.startswith(prefix):
-                        token = text.split(":", 1)[1].strip()
-                        recipient = CampaignRecipient.query.filter_by(secure_token=token).first()
-                        if recipient:
-                            {"callback": record_callback, "not-interested": record_not_interested, "opt-out": record_opt_out}[action](recipient, "whatsapp")
-                            _event(recipient, action.replace("-", "_"), "whatsapp")
-                            db.session.commit()
-    return jsonify({"ok": True})
+    """Backward-compatible webhook alias; the canonical Meta URL is /whatsapp/webhook."""
+    from app.routes.whatsapp import webhook
+    return webhook()

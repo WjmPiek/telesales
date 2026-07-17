@@ -239,7 +239,7 @@ def create_app():
 
     @app.cli.command("process-whatsapp-jobs")
     def process_whatsapp_jobs_command():
-        """Process queued 360dialog template submission/status jobs."""
+        """Process queued Meta template submission/status jobs."""
         from app.services.whatsapp_enterprise import process_provider_jobs, sync_due_templates
         stats = process_provider_jobs(limit=50)
         synced = sync_due_templates(limit=50)
@@ -307,9 +307,7 @@ def create_app():
     app.register_blueprint(communications_bp)
     app.register_blueprint(whatsapp_bp)
 
-    # 360dialog is configured with the public root URL /webhook. The WhatsApp
-    # module itself lives under /whatsapp, so expose the same webhook handler at
-    # both /webhook and /whatsapp/webhook without changing the inbox URLs.
+    # Keep /webhook as a backward-compatible alias. Meta should use /whatsapp/webhook.
     from app.routes.whatsapp import webhook as whatsapp_webhook
     app.add_url_rule(
         "/webhook",

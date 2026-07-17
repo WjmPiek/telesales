@@ -282,7 +282,7 @@ This build includes:
 
 ### Render deployment
 
-Set `BASE_URL` to the public HTTPS Render service URL. Configure `D360_API_KEY`, `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=Meta Cloud API`, and `WHATSAPP_VERIFY_TOKEN`.
+Set `BASE_URL` to the public HTTPS Render service URL. Configure `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=meta`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`, `META_WABA_ID`, `META_APP_SECRET`, and `WHATSAPP_VERIFY_TOKEN`.
 
 For a single web process, leave `ENABLE_WHATSAPP_SCHEDULER=1`. For a dedicated Render background worker, set it to `0` on the web service and run:
 

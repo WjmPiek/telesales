@@ -1,6 +1,6 @@
 """Enterprise WhatsApp template/media orchestration for TeleSales.
 
-360dialog remains the transport provider; TeleSales owns the operational state.
+Meta Cloud API is the transport provider; TeleSales owns the operational state.
 """
 from __future__ import annotations
 
@@ -234,13 +234,13 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
         db.session.add(AgentNotification(
             user_id=campaign.created_by_id,
             title="WhatsApp template submitted",
-            message=f"Template {template.name} was sent to 360dialog/Meta and is awaiting approval.",
+            message=f"Template {template.name} was sent to Meta and is awaiting approval.",
             notification_type="whatsapp_template_submitted",
             entity_type="campaign",
             entity_id=campaign.id,
         ))
         db.session.commit()
-        return True, "Template submitted to 360dialog/Meta."
+        return True, "Template submitted to Meta."
 
     template.status = "Submission failed"
     template.last_error = result.error
