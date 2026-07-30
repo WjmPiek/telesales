@@ -8,7 +8,7 @@ from app import db
 from app.models import ClientApplication, PolicyProduct, LapsedPolicy, PolicyProductRule, ApplicationSignature, ClientFicaDocument, DocumentSignature, TelesalesScriptSession
 from app.security import permission_required
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message
+from app.services.whatsapp_service import send_whatsapp_text
 from app.services.pdf_service import generate_application_pdf, generate_welcome_pack, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.compliance_service import only_digits, format_dob, dob_from_sa_id, is_valid_sa_id, validate_age_limit, classify_product_template, assert_application_rules
 from app.services.document_status_service import document_summary
@@ -311,12 +311,12 @@ def send_sign_whatsapp(app_id):
     )
 
     phone = app_obj.cell_number
-    sent = send_whatsapp_message(phone, message)
+    result = send_whatsapp_text(phone, message)
 
-    if sent:
+    if result.ok:
         flash("WhatsApp signing link sent.", "success")
     else:
-        flash("WhatsApp was not sent. Check WhatsApp API environment variables and Render logs.", "danger")
+        flash(f"WhatsApp was not sent: {result.error or 'Provider returned failure'}.", "danger")
 
     return redirect(url_for("applications.view_application", app_id=app_obj.id))
 

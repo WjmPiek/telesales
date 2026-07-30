@@ -4,7 +4,12 @@
     <h3 class="mb-0">Call Client</h3>
     <small class="text-muted">{{p.policy_number}} - {{p.initials}} {{p.surname}}</small>
   </div>
-  <div><a class="btn btn-outline-dark me-2" href="{{ url_for('recovery.client_timeline', policy_id=p.id) }}">Timeline</a><a class="btn btn-outline-success" href="{{ url_for('recovery.next_client') }}">Skip to Next Client</a></div>
+  <div class="d-flex gap-2 flex-wrap justify-content-end">
+    <a class="btn btn-primary" href="{{ url_for('recovery.start_script', policy_id=p.id, app_type='new') }}">Start Sales Script</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('recovery.start_script', policy_id=p.id, app_type='reinstatement') }}">Start Reinstatement Script</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('recovery.client_timeline', policy_id=p.id) }}">Timeline</a>
+    <a class="btn btn-outline-success" href="{{ url_for('recovery.next_client') }}">Skip to Next Client</a>
+  </div>
 </div>
 
 <div class="card mb-3">
@@ -20,7 +25,7 @@
 </div>
 
 <div class="alert alert-info">
-  Every call must have an outcome. Use <b>Callback Requested</b> when the client gives a follow-up date, or choose <b>Wants Reinstatement</b>/<b>Wants New Policy</b> to start the application flow.
+  Every call must have an outcome. Use <b>Callback Requested</b> when the client gives a follow-up date. Use the script buttons above when the client wants a new policy or reinstatement.
 </div>
 
 <form method="post" class="row g-2 mb-4">

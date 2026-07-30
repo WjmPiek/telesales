@@ -20,7 +20,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_message, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
+from app.services.whatsapp_service import send_whatsapp_text, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
@@ -153,8 +153,9 @@ def _send_to_recipient(campaign, recipient, channel):
             ok = result.ok
             error = result.error
         else:
-            ok = send_whatsapp_message(policy.cell_number, text)
-            error = None if ok else "Provider returned failure"
+            result = send_whatsapp_text(policy.cell_number, text)
+            ok = result.ok
+            error = result.error
         recipient.whatsapp_status = "Sent" if ok else "Failed"
     else:
         if not pref.email_allowed or not policy.email_address:
