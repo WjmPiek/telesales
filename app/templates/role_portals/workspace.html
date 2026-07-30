@@ -48,18 +48,16 @@
   <div class="workspace-grid">
     <aside class="workspace-sidebar card shadow-sm">
       <div class="card-body">
-        <div class="small text-muted mb-2">Navigation</div>
-        <a class="workspace-nav active" href="#overview">Overview</a>
-        <a class="workspace-nav" href="#clients">Clients</a>
-        <a class="workspace-nav" href="#callbacks">Callbacks</a>
-        <a class="workspace-nav" href="#applications">Applications</a>
-        <a class="workspace-nav" href="#qa">QA</a>
-        <a class="workspace-nav" href="#activity">Activity</a>
+        <div class="small text-muted mb-2">Daily Workflow</div>
+        <a class="workspace-nav active" href="#overview">1. Review Work</a>
+        <a class="workspace-nav" href="#clients">2. Call Clients</a>
+        <a class="workspace-nav" href="#callbacks">3. Complete Callbacks</a>
+        <a class="workspace-nav" href="#applications">4. Finish Applications</a>
+        <a class="workspace-nav" href="#qa">5. QA and Documents</a>
         <hr>
-        <a class="workspace-nav" href="{{ url_for('recovery.queue', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Queue</a>
-        <a class="workspace-nav" href="{{ url_for('recovery.callbacks', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Callbacks</a>
-        <a class="workspace-nav" href="{{ url_for('applications.list_applications', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Applications</a>
-        <a class="workspace-nav" href="{{ url_for('documents.document_dashboard', branch=ctx_branch, agent_id=ctx_agent_id) }}">Open Documents</a>
+        <a class="workspace-nav" href="{{ url_for('recovery.next_client') }}">Next Due Client</a>
+        <a class="workspace-nav" href="{{ url_for('recovery.queue', branch=ctx_branch, agent_id=ctx_agent_id) }}">Lead Queue</a>
+        <a class="workspace-nav" href="{{ url_for('documents.document_dashboard', branch=ctx_branch, agent_id=ctx_agent_id) }}">Documents</a>
         {% if is_admin %}<a class="workspace-nav" href="{{ url_for('policies.list_products') }}">Policy Data</a><a class="workspace-nav" href="{{ url_for('policies.import_policies') }}">Import Policies</a>{% endif %}
         {% if is_admin or is_manager %}<a class="workspace-nav" href="{{ url_for('auth.users_manage') }}">Manage Users</a>{% endif %}
       </div>
@@ -100,7 +98,12 @@
             {% for c in clients %}
             <tr>
               <td>{{ c.policy_number or '-' }}</td><td>{{ c.surname or '-' }} {{ c.initials or '' }}</td><td>{{ c.branch or '-' }}</td><td>{{ c.recovery_status or '-' }}</td><td>{{ c.next_action_date or '-' }}</td>
-              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('role_portals.workspace', branch=ctx_branch, agent_id=ctx_agent_id, client_id=c.id) }}">Open</a></td>
+              <td class="text-end">
+                <div class="btn-group btn-group-sm">
+                  <a class="btn btn-primary" href="{{ url_for('recovery.log_call', policy_id=c.id) }}">Call</a>
+                  <a class="btn btn-outline-primary" href="{{ url_for('role_portals.workspace', branch=ctx_branch, agent_id=ctx_agent_id, client_id=c.id) }}">Details</a>
+                </div>
+              </td>
             </tr>
             {% else %}<tr><td colspan="6" class="text-muted">No clients found for this context.</td></tr>{% endfor %}
             </tbody>
@@ -121,7 +124,7 @@
         <div id="qa" class="card shadow-sm mb-3"><div class="card-body"><h4>QA Pending</h4>
           {% for q in qa_items %}<div class="mini-row"><b>{{ q.client_name or q.policy_number }}</b><span>{{ q.completed_at.date() if q.completed_at else 'Completed' }}</span></div>{% else %}<p class="text-muted">No QA items.</p>{% endfor %}
         </div></div>
-        <div id="activity" class="card shadow-sm mb-3"><div class="card-body"><h4>Recent Calls</h4>
+        <div class="card shadow-sm mb-3"><div class="card-body"><h4>Recent Calls</h4>
           {% for r in recent_calls %}<div class="mini-row"><b>{{ r.outcome }}</b><span>{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</span></div>{% else %}<p class="text-muted">No recent calls.</p>{% endfor %}
         </div></div>
       </div>
@@ -147,6 +150,8 @@
         {% for app in selected_client_apps %}<div class="timeline-item"><b>{{ app.application_ref }}</b><br><small>{{ app.status }} - {{ app.created_at.date() if app.created_at else '' }}</small></div>{% else %}<p class="text-muted small">No applications.</p>{% endfor %}
         <div class="d-grid gap-2 mt-3">
           <a class="btn btn-primary" href="{{ url_for('recovery.log_call', policy_id=selected_client.id) }}">Log Call</a>
+          <a class="btn btn-success" href="{{ url_for('recovery.start_script', policy_id=selected_client.id, app_type='new') }}">Start Sales Script</a>
+          <a class="btn btn-outline-success" href="{{ url_for('recovery.start_script', policy_id=selected_client.id, app_type='reinstatement') }}">Start Reinstatement Script</a>
           <a class="btn btn-outline-primary" href="{{ url_for('recovery.client_timeline', policy_id=selected_client.id) }}">Full Timeline</a>
         </div>
       </div>
