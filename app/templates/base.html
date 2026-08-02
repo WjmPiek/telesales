@@ -14,7 +14,6 @@
 <meta name="twitter:description" content="Martins System telesales module">
 <meta name="twitter:image" content="{{ url_for('static', filename='img/social-preview.png', _external=True) }}">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/martins-theme.css', v='20260802') }}">
 <style>
 :root{--brand:#6B4AA0;--brand-dark:#583b88;--soft-border:#dde3ea;--muted:#667085;--sidebar-w:280px;}
 *{box-sizing:border-box}body{background:#f7f8fb;color:#101828;overflow-x:hidden}.card{border-radius:.85rem}.btn{border-radius:.55rem}.table{margin-bottom:0}.table th{white-space:nowrap}.table td{vertical-align:middle}.nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;border-radius:999px;background:#dc2626;color:#fff;font-size:.72rem;font-weight:800;margin-left:.35rem;padding:0 .35rem}
@@ -26,6 +25,7 @@
 @media (max-width:767.98px){h1{font-size:2rem}h2,h3{font-size:1.45rem}.checklist-row{grid-template-columns:1fr;gap:.75rem;padding:.9rem}.checklist-actions{justify-content:space-between;min-width:0;width:100%}.status-pill{min-width:104px}.card-body{padding:1rem}.responsive-table thead{display:none}.responsive-table,.responsive-table tbody,.responsive-table tr,.responsive-table td{display:block;width:100%}.responsive-table tr{border:1px solid var(--soft-border);border-radius:.65rem;margin-bottom:.75rem;padding:.65rem;background:white}.responsive-table td{border:0!important;padding:.35rem 0!important;display:flex;gap:1rem;justify-content:space-between;align-items:flex-start;word-break:break-word}.responsive-table td::before{content:attr(data-label);font-weight:700;color:#475467;min-width:110px}.table-responsive{overflow:visible}.two-col{grid-template-columns:1fr}.stat-grid{grid-template-columns:repeat(2,1fr)}.summary-strip,.client-meta{grid-template-columns:1fr}}
 @media (max-width:575px){.stat-card{padding:.75rem}.stat-card strong{font-size:1.25rem}}
 </style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/martins-theme.css', v='20260802-purple-login') }}">
 </head>
 <body>
 {% if current_user.is_authenticated %}
