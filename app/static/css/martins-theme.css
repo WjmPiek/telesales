@@ -288,28 +288,23 @@ h5,
 
 .sidebar-brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: .75rem;
+  justify-content: center;
+  gap: 0;
   color: #fff;
   text-decoration: none;
   font-size: 1rem;
-  padding: 1rem 1.1rem;
-}
-
-.sidebar-brand:hover {
-  color: #fff;
-}
-
-.sidebar-brand-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
   min-height: 140px;
   margin: 17px 14px 19px;
   padding: 14px 15px 12px;
   background: rgba(255, 255, 255, .22);
-  border-radius: 12px;
+  border-radius: 11px;
   text-align: center;
+}
+
+.sidebar-brand:hover {
+  color: #fff;
 }
 
 .sidebar-logo {
@@ -348,10 +343,10 @@ h5,
 
 .side-link,
 .side-toggle {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 11px;
+  justify-content: flex-start;
+  gap: 10px;
   width: 100%;
   color: #fff;
   text-decoration: none;
@@ -363,8 +358,32 @@ h5,
   text-align: left;
 }
 
+.side-link::before,
+.side-toggle::before {
+  content: "";
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .18);
+}
+
+.side-toggle::after {
+  content: "";
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 2px solid rgba(255, 255, 255, .58);
+  border-bottom: 2px solid rgba(255, 255, 255, .58);
+  transform: rotate(45deg);
+}
+
+.side-group[open] > .side-toggle::after {
+  transform: rotate(225deg);
+}
+
 .side-link-feature {
-  grid-template-columns: 36px minmax(0, 1fr);
   background: transparent;
   padding-left: 18px;
 }
@@ -386,6 +405,19 @@ h5,
 .side-submenu strong {
   display: block;
   color: inherit;
+  font-size: .84rem;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.side-link > span:first-child,
+.side-toggle > span:first-child {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: .84rem;
   line-height: 1.25;
   font-weight: 700;
@@ -435,6 +467,9 @@ h5,
   text-decoration: none;
   padding: 11px 10px;
   border-radius: 10px;
+  font-size: .84rem;
+  line-height: 1.25;
+  font-weight: 700;
 }
 
 .side-submenu a:hover {
@@ -455,6 +490,7 @@ h5,
 .sidebar-footer {
   padding: 0 16px 18px;
   border-top: 0;
+  display: none;
 }
 
 .app-main {
