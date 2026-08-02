@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Martins Login Preview</title>
+  <style>
+    :root {
+      --martins-bg: #f7f8fb;
+      --martins-primary: #6B4AA0;
+      --martins-dark: #583b88;
+      --martins-muted: #64707d;
+      --martins-border: #dce2e8;
+      --martins-shadow: 0 14px 35px rgba(24, 32, 42, .08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background: var(--martins-bg);
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+      font-weight: 400;
+    }
+
+    h1,
+    label,
+    button,
+    a {
+      font-weight: 700;
+    }
+
+    .login-page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .login-card {
+      width: min(100%, 644px);
+      background: #fff;
+      border: 1px solid var(--martins-border);
+      border-radius: 12px;
+      box-shadow: var(--martins-shadow);
+      overflow: hidden;
+    }
+
+    .login-hero {
+      min-height: 316px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 42px 40px 34px;
+      border-bottom: 1px solid var(--martins-border);
+      text-align: center;
+    }
+
+    .login-logo {
+      width: 330px;
+      height: 142px;
+      object-fit: contain;
+      margin-bottom: 26px;
+    }
+
+    .login-brand-name {
+      margin: 0;
+      color: #00101f;
+      font-size: 1.5rem;
+      line-height: 1.2;
+    }
+
+    .login-module-name {
+      margin-top: 10px;
+      color: var(--martins-muted);
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .login-body {
+      padding: 40px 48px 12px;
+    }
+
+    .field {
+      margin-bottom: 22px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 12px;
+      color: #000;
+    }
+
+    input {
+      width: 100%;
+      min-height: 66px;
+      padding: .55rem .75rem;
+      background: #fff;
+      border: 1px solid var(--martins-border);
+      border-radius: 8px;
+      color: #18202a;
+      font: inherit;
+    }
+
+    input:focus {
+      border-color: var(--martins-primary);
+      box-shadow: 0 0 0 .2rem rgba(107, 74, 160, .18);
+      outline: 0;
+    }
+
+    .password-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 98px;
+      gap: 12px;
+    }
+
+    .show-password {
+      min-height: 66px;
+      border: 1px solid var(--martins-border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--martins-primary);
+      font-size: 1.25rem;
+      cursor: pointer;
+    }
+
+    .login-submit {
+      width: 100%;
+      min-height: 66px;
+      margin-top: 4px;
+      border: 1px solid var(--martins-primary);
+      border-radius: 10px;
+      background: var(--martins-primary);
+      color: #fff;
+      font-size: 1.25rem;
+      cursor: pointer;
+    }
+
+    .login-submit:hover,
+    .login-submit:focus {
+      background: var(--martins-dark);
+      border-color: var(--martins-dark);
+    }
+
+    .login-links {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-top: 1.15rem;
+    }
+
+    .login-links a {
+      color: var(--martins-primary);
+      font-size: .92rem;
+      text-decoration: none;
+    }
+
+    @media (max-width: 767.98px) {
+      .login-body {
+        padding: 28px 24px 12px;
+      }
+
+      .login-hero {
+        min-height: 270px;
+        padding: 34px 24px 28px;
+      }
+
+      .login-logo {
+        width: 280px;
+        max-width: 100%;
+        height: 120px;
+      }
+
+      .password-row {
+        grid-template-columns: 1fr;
+      }
+
+      .show-password {
+        min-height: 48px;
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+<main class="login-page">
+  <section class="login-card">
+    <header class="login-hero">
+      <img class="login-logo" src="login-page-replacement/app/static/img/martins_logo.png" alt="Martins">
+      <h1 class="login-brand-name">Martins System</h1>
+      <div class="login-module-name">Attendance Register</div>
+    </header>
+    <div class="login-body">
+      <form>
+        <div class="field">
+          <label for="username">Email or username</label>
+          <input id="username" type="text">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="password-row">
+            <input id="password" type="password">
+            <button class="show-password" type="button">Show</button>
+          </div>
+        </div>
+        <button class="login-submit" type="button">Login</button>
+      </form>
+      <div class="login-links">
+        <a href="#forgot-password">Forgot password?</a>
+        <a href="#register">Register account</a>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>
