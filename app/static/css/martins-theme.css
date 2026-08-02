@@ -377,6 +377,20 @@ a:hover {
   width: min(100%, 430px);
 }
 
+.login-card-attendance {
+  width: min(100%, 644px);
+}
+
+.login-hero {
+  min-height: 316px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 42px 40px 34px;
+  border-bottom: 1px solid var(--martins-border);
+}
+
 .login-header {
   background: var(--martins-primary);
   color: #fff;
@@ -401,6 +415,10 @@ a:hover {
   padding: 2.25rem;
 }
 
+.login-card-attendance .login-body {
+  padding: 40px 48px 12px;
+}
+
 .login-logo {
   display: block;
   width: 220px;
@@ -415,9 +433,19 @@ a:hover {
   margin-bottom: 1.25rem;
 }
 
+.login-logo-attendance {
+  width: 330px;
+  height: 142px;
+  margin-bottom: 26px;
+}
+
 .login-brand {
   text-align: center;
   margin-bottom: 1.75rem;
+}
+
+.login-hero .login-brand {
+  margin-bottom: 0;
 }
 
 .login-brand-name {
@@ -425,6 +453,18 @@ a:hover {
   font-weight: 700;
   color: var(--martins-text);
   margin: 0;
+}
+
+.login-card-attendance .login-brand-name {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.login-card-attendance .login-module-name {
+  color: var(--martins-muted);
+  font-size: 1rem;
+  line-height: 1.25;
+  margin-top: 10px;
 }
 
 .login-form-area {
@@ -441,11 +481,53 @@ a:hover {
   margin: 0;
 }
 
+.login-card-attendance .form-label {
+  margin-bottom: 12px;
+  color: #000;
+}
+
+.login-card-attendance .form-control {
+  min-height: 66px;
+  font-size: 1rem;
+}
+
+.password-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 98px;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.btn-password-toggle {
+  min-height: 66px;
+  border: 1px solid var(--martins-border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--martins-primary);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.btn-password-toggle:hover,
+.btn-password-toggle:focus {
+  border-color: var(--martins-primary);
+  color: var(--martins-dark);
+  background: #fff;
+  box-shadow: 0 0 0 .2rem rgba(107, 74, 160, .18);
+}
+
 .login-submit {
   width: 100%;
   min-height: 46px;
   border-radius: 8px;
   margin-top: .35rem;
+}
+
+.login-card-attendance .login-submit {
+  min-height: 66px;
+  border-radius: 10px;
+  margin-top: 12px;
+  font-size: 1.25rem;
 }
 
 .login-links {
@@ -841,6 +923,15 @@ body.dark-mode .form-select {
     padding: 1.35rem;
   }
 
+  .login-card-attendance .login-body {
+    padding: 28px 24px 12px;
+  }
+
+  .login-hero {
+    min-height: 270px;
+    padding: 34px 24px 28px;
+  }
+
   .login-logo {
     width: 220px;
     max-width: 100%;
@@ -851,10 +942,24 @@ body.dark-mode .form-select {
     height: 86px;
   }
 
+  .login-logo-attendance {
+    width: 280px;
+    height: 120px;
+  }
+
   .login-links {
     flex-direction: column;
     align-items: center;
     gap: .45rem;
+  }
+
+  .password-row {
+    grid-template-columns: 1fr;
+  }
+
+  .btn-password-toggle {
+    min-height: 48px;
+    font-size: 1rem;
   }
 
   .login-divider {

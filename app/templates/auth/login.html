@@ -14,13 +14,16 @@
 </head>
 <body>
 <main class="login-page">
-  <section class="login-card login-card-compact" aria-labelledby="loginTitle">
-    <div class="login-body">
-      <img class="login-logo login-logo-center" src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins">
+  <section class="login-card login-card-attendance" aria-labelledby="loginTitle">
+    <header class="login-hero">
+      <img class="login-logo login-logo-attendance" src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins">
       <div class="login-brand">
         <h1 id="loginTitle" class="login-brand-name">Martins System</h1>
-        <div class="login-module-name">TeleSales</div>
+        <div class="login-module-name">Attendance Register</div>
       </div>
+    </header>
+
+    <div class="login-body">
 
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -34,12 +37,15 @@
 
       <form class="login-form" method="post">
         <div class="mb-3">
-          <label class="form-label" for="username">Username</label>
+          <label class="form-label" for="username">Email or username</label>
           <input id="username" class="form-control" name="email" type="text" autocomplete="username" required>
         </div>
         <div class="mb-3">
           <label class="form-label" for="password">Password</label>
-          <input id="password" class="form-control" name="password" type="password" autocomplete="current-password" required>
+          <div class="password-row">
+            <input id="password" class="form-control" name="password" type="password" autocomplete="current-password" required>
+            <button class="btn btn-password-toggle" type="button" aria-controls="password" aria-label="Show password">Show</button>
+          </div>
         </div>
         <button class="btn btn-primary login-submit" type="submit">Login</button>
       </form>
@@ -51,5 +57,14 @@
     </div>
   </section>
 </main>
+<script>
+document.querySelector('.btn-password-toggle').addEventListener('click', function () {
+  var password = document.getElementById('password');
+  var isHidden = password.type === 'password';
+  password.type = isHidden ? 'text' : 'password';
+  this.textContent = isHidden ? 'Hide' : 'Show';
+  this.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
+});
+</script>
 </body>
 </html>
