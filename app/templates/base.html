@@ -37,6 +37,11 @@
     <div class="sidebar-footer"><button class="btn btn-outline-light btn-sm w-100 mb-2" type="button" onclick="toggleDarkMode()">Dark mode</button><div class="small mb-2">{{ current_user.name }}<br><span style="opacity:.8">{{ current_user.email }}</span></div><a class="btn btn-light btn-sm w-100" href="{{ url_for('auth.logout') }}">Logout</a></div>
   </aside>
   <main class="app-main">
+    <div class="app-topbar">
+      <a class="topbar-brand" href="{{ url_for('role_portals.home') }}"><img src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins"><span>Martins System</span></a>
+      <div class="topbar-account"><span>Logged in as</span><strong>{{ current_user.name }}</strong><span class="topbar-role">{{ current_user.role.name if current_user.role else 'User' }}</span><a href="{{ url_for('auth.logout') }}">Logout</a></div>
+      <button class="btn btn-light btn-sm mobile-menu-button" onclick="toggleSidebar(true)">Menu</button>
+    </div>
     <div class="mobile-topbar"><a href="{{ url_for('role_portals.home') }}">Martins System</a><button class="btn btn-light btn-sm" onclick="toggleSidebar(true)">Menu</button></div>
     <div class="content-wrap">
 {% else %}
