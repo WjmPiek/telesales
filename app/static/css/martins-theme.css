@@ -689,8 +689,8 @@ h5,
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 16px;
-  background: var(--martins-bg);
+  padding: 68px 16px 40px;
+  background: #f7f8fb;
 }
 
 .login-card {
@@ -704,17 +704,21 @@ h5,
 }
 
 .login-card-attendance {
-  width: min(100%, 644px);
+  width: min(100%, 646px);
+  border: 1px solid #dce3eb;
+  border-radius: 14px;
+  box-shadow: 0 22px 58px rgba(24, 32, 42, .09);
 }
 
 .login-hero {
-  min-height: 316px;
+  min-height: 315px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 42px 40px 34px;
-  border-bottom: 1px solid var(--martins-border);
+  padding: 48px 40px 35px;
+  background: #fff;
+  border-bottom: 1px solid #dce3eb;
 }
 
 .login-header {
@@ -742,7 +746,8 @@ h5,
 }
 
 .login-card-attendance .login-body {
-  padding: 40px 48px 12px;
+  padding: 41px 48px 45px;
+  background: #fff;
 }
 
 .login-logo {
@@ -760,9 +765,9 @@ h5,
 }
 
 .login-logo-attendance {
-  width: 330px;
+  width: 328px;
   height: 142px;
-  margin-bottom: 26px;
+  margin-bottom: 22px;
 }
 
 .login-brand {
@@ -782,15 +787,17 @@ h5,
 }
 
 .login-card-attendance .login-brand-name {
+  color: #06111d;
   font-size: 1.5rem;
   line-height: 1.2;
 }
 
 .login-card-attendance .login-module-name {
-  color: var(--martins-muted);
+  color: #5d6875;
   font-size: 1rem;
   line-height: 1.25;
   margin-top: 10px;
+  opacity: 1;
 }
 
 .login-form-area {
@@ -809,12 +816,17 @@ h5,
 
 .login-card-attendance .form-label {
   margin-bottom: 12px;
-  color: #000;
+  color: #020711;
+  font-size: 1rem;
+  line-height: 1.2;
 }
 
 .login-card-attendance .form-control {
   min-height: 66px;
+  border-color: #d6dee8;
+  border-radius: 8px;
   font-size: 1rem;
+  box-shadow: none;
 }
 
 .password-row {
@@ -826,10 +838,10 @@ h5,
 
 .btn-password-toggle {
   min-height: 66px;
-  border: 1px solid var(--martins-border);
+  border: 1px solid #d6dee8;
   border-radius: 10px;
   background: #fff;
-  color: var(--martins-primary);
+  color: #6b4aa0;
   font-size: 1.25rem;
   font-weight: 700;
 }
@@ -853,6 +865,9 @@ h5,
   min-height: 66px;
   border-radius: 10px;
   margin-top: 12px;
+  background-color: #6b4aa0 !important;
+  background-image: none !important;
+  border-color: #6b4aa0 !important;
   font-size: 1.25rem;
 }
 
@@ -860,12 +875,14 @@ h5,
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  margin-top: 1.15rem;
+  margin-top: 26px;
   font-weight: 700;
 }
 
 .login-links a {
-  font-size: .92rem;
+  color: #6b4aa0;
+  font-size: 1.25rem;
+  line-height: 1.2;
   text-decoration: none;
 }
 
@@ -1250,7 +1267,7 @@ body.dark-mode .form-select {
 
 @media (max-width: 767.98px) {
   .login-page {
-    padding: 16px;
+    padding: 18px 14px;
   }
 
   .login-body {
@@ -1258,12 +1275,12 @@ body.dark-mode .form-select {
   }
 
   .login-card-attendance .login-body {
-    padding: 28px 24px 12px;
+    padding: 30px 24px 34px;
   }
 
   .login-hero {
-    min-height: 270px;
-    padding: 34px 24px 28px;
+    min-height: 255px;
+    padding: 32px 24px 26px;
   }
 
   .login-logo {
@@ -1281,10 +1298,21 @@ body.dark-mode .form-select {
     height: 120px;
   }
 
+  .login-card-attendance .form-control,
+  .login-card-attendance .login-submit,
+  .btn-password-toggle {
+    min-height: 58px;
+  }
+
   .login-links {
     flex-direction: column;
     align-items: center;
-    gap: .45rem;
+    gap: .7rem;
+    margin-top: 22px;
+  }
+
+  .login-links a {
+    font-size: 1.05rem;
   }
 
   .password-row {
