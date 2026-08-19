@@ -14,9 +14,18 @@ class SendResult:
 
 def normalize_phone(value: str) -> str:
     number = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if number.startswith("00"):
+        number = number[2:]
     if number.startswith("0"):
         number = "27" + number[1:]
+    elif len(number) == 9:
+        number = "27" + number
     return number
+
+
+def _valid_phone(number: str) -> bool:
+    """Basic E.164 validation; provider payloads omit the leading plus sign."""
+    return number.isdigit() and 8 <= len(number) <= 15 and not number.startswith("0")
 
 
 def _provider() -> str:
@@ -208,7 +217,7 @@ def validate_public_image_url(image_url: str) -> tuple[bool, str | None]:
 
 def send_whatsapp_text(to_number: str, message: str) -> SendResult:
     to_number = normalize_phone(to_number)
-    if not to_number or not message.strip():
+    if not _valid_phone(to_number) or not message.strip():
         return SendResult(False, error="A valid destination number and message are required.")
 
     if os.getenv("WHATSAPP_ENABLED", "false").lower() not in {"true", "1", "yes", "y"}:
@@ -256,7 +265,7 @@ def send_whatsapp_message(to_number: str, message: str) -> bool:
 def send_whatsapp_template_image(to_number: str, template_name: str, language_code: str, image_url: str, callback_payload: str, optout_payload: str, customer_name: str = "Customer") -> SendResult:
     """Send an approved WhatsApp marketing template with image header and two quick-reply buttons."""
     to_number = normalize_phone(to_number)
-    if not to_number or not template_name or not image_url:
+    if not _valid_phone(to_number) or not template_name or not image_url:
         return SendResult(False, error="Number, approved template name and public image URL are required.")
     if os.getenv("WHATSAPP_ENABLED", "false").lower() not in {"true", "1", "yes", "y"}:
         return SendResult(False, error="WhatsApp is disabled. Set WHATSAPP_ENABLED=true.")
@@ -555,4 +564,3 @@ def create_whatsapp_image_template(
         return TemplateCreateResult(True, status=status, template_id=template_id, response_json=data)
     except requests.RequestException as exc:
         return TemplateCreateResult(False, error=f"Template submission failed: {exc}")
-

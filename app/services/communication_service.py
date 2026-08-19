@@ -1,15 +1,19 @@
 import hashlib
 import re
 from datetime import datetime, date
-from flask import current_app, url_for
+from flask import current_app
 from app import db
 from app.models import ContactCommunicationPreference, ContactSuppression, AgentNotification, AuditLog
 
 
 def normalize_phone(value):
     digits = re.sub(r"\D", "", str(value or ""))
+    if digits.startswith("00"):
+        digits = digits[2:]
     if digits.startswith("0"):
         digits = "27" + digits[1:]
+    elif len(digits) == 9:
+        digits = "27" + digits
     return digits
 
 
@@ -45,10 +49,11 @@ def is_suppressed(policy):
 
 def callback_links(token):
     base = current_app.config.get("BASE_URL", "").rstrip("/")
+    path = f"{base}/communications/respond/{token}"
     return {
-        "callback": base + url_for("communications.public_response", token=token, action="callback"),
-        "not_interested": base + url_for("communications.public_response", token=token, action="not-interested"),
-        "opt_out": base + url_for("communications.public_response", token=token, action="opt-out"),
+        "callback": f"{path}/callback",
+        "not_interested": f"{path}/not-interested",
+        "opt_out": f"{path}/opt-out",
     }
 
 

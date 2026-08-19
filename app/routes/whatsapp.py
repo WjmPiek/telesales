@@ -45,12 +45,36 @@ def _get_or_create_contact(wa_id, name=None):
 
 
 def _get_open_conversation(contact):
-    conversation = WhatsAppConversation.query.filter_by(contact_id=contact.id, status="Open").order_by(WhatsAppConversation.id.desc()).first()
+    conversation = WhatsAppConversation.query.filter(
+        WhatsAppConversation.contact_id == contact.id,
+        WhatsAppConversation.status.in_(["Open", "Waiting"]),
+    ).order_by(WhatsAppConversation.id.desc()).first()
     if not conversation:
         conversation = WhatsAppConversation(contact_id=contact.id, status="Open", last_message_at=datetime.utcnow())
         db.session.add(conversation)
         db.session.flush()
     return conversation
+
+
+def _event_time(value):
+    try:
+        return datetime.utcfromtimestamp(int(value))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return datetime.utcnow()
+
+
+def _latest_recipient_for_contact(contact):
+    """Find the newest campaign recipient for this WhatsApp number."""
+    suffix = normalize_phone(contact.phone_number)[-9:]
+    if not suffix:
+        return None
+    from app.models import LapsedPolicy
+    return (
+        CampaignRecipient.query.join(LapsedPolicy)
+        .filter(LapsedPolicy.cell_number.ilike(f"%{suffix}"))
+        .order_by(CampaignRecipient.created_at.desc())
+        .first()
+    )
 
 
 
@@ -100,6 +124,12 @@ def _process_payload(payload):
             mime = None
             if message_type == "text":
                 body = (item.get("text") or {}).get("body") or ""
+                if body.strip().casefold() in {"stop", "unsubscribe", "opt out", "opt-out", "cancel", "end", "quit"}:
+                    recipient = _latest_recipient_for_contact(contact)
+                    if recipient:
+                        record_opt_out(recipient, "whatsapp")
+                    contact.opted_out = True
+                    contact.status = "Opted Out"
             elif message_type in {"image", "document", "audio", "video", "sticker"}:
                 media = item.get(message_type) or {}
                 media_id = media.get("id")
@@ -119,7 +149,7 @@ def _process_payload(payload):
                 body = f"[{message_type.title()} message]"
 
             timestamp = item.get("timestamp")
-            created_at = datetime.utcfromtimestamp(int(timestamp)) if str(timestamp or "").isdigit() else datetime.utcnow()
+            created_at = _event_time(timestamp)
             db.session.add(WhatsAppMessage(
                 conversation_id=conversation.id,
                 provider_message_id=provider_id,
@@ -142,10 +172,10 @@ def _process_payload(payload):
             message = WhatsAppMessage.query.filter_by(provider_message_id=provider_id).first()
             if not message:
                 continue
-            state = status.get("status") or message.status
+            state = str(status.get("status") or message.status or "").lower()
             message.status = state
             timestamp = status.get("timestamp")
-            event_at = datetime.utcfromtimestamp(int(timestamp)) if str(timestamp or "").isdigit() else datetime.utcnow()
+            event_at = _event_time(timestamp)
             if state == "delivered":
                 message.delivered_at = event_at
             elif state == "read":
@@ -153,6 +183,15 @@ def _process_payload(payload):
             elif state == "failed":
                 errors = status.get("errors") or []
                 message.error_message = json.dumps(errors) if errors else "Delivery failed"
+            if message.campaign_recipient:
+                recipient_state = {
+                    "sent": "Sent",
+                    "delivered": "Delivered",
+                    "read": "Read",
+                    "failed": "Failed",
+                }.get(state)
+                if recipient_state:
+                    message.campaign_recipient.whatsapp_status = recipient_state
 
 
 @whatsapp_bp.route("/")
@@ -185,7 +224,12 @@ def inbox():
         "unread": db.session.query(db.func.coalesce(db.func.sum(WhatsAppConversation.unread_count), 0)).scalar() or 0,
         "today": WhatsAppMessage.query.filter(WhatsAppMessage.created_at >= datetime.utcnow().date()).count(),
     }
-    return render_template("whatsapp/inbox.html", conversations=conversations, selected=selected, agents=agents, metrics=metrics, q=q, status=status)
+    provider_ready = (
+        os.getenv("WHATSAPP_ENABLED", "false").lower() in {"1", "true", "yes", "y"}
+        and bool(os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("D360_API_KEY"))
+        and bool(os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("D360_API_KEY"))
+    )
+    return render_template("whatsapp/inbox.html", conversations=conversations, selected=selected, agents=agents, metrics=metrics, q=q, status=status, provider_ready=provider_ready)
 
 
 @whatsapp_bp.route("/api/conversations/<int:conversation_id>")
@@ -271,13 +315,20 @@ def webhook():
         expected = "sha256=" + hmac.new(app_secret.encode("utf-8"), request.get_data(), hashlib.sha256).hexdigest()
         if not signature or not hmac.compare_digest(signature, expected):
             return jsonify({"ok": False, "error": "Invalid Meta webhook signature"}), 403
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or payload.get("object") not in {None, "whatsapp_business_account"}:
+        return jsonify({"ok": False, "error": "Invalid WhatsApp webhook payload"}), 400
+    payload = payload or {}
     raw = json.dumps(payload, sort_keys=True)
     event_key = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    if WhatsAppWebhookEvent.query.filter_by(event_key=event_key).first():
+    event = WhatsAppWebhookEvent.query.filter_by(event_key=event_key).first()
+    if event and event.processed:
         return jsonify({"ok": True, "duplicate": True})
-    event = WhatsAppWebhookEvent(event_key=event_key, payload=raw)
-    db.session.add(event)
+    if not event:
+        event = WhatsAppWebhookEvent(event_key=event_key, payload=raw)
+        db.session.add(event)
+    else:
+        event.error = None
     try:
         _process_payload(payload)
         event.processed = True
@@ -285,8 +336,13 @@ def webhook():
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        failed = WhatsAppWebhookEvent(event_key=event_key, payload=raw, processed=False, error=str(exc))
-        db.session.add(failed)
+        failed = WhatsAppWebhookEvent.query.filter_by(event_key=event_key).first()
+        if not failed:
+            failed = WhatsAppWebhookEvent(event_key=event_key, payload=raw)
+            db.session.add(failed)
+        failed.processed = False
+        failed.error = str(exc)
         db.session.commit()
         current_app.logger.exception("WhatsApp webhook processing failed")
+        return jsonify({"ok": False, "error": "Webhook processing failed"}), 500
     return jsonify({"ok": True})

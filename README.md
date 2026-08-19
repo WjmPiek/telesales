@@ -329,3 +329,17 @@ Register this webhook in Meta:
 `https://your-service.onrender.com/whatsapp/webhook`
 
 Subscribe the WhatsApp Business Account to message events. The webhook validates Meta's `X-Hub-Signature-256` header when `META_APP_SECRET` is configured.
+
+### Final WhatsApp go-live checks
+
+1. Deploy with the WhatsApp variables in `render.yaml` populated and confirm `BASE_URL` is the final public HTTPS domain.
+2. In Meta, register `https://<your-domain>/whatsapp/webhook`, enter the deployed `WHATSAPP_VERIFY_TOKEN`, and subscribe the WABA to `messages`.
+3. Open **Communications > WhatsApp Settings**, run the full Meta diagnostics, then sync templates.
+4. Send one approved template to a test number and confirm the campaign recipient moves through **Sent**, **Delivered**, and **Read**.
+5. Reply with a quick-reply button and with `STOP`; confirm callback creation and suppression in the dashboard.
+
+Automated regression coverage is included for webhook verification and signatures, inbound chat creation, waiting-chat reuse, campaign delivery receipts, opt-out keywords, background campaign sends, and failed-event retries:
+
+```bash
+python -m unittest discover -s tests -v
+```

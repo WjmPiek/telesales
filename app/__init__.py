@@ -101,6 +101,24 @@ def _ensure_whatsapp_template_columns(app):
             app.logger.exception("Could not ensure WhatsApp v3 template columns")
 
 
+def _ensure_whatsapp_message_columns(app):
+    """Keep delivery receipts linked to campaign recipients on existing databases."""
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS campaign_recipient_id INTEGER REFERENCES campaign_recipients(id)",
+                "CREATE INDEX IF NOT EXISTS ix_whatsapp_messages_campaign_recipient_id ON whatsapp_messages (campaign_recipient_id)",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure WhatsApp campaign message columns")
+
+
 def _ensure_client_fica_document_columns(app):
     """Render/PostgreSQL safety patch for existing databases.
 
@@ -193,6 +211,7 @@ def create_app():
             try:
                 _ensure_communication_campaign_columns(app)
                 _ensure_whatsapp_template_columns(app)
+                _ensure_whatsapp_message_columns(app)
             except Exception:
                 pass
             try:
@@ -223,6 +242,7 @@ def create_app():
     try:
         _ensure_communication_campaign_columns(app)
         _ensure_whatsapp_template_columns(app)
+        _ensure_whatsapp_message_columns(app)
     except Exception:
         pass
 

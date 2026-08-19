@@ -24,6 +24,26 @@ services:
         sync: false
       - key: UPLOAD_FOLDER
         value: app/static/uploads
+      - key: WHATSAPP_ENABLED
+        value: "true"
+      - key: WHATSAPP_PROVIDER
+        value: meta
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_WABA_ID
+        sync: false
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_GRAPH_API_VERSION
+        value: v25.0
+      - key: WHATSAPP_VERIFY_TOKEN
+        generateValue: true
+      - key: ENABLE_WHATSAPP_SCHEDULER
+        value: "1"
 
 databases:
   - name: martins-postgres

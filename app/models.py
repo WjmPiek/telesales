@@ -849,12 +849,14 @@ class WhatsAppMessage(db.Model):
     status = db.Column(db.String(30), default="received", nullable=False, index=True)
     error_message = db.Column(db.Text)
     sender_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    campaign_recipient_id = db.Column(db.Integer, db.ForeignKey("campaign_recipients.id"), index=True)
     raw_payload = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     delivered_at = db.Column(db.DateTime)
     read_at = db.Column(db.DateTime)
     conversation = db.relationship("WhatsAppConversation", backref=db.backref("messages", lazy=True, order_by="WhatsAppMessage.created_at"))
     sender_user = db.relationship("User")
+    campaign_recipient = db.relationship("CampaignRecipient")
 
 class WhatsAppWebhookEvent(db.Model):
     __tablename__ = "whatsapp_webhook_events"

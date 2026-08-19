@@ -20,7 +20,7 @@ from app.services.communication_service import (
     record_not_interested, record_opt_out
 )
 from app.services.email_service import send_email
-from app.services.whatsapp_service import send_whatsapp_text, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
+from app.services.whatsapp_service import normalize_phone, send_whatsapp_text, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
@@ -157,6 +157,51 @@ def _send_to_recipient(campaign, recipient, channel):
             ok = result.ok
             error = result.error
         recipient.whatsapp_status = "Sent" if ok else "Failed"
+        # Persist every provider attempt in the shared inbox. Meta delivery/read
+        # webhooks can then reconcile both the message and campaign recipient.
+        number = normalize_phone(policy.cell_number)
+        if not number:
+            _event(recipient, "failed", channel, error or "Invalid WhatsApp number")
+            return False, error or "Invalid WhatsApp number"
+        contact = WhatsAppContact.query.filter_by(wa_id=number).first()
+        if not contact:
+            contact = WhatsAppContact(
+                wa_id=number,
+                phone_number=number,
+                display_name=f"{policy.initials or ''} {policy.surname or ''}".strip() or number,
+                branch=policy.branch,
+                assigned_agent_id=policy.assigned_agent_id,
+                status="Campaign Contact",
+            )
+            db.session.add(contact)
+            db.session.flush()
+        conversation = WhatsAppConversation.query.filter(
+            WhatsAppConversation.contact_id == contact.id,
+            WhatsAppConversation.status.in_(["Open", "Waiting"]),
+        ).order_by(WhatsAppConversation.id.desc()).first()
+        if not conversation:
+            conversation = WhatsAppConversation(
+                contact_id=contact.id,
+                assigned_agent_id=policy.assigned_agent_id,
+                status="Open",
+            )
+            db.session.add(conversation)
+            db.session.flush()
+        outbound_body = campaign.message_body if campaign.whatsapp_template_name and campaign.image_url else text
+        db.session.add(WhatsAppMessage(
+            conversation_id=conversation.id,
+            provider_message_id=result.message_id,
+            campaign_recipient_id=recipient.id,
+            direction="outbound",
+            message_type="template" if campaign.whatsapp_template_name and campaign.image_url else "text",
+            body=outbound_body,
+            status="sent" if ok else "failed",
+            error_message=error,
+            sender_user_id=getattr(current_user, "id", None) if getattr(current_user, "is_authenticated", False) else campaign.created_by_id,
+            raw_payload=json.dumps(result.response_json or {}),
+        ))
+        conversation.last_message_preview = outbound_body[:500]
+        conversation.last_message_at = datetime.utcnow()
     else:
         if not pref.email_allowed or not policy.email_address:
             return False, "No permitted email address"
@@ -510,7 +555,7 @@ def view_campaign(campaign_id):
     leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(500).all()
     metrics = {
         "total": len(recipients),
-        "wa_sent": sum(1 for r in recipients if r.whatsapp_status == "Sent"),
+        "wa_sent": sum(1 for r in recipients if r.whatsapp_status in {"Sent", "Delivered", "Read"}),
         "email_sent": sum(1 for r in recipients if r.email_status == "Sent"),
         "callbacks": sum(1 for r in recipients if r.response_type == "callback"),
         "not_interested": sum(1 for r in recipients if r.response_type == "not_interested"),
@@ -917,7 +962,7 @@ def campaign_report(campaign_id):
     applications = ClientApplication.query.filter(ClientApplication.lapsed_policy_id.in_(application_lead_ids)).all() if application_lead_ids else []
     metrics = {
         "recipients": len(recipients),
-        "wa_sent": sum(r.whatsapp_status == "Sent" for r in recipients),
+        "wa_sent": sum(r.whatsapp_status in {"Sent", "Delivered", "Read"} for r in recipients),
         "email_sent": sum(r.email_status == "Sent" for r in recipients),
         "callbacks": sum(r.response_type == "callback" for r in recipients),
         "not_interested": sum(r.response_type == "not_interested" for r in recipients),
