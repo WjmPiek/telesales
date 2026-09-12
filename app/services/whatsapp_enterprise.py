@@ -214,6 +214,8 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
         category=campaign.template_category or "MARKETING",
         footer_text=campaign.template_footer,
         buttons=buttons,
+        image_data=campaign.image_data,
+        image_mimetype=campaign.image_mimetype,
         allow_category_change=campaign.template_allow_category_change,
     )
     now = datetime.utcnow()

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import hmac
 import json
@@ -12,6 +12,7 @@ from app import db
 from app.models import User, WhatsAppContact, WhatsAppConversation, WhatsAppMessage, WhatsAppWebhookEvent, CampaignRecipient, AgentNotification
 from app.services.whatsapp_service import normalize_phone, send_whatsapp_text
 from app.services.communication_service import record_callback, record_opt_out
+from app.services.phone_deletion import delete_phone, phone_is_suppressed
 
 whatsapp_bp = Blueprint("whatsapp", __name__, url_prefix="/whatsapp")
 
@@ -65,16 +66,15 @@ def _event_time(value):
 
 def _latest_recipient_for_contact(contact):
     """Find the newest campaign recipient for this WhatsApp number."""
-    suffix = normalize_phone(contact.phone_number)[-9:]
-    if not suffix:
+    number = normalize_phone(contact.phone_number)
+    if not number:
         return None
     from app.models import LapsedPolicy
-    return (
+    candidates = (
         CampaignRecipient.query.join(LapsedPolicy)
-        .filter(LapsedPolicy.cell_number.ilike(f"%{suffix}"))
         .order_by(CampaignRecipient.created_at.desc())
-        .first()
     )
+    return next((r for r in candidates if normalize_phone(r.policy.cell_number) == number), None)
 
 
 
@@ -86,12 +86,16 @@ def _process_campaign_button(payload_id, contact):
     recipient = CampaignRecipient.query.filter_by(secure_token=token).first()
     if not recipient:
         return
+    if normalize_phone(recipient.policy.cell_number) != normalize_phone(contact.phone_number):
+        return
     if action == "callback":
         record_callback(recipient, "whatsapp")
         contact.tags = ", ".join(dict.fromkeys([x.strip() for x in ((contact.tags or "") + ", callback, hot").split(",") if x.strip()]))
         contact.status = "Callback Requested"
     elif action in {"optout", "opt_out"}:
+        number = contact.phone_number
         record_opt_out(recipient, "whatsapp")
+        delete_phone(number)
         contact.opted_out = True
         contact.status = "Opted Out"
     else:
@@ -108,6 +112,9 @@ def _process_payload(payload):
 
     for change in changes:
         value = change.get("value") or {}
+        configured_phone = os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        if configured_phone and str((value.get("metadata") or {}).get("phone_number_id")) != configured_phone:
+            continue
         contacts = value.get("contacts") or []
         names = {str(c.get("wa_id")): ((c.get("profile") or {}).get("name")) for c in contacts}
 
@@ -116,6 +123,8 @@ def _process_payload(payload):
             if provider_id and WhatsAppMessage.query.filter_by(provider_message_id=provider_id).first():
                 continue
             sender = str(item.get("from") or "")
+            if not sender or not provider_id or phone_is_suppressed(sender):
+                continue
             contact = _get_or_create_contact(sender, names.get(sender))
             conversation = _get_open_conversation(contact)
             message_type = item.get("type") or "text"
@@ -128,6 +137,7 @@ def _process_payload(payload):
                     recipient = _latest_recipient_for_contact(contact)
                     if recipient:
                         record_opt_out(recipient, "whatsapp")
+                    delete_phone(sender)
                     contact.opted_out = True
                     contact.status = "Opted Out"
             elif message_type in {"image", "document", "audio", "video", "sticker"}:
@@ -149,6 +159,8 @@ def _process_payload(payload):
                 body = f"[{message_type.title()} message]"
 
             timestamp = item.get("timestamp")
+            if contact.opted_out:
+                body = "Number deleted"
             created_at = _event_time(timestamp)
             db.session.add(WhatsAppMessage(
                 conversation_id=conversation.id,
@@ -159,7 +171,7 @@ def _process_payload(payload):
                 media_id=media_id,
                 media_mime_type=mime,
                 status="received",
-                raw_payload=json.dumps(item),
+                raw_payload=None,
                 created_at=created_at,
             ))
             conversation.last_message_preview = body[:500]
@@ -173,6 +185,9 @@ def _process_payload(payload):
             if not message:
                 continue
             state = str(status.get("status") or message.status or "").lower()
+            order = {"sent": 1, "delivered": 2, "read": 3}
+            if message.status in order and state in order and order[state] < order[message.status]:
+                continue
             message.status = state
             timestamp = status.get("timestamp")
             event_at = _event_time(timestamp)
@@ -252,6 +267,12 @@ def send_message(conversation_id):
         return jsonify({"ok": False, "error": "Message cannot be empty."}), 400
     if conversation.contact.opted_out:
         return jsonify({"ok": False, "error": "This contact has opted out."}), 409
+    latest = WhatsAppMessage.query.join(WhatsAppConversation).filter(
+        WhatsAppConversation.contact_id == conversation.contact_id,
+        WhatsAppMessage.direction == "inbound",
+    ).order_by(WhatsAppMessage.created_at.desc()).first()
+    if not latest or latest.created_at < datetime.utcnow() - timedelta(hours=24):
+        return jsonify({"ok": False, "error": "The 24-hour reply window is closed. Send an approved campaign template."}), 409
     result = send_whatsapp_text(conversation.contact.phone_number, body)
     message = WhatsAppMessage(
         conversation_id=conversation.id,
@@ -310,6 +331,8 @@ def webhook():
         return "Invalid verification token", 403
 
     app_secret = os.getenv("META_APP_SECRET")
+    if not app_secret:
+        return jsonify({"ok": False, "error": "META_APP_SECRET is required"}), 503
     signature = request.headers.get("X-Hub-Signature-256", "")
     if app_secret:
         expected = "sha256=" + hmac.new(app_secret.encode("utf-8"), request.get_data(), hashlib.sha256).hexdigest()
@@ -325,7 +348,7 @@ def webhook():
     if event and event.processed:
         return jsonify({"ok": True, "duplicate": True})
     if not event:
-        event = WhatsAppWebhookEvent(event_key=event_key, payload=raw)
+        event = WhatsAppWebhookEvent(event_key=event_key, payload="{}")
         db.session.add(event)
     else:
         event.error = None
@@ -338,7 +361,7 @@ def webhook():
         db.session.rollback()
         failed = WhatsAppWebhookEvent.query.filter_by(event_key=event_key).first()
         if not failed:
-            failed = WhatsAppWebhookEvent(event_key=event_key, payload=raw)
+            failed = WhatsAppWebhookEvent(event_key=event_key, payload="{}")
             db.session.add(failed)
         failed.processed = False
         failed.error = str(exc)

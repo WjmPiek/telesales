@@ -59,6 +59,8 @@ def callback_links(token):
 
 def record_callback(recipient, channel):
     policy = recipient.policy
+    if preference_for(policy).opted_out_all or is_suppressed(policy):
+        return policy
     if recipient.response_type == "callback" and recipient.callback_created:
         return policy
     recipient.response_type = "callback"

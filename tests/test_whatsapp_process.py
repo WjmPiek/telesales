@@ -3,7 +3,7 @@ import hmac
 import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["AUTO_CREATE_TABLES"] = "1"
@@ -29,7 +29,7 @@ from app.services.whatsapp_service import SendResult, normalize_phone
 
 class WhatsAppProcessTests(unittest.TestCase):
     def setUp(self):
-        os.environ.pop("META_APP_SECRET", None)
+        os.environ["META_APP_SECRET"] = "test-secret"
         self.app = create_app()
         self.app.config.update(TESTING=True)
         self.client = self.app.test_client()
@@ -44,7 +44,91 @@ class WhatsAppProcessTests(unittest.TestCase):
         self.context.pop()
 
     def _post(self, payload, headers=None):
-        return self.client.post("/whatsapp/webhook", json=payload, headers=headers or {})
+        raw = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(b"test-secret", raw, hashlib.sha256).hexdigest()
+        return self.client.post("/whatsapp/webhook", data=raw, content_type="application/json", headers=headers or {"X-Hub-Signature-256": signature})
+
+    def test_missing_secret_fails_closed(self):
+        os.environ.pop("META_APP_SECRET")
+        self.assertEqual(self._post({"entry": []}).status_code, 503)
+
+    def test_template_creation_uploads_image_and_uses_handle(self):
+        from app.services.whatsapp_service import create_whatsapp_image_template
+        responses = []
+        for data in [{"id": "upload:test"}, {"h": "meta-image-handle"}, {"id": "template-1", "status": "PENDING"}]:
+            response = Mock(status_code=200, content=b"json")
+            response.json.return_value = data
+            responses.append(response)
+        with patch.dict(os.environ, {"META_APP_ID": "app-1", "META_ACCESS_TOKEN": "test-token", "META_WABA_ID": "waba-1", "WHATSAPP_PROVIDER": "meta"}), patch("requests.post", side_effect=responses) as post:
+            result = create_whatsapp_image_template("callback_request", "en_US", "Hello {{1}}, may we call you?", "https://example.com/image.png", image_data=b"image", image_mimetype="image/png")
+        self.assertTrue(result.ok)
+        payload = post.call_args_list[2].kwargs["json"]
+        self.assertEqual(payload["language"], "en_US")
+        self.assertEqual(payload["components"][0]["example"]["header_handle"], ["meta-image-handle"])
+        self.assertEqual([b["text"] for b in payload["components"][-1]["buttons"]], ["Call me back", "Delete my number"])
+
+    def test_wrong_configured_phone_is_ignored(self):
+        with patch.dict(os.environ, {"META_PHONE_NUMBER_ID": "expected"}):
+            self.assertEqual(self._post({"messages": [{"id": "other-phone", "from": "27676200748", "type": "text", "text": {"body": "Hi"}}]}).status_code, 200)
+        self.assertEqual(WhatsAppContact.query.count(), 0)
+
+    def test_bulk_without_template_is_blocked(self):
+        recipient = self._campaign_recipient()
+        from app.routes.communications import _send_to_recipient
+        with patch("requests.post") as post:
+            ok, error = _send_to_recipient(recipient.campaign, recipient, "whatsapp")
+        self.assertFalse(ok)
+        post.assert_not_called()
+
+    def test_scheduled_sender_saves_each_recipient(self):
+        recipient = self._campaign_recipient()
+        recipient.campaign.status = "Scheduled"
+        recipient.campaign.scheduled_at = __import__('datetime').datetime.utcnow()
+        recipient.campaign.queue_status = "queued"
+        recipient.campaign.template_status = "Approved"
+        db.session.commit()
+        from app.services.whatsapp_campaign_engine import process_scheduled_campaigns
+        def send(campaign, target, channel):
+            target.whatsapp_status = "Sent"
+            return True, None
+        with patch("app.routes.communications._refresh_template_status", return_value=Mock(ok=True)), patch("app.routes.communications._send_to_recipient", side_effect=send) as sender:
+            self.assertEqual(process_scheduled_campaigns()["sent"], 1)
+            self.assertEqual(process_scheduled_campaigns()["processed"], 0)
+            self.assertEqual(sender.call_count, 1)
+
+    def test_button_sender_must_own_recipient(self):
+        recipient = self._campaign_recipient()
+        self._post({"messages": [{"id": "wrong-sender", "from": "27821234567", "type": "button", "button": {"payload": "optout:recipient-token", "text": "Delete my number"}}]})
+        self.assertEqual(CampaignRecipient.query.one().policy.cell_number, "0676200748")
+        self.assertEqual(ContactSuppression.query.count(), 0)
+
+    def test_delete_button_clears_duplicates_and_blocks_recreation(self):
+        recipient = self._campaign_recipient()
+        duplicate = LapsedPolicy(member_id="M-2", cell_number="+27 67 620 0748", home_tel="0676200748")
+        db.session.add(duplicate)
+        db.session.commit()
+        payload = {"messages": [{"id": "delete-button", "from": "27676200748", "type": "button", "button": {"payload": "optout:recipient-token", "text": "Delete my number"}}]}
+        self.assertEqual(self._post(payload).status_code, 200)
+        self.assertTrue(all(p.cell_number is None for p in LapsedPolicy.query.all()))
+        self.assertTrue(all(p.home_tel is None for p in LapsedPolicy.query.all()))
+        self.assertEqual(WhatsAppContact.query.one().phone_number, "")
+        self.assertEqual(self._post(payload).status_code, 200)
+        self.assertEqual(self._post({"messages": [{"id": "after-delete", "from": "27676200748", "type": "text", "text": {"body": "Hi"}}]}).status_code, 200)
+        self.assertEqual(WhatsAppContact.query.count(), 1)
+        self.assertTrue(all(e.payload == "{}" for e in WhatsAppWebhookEvent.query.all()))
+        from app.services.whatsapp_service import send_whatsapp_text
+        with patch("requests.post") as provider:
+            self.assertFalse(send_whatsapp_text("0676200748", "Hello").ok)
+            provider.assert_not_called()
+
+    def test_callback_button_is_idempotent(self):
+        recipient = self._campaign_recipient()
+        for message_id in ["callback-one", "callback-two"]:
+            self.assertEqual(self._post({"messages": [{"id": message_id, "from": "27676200748", "type": "button", "button": {"payload": "callback:recipient-token", "text": "Call me back"}}]}).status_code, 200)
+        self.assertTrue(CampaignRecipient.query.one().callback_created)
+        self.assertEqual(CampaignRecipient.query.one().policy.recovery_status, "Callback")
+        from app.models import AgentNotification
+        self.assertEqual(AgentNotification.query.count(), 1)
 
     def _campaign_recipient(self, phone="0676200748"):
         role = Role(name="Agent")
@@ -124,11 +208,14 @@ class WhatsAppProcessTests(unittest.TestCase):
 
     def test_background_campaign_send_records_inbox_message(self):
         recipient = self._campaign_recipient()
+        recipient.campaign.whatsapp_template_name = "callback_request"
+        recipient.campaign.image_url = "https://example.com/image.png"
+        db.session.commit()
         campaign_id = recipient.campaign_id
         recipient_id = recipient.id
         from app.routes.communications import _send_to_recipient
         with patch(
-            "app.routes.communications.send_whatsapp_text",
+            "app.routes.communications.send_whatsapp_template_image",
             return_value=SendResult(True, message_id="wamid.campaign-1", response_json={"messages": [{"id": "wamid.campaign-1"}]}),
         ):
             ok, error = _send_to_recipient(

@@ -27,9 +27,14 @@ def process_scheduled_campaigns(limit=10):
     ).order_by(CommunicationCampaign.scheduled_at.asc()).limit(limit).all()
     stats = {"processed": 0, "sent": 0, "failed": 0}
     for campaign in campaigns:
-        stats["processed"] += 1
-        campaign.queue_status = "processing"
+        claimed = CommunicationCampaign.query.filter(
+            CommunicationCampaign.id == campaign.id,
+            CommunicationCampaign.queue_status.in_(["queued", "retry"]),
+        ).update({"queue_status": "processing"}, synchronize_session=False)
         db.session.commit()
+        if not claimed:
+            continue
+        stats["processed"] += 1
         try:
             from app.routes.communications import _send_to_recipient, _refresh_template_status
             if campaign.send_whatsapp:
@@ -44,6 +49,7 @@ def process_scheduled_campaigns(limit=10):
                 if campaign.send_email and recipient.email_status in {None, "Not Sent", "Failed"}:
                     ok, _ = _send_to_recipient(campaign, recipient, "email")
                     sent += int(ok)
+                db.session.commit()
             campaign.status = "Sent"
             campaign.queue_status = "completed"
             campaign.sent_at = datetime.utcnow()
