@@ -52,6 +52,39 @@ class WhatsAppProcessTests(unittest.TestCase):
         os.environ.pop("META_APP_SECRET")
         self.assertEqual(self._post({"entry": []}).status_code, 503)
 
+    def test_360dialog_authentication_and_channel_guard(self):
+        payload = {"entry": [{"changes": [{"field": "messages", "value": {
+            "metadata": {"phone_number_id": "live-phone"},
+            "messages": [{"id": "d360-inbound", "from": "27821234567", "type": "text", "text": {"body": "Hi"}}]
+        }}]}]}
+        with patch.dict(os.environ, {"WHATSAPP_PROVIDER": "360dialog", "D360_WEBHOOK_SECRET": "test-webhook", "D360_PHONE_NUMBER_ID": "live-phone", "META_PHONE_NUMBER_ID": "old-test-phone"}):
+            self.assertEqual(self._post(payload).status_code, 403)
+            self.assertEqual(self._post(payload, {"Authorization": "Bearer wrong"}).status_code, 403)
+            self.assertEqual(WhatsAppContact.query.count(), 0)
+            self.assertEqual(self._post(payload, {"Authorization": "Bearer test-webhook"}).status_code, 200)
+            self.assertEqual(WhatsAppMessage.query.count(), 1)
+            self.assertEqual(self._post(payload, {"Authorization": "Bearer test-webhook"}).status_code, 200)
+            self.assertEqual(WhatsAppMessage.query.count(), 1)
+            payload["entry"][0]["changes"][0]["value"]["metadata"]["phone_number_id"] = "other-phone"
+            payload["entry"][0]["changes"][0]["value"]["messages"][0]["id"] = "wrong-channel"
+            self.assertEqual(self._post(payload, {"Authorization": "Bearer test-webhook"}).status_code, 200)
+            self.assertEqual(WhatsAppMessage.query.count(), 1)
+
+    def test_360dialog_missing_configuration_fails_closed(self):
+        with patch.dict(os.environ, {"WHATSAPP_PROVIDER": "360dialog", "D360_WEBHOOK_SECRET": "", "D360_PHONE_NUMBER_ID": ""}):
+            self.assertEqual(self._post({"entry": []}).status_code, 503)
+
+    def test_coexistence_events_do_not_execute_customer_actions(self):
+        self._campaign_recipient()
+        for field in ["history", "smb_message_echoes", "smb_app_state_sync"]:
+            payload = {"entry": [{"changes": [{"field": field, "value": {"messages": [
+                {"id": field, "from": "27676200748", "type": "text", "text": {"body": "STOP"}}
+            ]}}]}]}
+            self.assertEqual(self._post(payload).status_code, 200)
+        self.assertEqual(ContactSuppression.query.count(), 0)
+        self.assertEqual(WhatsAppMessage.query.count(), 0)
+        self.assertEqual(CampaignRecipient.query.one().policy.cell_number, "0676200748")
+
     def test_template_creation_uploads_image_and_uses_handle(self):
         from app.services.whatsapp_service import create_whatsapp_image_template
         responses = []

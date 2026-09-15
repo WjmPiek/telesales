@@ -84,3 +84,31 @@ With an expressly approved test recipient, send one message, verify delivery, an
 
 - [Meta template components](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/types/component_object/)
 - [Meta resumable upload](https://www.postman.com/meta/whatsapp-business-platform/request/13382743-871ea332-a6a4-4ad0-800a-0be9796b1933)
+
+## 360dialog coexistence production connection
+
+The channel for +27637197802 is Ready. WABA: 2698742203857029; phone number ID: 1277589648777469; business portfolio: Martin's Northcliff (462512652035593).
+
+Use these settings instead of the direct Meta credentials above:
+
+- WHATSAPP_PROVIDER=360dialog
+- D360_API_BASE_URL=https://waba-v2.360dialog.io
+- D360_API_KEY: channel API key, stored only in Render environment
+- D360_PHONE_NUMBER_ID=1277589648777469
+- D360_WEBHOOK_SECRET: independent, cryptographically random shared secret stored only in Render and the channel webhook header
+- WHATSAPP_ENABLED=true
+- ENABLE_WHATSAPP_SCHEDULER=0 during initial connection and testing
+
+Set the channel webhook to https://telesales.onrender.com/whatsapp/webhook with the custom header Authorization: Bearer <D360_WEBHOOK_SECRET>. Do not put the secret in the URL. The receiver fails closed unless both the secret and phone ID are configured. It validates the channel metadata independently of old direct Meta settings.
+
+Only live messages events trigger customer actions. Coexistence history, business-app echoes, and contact-sync events are acknowledged without importing them or executing callback/deletion actions. This integration does not synchronize the phone app history into the Telesales inbox.
+
+360dialog template creation supports public media example URLs; direct Meta creation uses an upload handle. Existing provider-specific send and template endpoints remain in use. No real customer campaign should be sent until template approval and an authorized test are complete. Keep the scheduler disabled until queued campaigns have been reviewed.
+
+Validation: 19 SQLite tests pass, including 360dialog authorization, missing configuration, wrong-channel rejection, duplicate delivery, and coexistence-event isolation. Live provider delivery and production PostgreSQL remain unverified.
+
+References:
+- https://docs.360dialog.com/docs/messaging-api/api-reference/webhooks
+- https://docs.360dialog.com/docs/messaging/webhook/webhook-reference
+- https://docs.360dialog.com/docs/resources/templates/template-elements
+

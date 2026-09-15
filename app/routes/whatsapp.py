@@ -111,8 +111,14 @@ def _process_payload(payload):
         changes = [{"value": payload}]
 
     for change in changes:
+        # Coexistence history, contact sync and business-app echoes are not
+        # customer replies. Never run callback/deletion actions on those events.
+        if change.get("field") not in {None, "messages"}:
+            continue
         value = change.get("value") or {}
-        configured_phone = os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        provider = os.getenv("WHATSAPP_PROVIDER", "meta").strip().lower()
+        configured_phone = (os.getenv("D360_PHONE_NUMBER_ID") if provider == "360dialog"
+                            else os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID"))
         if configured_phone and str((value.get("metadata") or {}).get("phone_number_id")) != configured_phone:
             continue
         contacts = value.get("contacts") or []
@@ -330,14 +336,24 @@ def webhook():
             return challenge or "OK", 200
         return "Invalid verification token", 403
 
-    app_secret = os.getenv("META_APP_SECRET")
-    if not app_secret:
-        return jsonify({"ok": False, "error": "META_APP_SECRET is required"}), 503
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    if app_secret:
+    provider = os.getenv("WHATSAPP_PROVIDER", "meta").strip().lower()
+    if provider == "360dialog":
+        secret = os.getenv("D360_WEBHOOK_SECRET", "")
+        if not secret or not os.getenv("D360_PHONE_NUMBER_ID"):
+            return jsonify({"ok": False, "error": "360dialog webhook configuration is incomplete"}), 503
+        supplied = request.headers.get("Authorization", "")
+        if not hmac.compare_digest(supplied.encode(), ("Bearer " + secret).encode()):
+            return jsonify({"ok": False, "error": "Invalid webhook authorization"}), 403
+    elif provider == "meta":
+        app_secret = os.getenv("META_APP_SECRET")
+        if not app_secret:
+            return jsonify({"ok": False, "error": "META_APP_SECRET is required"}), 503
+        signature = request.headers.get("X-Hub-Signature-256", "")
         expected = "sha256=" + hmac.new(app_secret.encode("utf-8"), request.get_data(), hashlib.sha256).hexdigest()
         if not signature or not hmac.compare_digest(signature, expected):
             return jsonify({"ok": False, "error": "Invalid Meta webhook signature"}), 403
+    else:
+        return jsonify({"ok": False, "error": "Unsupported WhatsApp provider"}), 503
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict) or payload.get("object") not in {None, "whatsapp_business_account"}:
         return jsonify({"ok": False, "error": "Invalid WhatsApp webhook payload"}), 400
