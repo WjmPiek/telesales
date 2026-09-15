@@ -477,7 +477,7 @@ h5,
   color: var(--martins-primary);
 }
 
-.side-submenu a:first-child {
+.side-submenu a.active {
   background: #f4f0f8;
   color: var(--martins-primary);
 }

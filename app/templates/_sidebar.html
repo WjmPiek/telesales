@@ -1,0 +1,62 @@
+{% set endpoint = request.endpoint or '' %}
+{% macro nav_link(label, target) -%}
+<a href="{{ url_for(target) }}"{% if endpoint == target %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
+{%- endmacro %}
+<div class="sidebar-section">
+  <a class="side-link{% if endpoint in ['role_portals.home', 'role_portals.workspace'] %} active{% endif %}" href="{{ url_for('role_portals.workspace') }}"><span>Home</span></a>
+  <details class="side-group"{% if request.blueprint in ['recovery', 'allocation'] %} open{% endif %}>
+    <summary class="side-toggle"><span>Clients</span></summary>
+    <div class="side-submenu">
+      {{ nav_link('Client list & import', 'recovery.queue') }}
+      {{ nav_link('Next client', 'recovery.next_client') }}
+      {{ nav_link('Callbacks', 'recovery.callbacks') }}
+      {% if admin_role %}{{ nav_link('Suspense', 'recovery.suspense') }}{% endif %}
+      {% if admin_role or manager_role %}{{ nav_link('Assign clients', 'allocation.index') }}{% endif %}
+    </div>
+  </details>
+  {% if admin_role or manager_role %}
+  <details class="side-group"{% if request.blueprint in ['communications', 'whatsapp'] and endpoint != 'communications.notifications' %} open{% endif %}>
+    <summary class="side-toggle"><span>WhatsApp</span></summary>
+    <div class="side-submenu">
+      {{ nav_link('Overview', 'communications.whatsapp_dashboard') }}
+      {{ nav_link('Conversations', 'whatsapp.inbox') }}
+      {{ nav_link('Campaigns', 'communications.index') }}
+      {{ nav_link('Templates', 'communications.template_library') }}
+      {{ nav_link('Opt-outs', 'communications.suppression_list') }}
+      {{ nav_link('WhatsApp settings', 'communications.whatsapp_settings') }}
+    </div>
+  </details>
+  {% else %}<a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span>WhatsApp</span></a>{% endif %}
+  <details class="side-group"{% if request.blueprint in ['applications', 'documents', 'qa', 'signing'] %} open{% endif %}>
+    <summary class="side-toggle"><span>Applications</span></summary>
+    <div class="side-submenu">
+      {{ nav_link('Application list', 'applications.list_applications') }}
+      {{ nav_link('Documents & signatures', 'documents.document_dashboard') }}
+      {% if admin_role or manager_role %}{{ nav_link('Quality review', 'qa.qa_dashboard') }}{% endif %}
+    </div>
+  </details>
+  {% if admin_role or manager_role %}
+  <details class="side-group"{% if request.blueprint in ['reports', 'wallboard', 'targets'] %} open{% endif %}>
+    <summary class="side-toggle"><span>Reports</span></summary>
+    <div class="side-submenu">
+      {{ nav_link('Reports', 'reports.index') }}
+      {% if admin_role %}{{ nav_link('Live team performance', 'wallboard.index') }}{{ nav_link('Sales targets', 'targets.index') }}{% endif %}
+    </div>
+  </details>
+  <details class="side-group"{% if request.blueprint in ['auth', 'policies', 'settings', 'security_center'] or endpoint in ['main.franchise_details', 'main.franchise_employees'] %} open{% endif %}>
+    <summary class="side-toggle"><span>Administration</span></summary>
+    <div class="side-submenu">
+      {{ nav_link('Company details', 'main.franchise_details') }}
+      {% if admin_role %}
+      {{ nav_link('Users & employees', 'auth.users_manage') }}
+      {{ nav_link('Roles & permissions', 'auth.users_roles') }}
+      {{ nav_link('Policy products', 'policies.list_products') }}
+      {{ nav_link('Legacy franchises', 'auth.old_franchises') }}
+      {{ nav_link('Security', 'security_center.index') }}
+      {{ nav_link('System settings', 'settings.index') }}
+      {% else %}{{ nav_link('Employees', 'main.franchise_employees') }}{% endif %}
+    </div>
+  </details>
+  {% endif %}
+  <a class="side-link{% if endpoint == 'communications.notifications' %} active{% endif %}" href="{{ url_for('communications.notifications') }}"><span>Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</span></a>
+</div>
