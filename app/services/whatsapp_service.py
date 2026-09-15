@@ -217,6 +217,9 @@ def validate_public_image_url(image_url: str) -> tuple[bool, str | None]:
 
 def send_whatsapp_text(to_number: str, message: str) -> SendResult:
     to_number = normalize_phone(to_number)
+    from app.services.phone_deletion import phone_is_suppressed
+    if phone_is_suppressed(to_number):
+        return SendResult(False, error="This number has opted out.")
     if not _valid_phone(to_number) or not message.strip():
         return SendResult(False, error="A valid destination number and message are required.")
 
@@ -265,6 +268,9 @@ def send_whatsapp_message(to_number: str, message: str) -> bool:
 def send_whatsapp_template_image(to_number: str, template_name: str, language_code: str, image_url: str, callback_payload: str, optout_payload: str, customer_name: str = "Customer") -> SendResult:
     """Send an approved WhatsApp marketing template with image header and two quick-reply buttons."""
     to_number = normalize_phone(to_number)
+    from app.services.phone_deletion import phone_is_suppressed
+    if phone_is_suppressed(to_number):
+        return SendResult(False, error="This number has opted out.")
     if not _valid_phone(to_number) or not template_name or not image_url:
         return SendResult(False, error="Number, approved template name and public image URL are required.")
     if os.getenv("WHATSAPP_ENABLED", "false").lower() not in {"true", "1", "yes", "y"}:
@@ -411,7 +417,7 @@ def get_whatsapp_template_status(template_name: str, language_code: str = "en_US
             actual_language = normalized_language(item_language)
             exact_language = not actual_language or actual_language == wanted_language
             same_base_language = actual_language.split("_")[0] == wanted_language.split("_")[0]
-            if exact_language or same_base_language:
+            if exact_language:
                 raw_status = item.get("status") or item.get("state") or item.get("template_status")
                 reason = (
                     item.get("rejected_reason") or item.get("rejection_reason") or
@@ -469,13 +475,14 @@ def create_whatsapp_image_template(
     footer_text: str | None = None,
     buttons: list[dict] | None = None,
     allow_category_change: bool = True,
+    image_data: bytes | None = None,
+    image_mimetype: str | None = None,
 ) -> TemplateCreateResult:
     """Submit an image template using the Meta message-template components schema."""
     import re
     name = (template_name or "").strip().lower()
     language = (language_code or "en").strip()
-    if language.lower() in {"en_us", "en-us", "english"}:
-        language = "en"
+    language = language.replace("-", "_")
     body = (body_text or "").strip()
     image_example_url = (image_example_url or "").strip()
     category = (category or "MARKETING").strip().upper()
@@ -489,6 +496,8 @@ def create_whatsapp_image_template(
         return TemplateCreateResult(False, error="Template name may contain only lowercase letters, numbers and underscores.")
 
     variable_numbers = sorted({int(v) for v in re.findall(r"\{\{(\d+)\}\}", body)})
+    if variable_numbers != [1]:
+        return TemplateCreateResult(False, error="Use exactly one customer-name variable, {{1}}, in this campaign template.")
     if variable_numbers and variable_numbers != list(range(1, max(variable_numbers) + 1)):
         return TemplateCreateResult(False, error="Template variables must be sequential: {{1}}, {{2}}, {{3}}.")
     examples = []
@@ -496,8 +505,27 @@ def create_whatsapp_image_template(
     for i in range(len(variable_numbers)):
         examples.append(defaults[i] if i < len(defaults) else f"Example {i+1}")
 
+    header_handle = image_example_url
+    if _provider() == "meta":
+        token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        app_id = os.getenv("META_APP_ID")
+        if not token or not app_id or not image_data:
+            return TemplateCreateResult(False, error="Meta template creation needs META_APP_ID, an access token and an uploaded campaign image. Upload the image in the campaign form.")
+        mime = image_mimetype or "image/jpeg"
+        if mime not in {"image/jpeg", "image/png"} or len(image_data) > 5 * 1024 * 1024:
+            return TemplateCreateResult(False, error="Use a JPEG or PNG image no larger than 5 MB.")
+        base = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}"
+        try:
+            session_response = requests.post(f"{base}/{app_id}/uploads", params={"file_length": len(image_data), "file_type": mime, "file_name": "campaign.png" if mime == "image/png" else "campaign.jpg"}, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+            session_response.raise_for_status()
+            session_id = session_response.json()["id"]
+            upload_response = requests.post(f"{base}/{session_id}", data=image_data, headers={"Authorization": f"OAuth {token}", "file_offset": "0", "Content-Type": mime}, timeout=40)
+            upload_response.raise_for_status()
+            header_handle = upload_response.json()["h"]
+        except (requests.RequestException, ValueError, KeyError):
+            return TemplateCreateResult(False, error="Meta image upload failed. Check the app ID, token permissions and image format.")
     components = [
-        {"type": "HEADER", "format": "IMAGE", "example": {"header_handle": [image_example_url]}},
+        {"type": "HEADER", "format": "IMAGE", "example": {"header_handle": [header_handle]}},
         {"type": "BODY", "text": body},
     ]
     if examples:
@@ -522,9 +550,11 @@ def create_whatsapp_image_template(
             normalized_buttons.append({"type": "QUICK_REPLY", "text": text})
     if not normalized_buttons:
         normalized_buttons = [
-            {"type": "QUICK_REPLY", "text": "YES, CALL ME BACK"},
-            {"type": "QUICK_REPLY", "text": "NO THANKS, OPT OUT"},
+            {"type": "QUICK_REPLY", "text": "Call me back"},
+            {"type": "QUICK_REPLY", "text": "Delete my number"},
         ]
+    if len(normalized_buttons) != 2 or any(b["type"] != "QUICK_REPLY" for b in normalized_buttons):
+        return TemplateCreateResult(False, error="This module requires two quick replies: Call me back first, Delete my number second.")
     components.append({"type": "BUTTONS", "buttons": normalized_buttons[:10]})
 
     payload = {

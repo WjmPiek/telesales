@@ -143,6 +143,12 @@ def _send_to_recipient(campaign, recipient, channel):
     if channel == "whatsapp":
         if not pref.whatsapp_allowed or not policy.cell_number:
             return False, "No permitted WhatsApp number"
+        try:
+            buttons = json.loads(campaign.template_buttons_json or "[]")
+        except (ValueError, TypeError):
+            return False, "Invalid template button configuration"
+        if buttons and (len(buttons) != 2 or any(b.get("type") != "QUICK_REPLY" for b in buttons)):
+            return False, "Select a template with exactly two quick replies: callback first, delete second."
         if campaign.whatsapp_template_name and campaign.image_url:
             result = send_whatsapp_template_image(
                 policy.cell_number, campaign.whatsapp_template_name,
@@ -153,9 +159,7 @@ def _send_to_recipient(campaign, recipient, channel):
             ok = result.ok
             error = result.error
         else:
-            result = send_whatsapp_text(policy.cell_number, text)
-            ok = result.ok
-            error = result.error
+            return False, "Bulk WhatsApp requires an approved image template with callback and delete buttons."
         recipient.whatsapp_status = "Sent" if ok else "Failed"
         # Persist every provider attempt in the shared inbox. Meta delivery/read
         # webhooks can then reconcile both the message and campaign recipient.
@@ -427,8 +431,8 @@ def create_campaign():
             template_buttons.append(item)
         if not template_buttons:
             template_buttons = [
-                {"type": "QUICK_REPLY", "text": "YES, CALL ME BACK"},
-                {"type": "QUICK_REPLY", "text": "NO THANKS, OPT OUT"},
+                {"type": "QUICK_REPLY", "text": "Call me back"},
+                {"type": "QUICK_REPLY", "text": "Delete my number"},
             ]
         campaign = CommunicationCampaign(
             name=campaign_name,
@@ -919,17 +923,16 @@ def send_campaign(campaign_id):
             reason = result.error or f"Current live status is {campaign.template_status}."
             flash(f"Sending blocked: the template is not Approved and active in Meta. {reason}", "danger")
             return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
-    sent_email = sent_whatsapp = 0
-    for recipient in campaign.recipients:
-        if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed"}:
-            ok, _ = _send_to_recipient(campaign, recipient, "whatsapp"); sent_whatsapp += int(ok)
-        if campaign.send_email and recipient.email_status in {None, "Not Sent", "Failed"}:
-            ok, _ = _send_to_recipient(campaign, recipient, "email"); sent_email += int(ok)
-    campaign.status = "Sent"; campaign.sent_at = datetime.utcnow(); campaign.queue_status = "completed"
-    audit("campaign_sent", "campaign", campaign.id, current_user.id, f"WhatsApp {sent_whatsapp}; Email {sent_email}")
-    db.session.commit()
-    flash(f"Campaign processed: {sent_whatsapp} WhatsApp and {sent_email} email message(s) sent.", "success")
+    if campaign.queue_status == "processing":
+        flash("This campaign is already processing.", "info")
+    else:
+        campaign.status = "Scheduled"
+        campaign.scheduled_at = datetime.utcnow()
+        campaign.queue_status = "queued"
+        db.session.commit()
+        flash("Campaign queued. The background sender will process it shortly; see the campaign report for results.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+
 
 
 @communications_bp.route("/<int:campaign_id>/schedule-follow-up", methods=["POST"])
