@@ -81,11 +81,24 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual(response.status_code, 302)
         # Synthetic signature only for the isolated test record.
         from PIL import Image
-        image = io.BytesIO(); Image.new('RGB',(80,30),'white').save(image,format='PNG')
+        image = io.BytesIO(); Image.new('RGB',(80,30),'black').save(image,format='PNG')
         signature = 'data:image/png;base64,' + base64.b64encode(image.getvalue()).decode()
         for kind in ['application','popia','disclosure','welcome']:
-            response = public.post(f'/sign/{token}',data={'action':'sign_document','document_type':kind,'typed_name':'Fictional Test','signature_data':signature})
+            self.assertEqual(public.get(f'/sign/{token}/review/{kind}').status_code, 200)
+            with public.session_transaction() as session:
+                nonce = session[f'document_review_{self.record_id}_{kind}']
+            response = public.post(f'/sign/{token}',data={'action':'sign_document','document_type':kind,'typed_name':'Fictional Test','signature_data':signature,'review_nonce':nonce})
             self.assertEqual(response.status_code,302)
+            from pypdf import PdfReader
+            from app.models import DocumentSignature
+            row = DocumentSignature.query.filter_by(application_id=self.record_id, document_type=kind).one()
+            with public.get(f'/sign/{token}/document/{kind}') as saved:
+                pdf = PdfReader(io.BytesIO(saved.data))
+                import json
+                target = json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))
+                page = pdf.pages[target['page']-1]
+                self.assertTrue(any(img.image.size == (80,30) for img in page.images))
+                self.assertIn(b'Document signed', public.get(f'/sign/{token}/review/{kind}').data)
         with patch('app.routes.signing.send_email', return_value=False):
             response = public.post(f'/sign/{token}',data={'action':'final_submit'})
         self.assertEqual(response.status_code,200)
@@ -121,6 +134,31 @@ class ApplicationFlowTests(unittest.TestCase):
         self.record.branch='B'; db.session.commit()
         self.assertNotIn(b'TEST-ONLY',self.client.post('/client-files/',data={'id_number':self.record.id_number}).data)
         self.assertEqual(self.client.get(f'/client-files/?application_id={self.record.id}').status_code,403)
+
+    def test_signature_requires_document_review_and_successful_pdf_save(self):
+        from app.models import DocumentSignature
+        self.record.sign_token = 'local-document-review-test'
+        db.session.commit()
+        token = self.record.sign_token
+        public = self.app.test_client()
+        self.assertEqual(public.get(f'/sign/{token}/review/application').status_code, 302)
+        public.post(f'/sign/{token}', data={'action':'unlock','id_number':self.record.id_number})
+        from PIL import Image
+        stream = io.BytesIO(); Image.new('RGB',(80,30),'black').save(stream,format='PNG')
+        form = {'action':'sign_document','document_type':'application','typed_name':'Fictional Test',
+                'signature_data':'data:image/png;base64,'+base64.b64encode(stream.getvalue()).decode()}
+        self.assertIn(b'Open the document',public.post(f'/sign/{token}',data=form).data)
+        self.assertEqual(DocumentSignature.query.count(),0)
+        public.get(f'/sign/{token}/review/application')
+        with public.session_transaction() as session:
+            form['review_nonce']=session[f'document_review_{self.record_id}_application']
+        with patch('app.routes.signing._signable_pdf',side_effect=OSError('Cannot save document')):
+            self.assertIn(b'Cannot save document',public.post(f'/sign/{token}',data=form).data)
+        self.assertEqual(DocumentSignature.query.count(),0)
+        blank=io.BytesIO();Image.new('RGB',(80,30),'white').save(blank,format='PNG')
+        form['signature_data']='data:image/png;base64,'+base64.b64encode(blank.getvalue()).decode()
+        self.assertIn(b'Please draw your signature',public.post(f'/sign/{token}',data=form).data)
+        self.assertEqual(DocumentSignature.query.count(),0)
 
     def test_custom_smtp_sender_and_reply_address(self):
         # Generated only for the mocked SMTP connection; never a real credential.

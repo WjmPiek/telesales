@@ -1,5 +1,7 @@
 from app.services.client_storage import application_folder, store_document
-import os, base64
+import os, base64, json, secrets, io
+from pypdf import PdfReader
+from PIL import Image, ImageChops
 from datetime import datetime
 from flask import Blueprint, render_template, request, current_app, abort, send_file, session, redirect, url_for, flash
 from werkzeug.utils import secure_filename
@@ -149,10 +151,20 @@ def _save_signature_file(app_obj, doc_type, sig_data):
     if not sig_data.startswith("data:image"):
         raise ValueError("Invalid signature data")
     folder = application_folder(app_obj)
-    path = os.path.join(folder, f"signature_{doc_type}_{app_obj.id}.png")
-    raw = sig_data.split(",", 1)[1]
+    path = os.path.join(folder, f"signature_{doc_type}_{app_obj.id}_{secrets.token_hex(8)}.png")
+    raw = base64.b64decode(sig_data.split(",", 1)[1], validate=True)
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError("Signature is too large")
+    with Image.open(io.BytesIO(raw)) as image:
+        if image.format != "PNG" or image.width > 4096 or image.height > 4096:
+            raise ValueError("Invalid signature image")
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, "white")
+        background.alpha_composite(rgba)
+        if not ImageChops.difference(background.convert("RGB"), Image.new("RGB", rgba.size, "white")).getbbox():
+            raise ValueError("Please draw your signature first.")
     with open(path, "wb") as f:
-        f.write(base64.b64decode(raw))
+        f.write(raw)
     store_document(app_obj, path)
     return path
 
@@ -390,8 +402,11 @@ def sign_application(token):
 
             if action == "sign_document":
                 doc_type = request.form.get("document_type")
-                if doc_type not in DOC_LABELS:
+                if doc_type not in dict(REQUIRED_SIGNATURE_DOCS):
                     raise ValueError("Invalid document type")
+                expected_nonce = session.get(f"document_review_{app_obj.id}_{doc_type}")
+                if not expected_nonce or not secrets.compare_digest(expected_nonce, request.form.get("review_nonce", "")):
+                    raise ValueError("Open the document and sign in its signature space first.")
                 typed_name = request.form.get("typed_name", "").strip()
                 sig_data = request.form.get("signature_data", "")
                 if not typed_name:
@@ -406,8 +421,12 @@ def sign_application(token):
                     existing.signed_at = datetime.utcnow()
                 else:
                     db.session.add(DocumentSignature(application_id=app_obj.id, document_type=doc_type, typed_name=typed_name, signature_image_path=sig_path, ip_address=request.remote_addr, user_agent=request.headers.get("User-Agent")))
+                db.session.flush()
+                _signable_pdf(app_obj, doc_type)
                 db.session.commit()
-                return redirect(url_for("signing.sign_application", token=token))
+                session.pop(f"document_review_{app_obj.id}_{doc_type}", None)
+                flash("Document signed and saved.", "success")
+                return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
 
             if action == "final_submit":
                 ok, errors = assert_application_rules(app_obj)
@@ -485,6 +504,43 @@ def sign_application(token):
     return render_template("sign/sign.html", app=app_obj, token=token, required_docs=required, received_docs=received, outstanding_docs=outstanding, fica_docs=docs, fica_labels=FICA_LABELS, sign_docs=REQUIRED_SIGNATURE_DOCS, signed_docs=_signed_doc_types(app_obj), doc_labels=DOC_LABELS)
 
 
+def _signable_pdf(app_obj, doc_type):
+    generators = {"application": ("signed_application", generate_application_pdf),
+                  "popia": ("popia_consent", generate_popia_pdf),
+                  "disclosure": ("policy_disclosure", generate_disclosure_pdf),
+                  "welcome": ("welcome_pack", generate_welcome_pack)}
+    prefix, generator = generators[doc_type]
+    path = os.path.join(application_folder(app_obj), f"{prefix}_{app_obj.id}.pdf")
+    generator(app_obj, path)
+    field = {"application": "signed_pdf_path", "popia": "popia_pdf_path", "disclosure": "disclosure_pdf_path", "welcome": "welcome_pack_path"}[doc_type]
+    if doc_type != "application" or doc_type in _signed_doc_types(app_obj):
+        setattr(app_obj, field, path)
+    return path
+
+
+@signing_bp.route("/<token>/review/<doc_type>")
+def edit_document(token, doc_type):
+    app_obj = ClientApplication.query.filter_by(sign_token=token).first_or_404()
+    if app_obj.sign_token_revoked or app_obj.sign_token_used_at:
+        abort(404)
+    if not session.get(_unlocked_key(app_obj.id)):
+        return redirect(url_for("signing.sign_application", token=token))
+    if doc_type not in dict(REQUIRED_SIGNATURE_DOCS):
+        abort(404)
+    path = _signable_pdf(app_obj, doc_type)
+    subject = PdfReader(path).metadata.get('/Subject', '')
+    target = json.loads(subject.removeprefix('martins-signature:'))
+    db.session.commit()
+    nonce = secrets.token_urlsafe(24)
+    session[f"document_review_{app_obj.id}_{doc_type}"] = nonce
+    response = current_app.make_response(render_template("sign/document.html", app=app_obj,
+        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], target=target,
+        review_nonce=nonce, signed=doc_type in _signed_doc_types(app_obj)))
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    return response
+
+
 @signing_bp.route("/<token>/document/<doc_type>")
 def view_sign_document(token, doc_type):
     app_obj = ClientApplication.query.filter_by(sign_token=token).first_or_404()
@@ -494,24 +550,8 @@ def view_sign_document(token, doc_type):
         abort(403)
 
     folder = application_folder(app_obj)
-    if doc_type == "application":
-        path = os.path.join(folder, f"review_application_{app_obj.id}.pdf")
-        generate_application_pdf(app_obj, path)
-    elif doc_type == "popia":
-        path = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
-        generate_popia_pdf(app_obj, path)
-        app_obj.popia_pdf_path = path
-        db.session.commit()
-    elif doc_type == "disclosure":
-        path = os.path.join(folder, f"policy_disclosure_{app_obj.id}.pdf")
-        generate_disclosure_pdf(app_obj, path)
-        app_obj.disclosure_pdf_path = path
-        db.session.commit()
-    elif doc_type == "welcome":
-        path = os.path.join(folder, f"welcome_pack_{app_obj.id}.pdf")
-        generate_welcome_pack(app_obj, path)
-        app_obj.welcome_pack_path = path
-        db.session.commit()
+    if doc_type in dict(REQUIRED_SIGNATURE_DOCS):
+        path = _signable_pdf(app_obj, doc_type)
     elif doc_type == "fica":
         path = os.path.join(folder, f"fica_verification_{app_obj.id}.pdf")
         generate_fica_pdf(app_obj, path)
@@ -522,7 +562,9 @@ def view_sign_document(token, doc_type):
     if not path or not os.path.exists(path):
         abort(404)
     db.session.commit()
-    return send_file(path, as_attachment=False)
+    response = send_file(path, as_attachment=False, max_age=0)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @signing_bp.route("/<token>/fica-upload/<int:doc_id>")

@@ -1,3 +1,4 @@
+import json
 from app.services.client_storage import durable_pdf
 import os
 import io
@@ -372,7 +373,7 @@ def _make_overlay_single_family(app_obj, overlay_path, sig_path=None):
     _draw(c, app_obj.account_number, 35, 160, 6, 22)
     _draw(c, app_obj.account_type, 344, 160, 6, 16)
     _draw(c, app_obj.account_holder, 35, 145, 6, 28)
-    _draw_signature(c, sig_path, 285, 124, 185, 55)
+    # The client signature is placed in the labelled signature boxes below.
 
     # Employment
     _draw(c, app_obj.persal_no, 35, 113, 6, 14)
@@ -383,8 +384,8 @@ def _make_overlay_single_family(app_obj, overlay_path, sig_path=None):
     _draw(c, app_obj.personal_holder, 35, 98, 6, 25)
 
     # Signatures at bottom
-    _draw_signature(c, sig_path, 135, 24, 190, 56)  # Account Holder
-    _draw_signature(c, sig_path, 320, 24, 190, 56)  # Policy Holder / Principal Member
+    _draw_signature(c, sig_path, 155, 38, 135, 38)  # Account Holder
+    _draw_signature(c, sig_path, 300, 38, 135, 38)  # Policy Holder / Principal Member
     _draw(c, datetime.utcnow().strftime("%d%m%Y"), 508, 37, 7, 8)
 
     c.save()
@@ -456,7 +457,7 @@ def _make_overlay_member_product(app_obj, overlay_path, sig_path=None):
     _draw(c, app_obj.branch_code, 35, 145, 6, 12)
     _draw(c, app_obj.bank_town, 324, 145, 6, 16)
     _draw(c, app_obj.account_holder, 35, 130, 6, 28)
-    _draw_signature(c, sig_path, 285, 105, 185, 55)
+    # The client signature is placed in the labelled signature boxes below.
 
     # Salary stop order
     _draw(c, app_obj.employer, 35, 92, 6, 22)
@@ -465,8 +466,8 @@ def _make_overlay_member_product(app_obj, overlay_path, sig_path=None):
     _draw(c, _money(app_obj.payroll_premium), 478, 92, 6, 12)
 
     # Bottom signatures
-    _draw_signature(c, sig_path, 135, 24, 190, 56)  # Account Holder
-    _draw_signature(c, sig_path, 320, 24, 190, 56)  # Principal Member
+    _draw_signature(c, sig_path, 155, 38, 135, 38)  # Account Holder
+    _draw_signature(c, sig_path, 300, 38, 135, 38)  # Principal Member
 
     c.save()
 
@@ -526,8 +527,7 @@ def _add_terms_page(writer, app_obj, sig_path=None):
 @durable_pdf
 def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
-    sig = _latest_signature(app_obj)
-    sig_path = signature_path_override or (sig.signature_image_path if sig else None)
+    sig_path = _signature_for_app(app_obj, signature_path_override, "application")
 
     product_text = ((_safe(app_obj.product.product_name if app_obj.product else "")) + " " + (_safe(app_obj.product.plan_name if app_obj.product else ""))).lower()
     template_choice = app_obj.form_template or ("member_product" if ("member +" in product_text or ("product" in product_text and ("+" in product_text or "member" in product_text))) else "single_family")
@@ -554,6 +554,7 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
         writer.add_page(page)
     _append_policy_terms(writer, template_choice)
     _add_terms_page(writer, app_obj, sig_path)
+    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"page": 1, "rect": [300, 38, 435, 76]})})
     with open(out_path, "wb") as f:
         writer.write(f)
 
@@ -736,6 +737,7 @@ def generate_welcome_pack(app_obj, out_path, signature_path_override=None):
     c.setFont("Helvetica-Bold", 8.5)
     c.drawString(42, y, "Client Signature:")
     _box(c, 160, y + 12, 245, 55)
+    c.setSubject("martins-signature:" + json.dumps({"page": c.getPageNumber(), "rect": [160, y - 43, 405, y + 12]}))
     sig_path = _signature_for_app(app_obj, signature_path_override, "welcome")
     if sig_path and os.path.exists(sig_path):
         _draw_signature(c, sig_path, 165, y - 33, 235, 50)
@@ -802,6 +804,7 @@ def generate_popia_pdf(app_obj, out_path, signature_path_override=None):
     c.setFont("Helvetica-Bold", 9)
     c.drawString(42, y, "CLIENT SIGNATURE:")
     _box(c, 42, y - 6, 265, 52)
+    c.setSubject("martins-signature:" + json.dumps({"page": c.getPageNumber(), "rect": [42, y - 58, 307, y - 6]}))
     sig_path = _signature_for_app(app_obj, signature_path_override, "popia")
     if sig_path and os.path.exists(sig_path):
         _draw_signature(c, sig_path, 55, y - 50, 240, 48)
@@ -856,14 +859,16 @@ def generate_disclosure_pdf(app_obj, out_path, signature_path_override=None):
         c.drawString(55, y, "[X] " + item)
         y -= 14
 
+    y -= 20
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(50, y, "Client Signature:")
+    _box(c, 160, y + 12, 245, 65)
+    c.setSubject("martins-signature:" + json.dumps({"page": c.getPageNumber(), "rect": [160, y - 53, 405, y + 12]}))
     sig_path = _signature_for_app(app_obj, signature_path_override, "disclosure")
     if sig_path and os.path.exists(sig_path):
-        y -= 10
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(50, y, "Client Signature:")
-        _draw_signature(c, sig_path, 165, y - 42, 230, 70)
+        _draw_signature(c, sig_path, 165, y - 48, 230, 55)
         c.setFont("Helvetica", 9)
-        c.drawString(50, y - 58, f"Date: {datetime.now().strftime('%d/%m/%Y')}")
+        c.drawString(50, y - 70, f"Date: {_signed_date(app_obj)}")
 
     _footer(c)
     c.save()
