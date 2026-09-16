@@ -1,1 +1,20 @@
-{% extends "base.html" %}{% block content %}<h1>Live Wallboard</h1><p class="text-muted">Auto-refreshes every 20 seconds. Scope: {{branch or 'All branches'}}</p><div class="row g-3" id="cards"></div><h3 class="mt-4">Agents</h3><table class="table table-striped"><thead><tr><th>Agent</th><th>Branch</th><th>Calls</th><th>Sales</th><th>Conversion</th></tr></thead><tbody id="agents"></tbody></table><script>async function load(){let r=await fetch('{{ url_for('wallboard.data', branch=branch or '') }}');let d=await r.json();let keys=['total_calls','sales_today','callbacks_due','open_leads'];cards.innerHTML=keys.map(k=>`<div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted">${k.replaceAll('_',' ').toUpperCase()}</div><h1>${d[k]}</h1></div></div></div>`).join('');agents.innerHTML=d.agents.map(a=>`<tr><td>${a.name}</td><td>${a.branch||''}</td><td>${a.calls}</td><td>${a.sales}</td><td>${a.conversion}%</td></tr>`).join('');}load();setInterval(load,20000);</script>{% endblock %}
+{% extends "base.html" %}{% block content %}
+<h1>Live team performance</h1><p>Today's activity (South African time). Refreshes every 20 seconds. Scope: {{branch or 'All branches'}}</p>
+<p id="live-status" role="status">Loading performance...</p><div class="row g-3" id="performance-cards"></div>
+<h3 class="mt-4">Team</h3><div class="table-responsive"><table class="table table-striped"><thead><tr><th>Employee</th><th>Branch</th><th>Calls</th><th>Applications started</th><th>Applications / calls</th></tr></thead><tbody id="performance-agents"></tbody></table></div>
+<script>
+const escapeText = value => {const e=document.createElement('span');e.textContent=String(value ?? '');return e.innerHTML;};
+async function refreshPerformance(){
+ const status=document.getElementById('live-status');
+ try{
+ const r=await fetch({{url_for('wallboard.data',branch=branch or '')|tojson}},{headers:{Accept:'application/json'}});
+ if(!r.ok || !(r.headers.get('content-type')||'').includes('application/json'))throw new Error('Please sign in again or reload this page.');
+ const d=await r.json();
+ const labels={total_calls:'Calls today',sales_today:'Applications started today',callbacks_due:'Callbacks due',open_leads:'Open clients'};
+ document.getElementById('performance-cards').innerHTML=Object.entries(labels).map(([k,label])=>`<div class="col-md-3"><div class="card card-body"><div>${label}</div><h2>${escapeText(d[k])}</h2></div></div>`).join('');
+ document.getElementById('performance-agents').innerHTML=d.agents.map(a=>`<tr><td>${escapeText(a.name)}</td><td>${escapeText(a.branch)}</td><td>${a.calls}</td><td>${a.sales}</td><td>${a.conversion}%</td></tr>`).join('') || '<tr><td colspan="5">No employees in this branch.</td></tr>';
+ status.textContent='Updated '+d.generated_at;
+ }catch(e){status.textContent='Performance could not refresh. '+e.message;}
+}
+refreshPerformance();setInterval(refreshPerformance,20000);
+</script>{% endblock %}

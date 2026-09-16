@@ -21,7 +21,7 @@ def identity_column(column):
 @login_required
 @permission_required('recovery.view')
 def index():
-    identity = ''.join(c for c in request.form.get('id_number', '') if c.isalnum()).upper()
+    identity = ''.join(c for c in request.values.get('id_number', '') if c.isalnum()).upper()
     app_id = request.args.get('application_id', type=int)
     policy_id = request.args.get('policy_id', type=int)
     seed_app = seed_policy = None

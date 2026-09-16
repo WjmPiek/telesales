@@ -29,6 +29,11 @@
     </div>
     <div class="mobile-topbar"><a href="{{ url_for('role_portals.home') }}">Martin's Funerals</a><button class="btn btn-light btn-sm" onclick="toggleSidebar(true)">Menu</button></div>
     <div class="content-wrap">
+      <form action="{{ url_for('client_files.index') }}" method="post" class="d-flex gap-2 mb-3" role="search">
+        <label class="visually-hidden" for="client-id-search">Search clients by main member ID</label>
+        <input id="client-id-search" class="form-control" name="id_number" placeholder="Search clients by main member ID number" required>
+        <button class="btn btn-primary" type="submit">Search clients</button>
+      </form>
 {% else %}
   <main class="container mt-4">
 {% endif %}

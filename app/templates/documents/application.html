@@ -4,7 +4,7 @@
     <h3>{{app.application_ref}} Documents</h3>
     <div class="text-muted">{{app.first_names}} {{app.surname}} | {{app.cell_number}} | {{app.email}}</div>
   </div>
-  <a class="btn btn-outline-secondary" href="{{url_for('applications.view_application', app_id=app.id)}}">Back to Application</a>
+  <a class="btn btn-outline-secondary" href="{{url_for('applications.view_application', app_id=app.id)}}">Back to Application</a><a class="btn btn-outline-primary" href="{{url_for('qa.review_application',app_id=app.id)}}">Quality Review</a>
 </div>
 
 <div class="row g-3 mb-3">
@@ -68,7 +68,7 @@
 </div>
 
 <div class="card">
-  <div class="card-header"><b>Staff Upload FICA Document</b></div>
+  <div class="card-header"><b>Staff Upload Document</b></div>
   <div class="card-body">
     <form method="post" enctype="multipart/form-data" class="row g-2">
       <div class="col-md-4">
@@ -82,4 +82,5 @@
     <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP. Uploads are marked Needs Review until staff approves them. Images and scanned PDFs need manual verification unless OCR is configured.</div>
   </div>
 </div>
+<details class="card card-body mt-3"><summary>Upload audit history</summary>{% for event in upload_audit %}<p>{{event.created_at}} | {{event.action}} | {{event.details}}</p>{% else %}<p>No upload attempts recorded.</p>{% endfor %}</details>
 {% endblock %}

@@ -4,6 +4,7 @@
   <div><h3 class="mb-0">QA Review: {{ app.application_ref }}</h3><small class="text-muted">{{ app.first_names }} {{ app.surname }} | {{ app.branch or '-' }} | {{ app.status }}</small></div>
   <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('applications.view_application', app_id=app.id) }}">Open Application</a>{% if app.lapsed_policy_id %}<a class="btn btn-outline-secondary" href="{{ url_for('recovery.client_timeline', policy_id=app.lapsed_policy_id) }}">Timeline</a>{% endif %}</div>
 </div>
+<div class="d-flex gap-2 mb-3"><a class="btn btn-outline-primary" href="{{url_for('documents.application_documents',app_id=app.id)}}">Review documents</a><a class="btn btn-outline-primary" href="{{url_for('client_files.index',application_id=app.id)}}">Client file and chat history</a><a class="btn btn-outline-primary" href="{{url_for('applications.screening_review',app_id=app.id)}}">FIC check</a></div>
 <div class="row g-3">
   <div class="col-lg-8">
     <div class="card mb-3"><div class="card-header"><strong>Compliance checklist</strong></div><div class="card-body">

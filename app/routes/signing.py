@@ -292,13 +292,15 @@ def _save_upload(app_obj, document_type, uploaded_file):
     if not _allowed_file(uploaded_file):
         raise ValueError("Only PDF, JPG, PNG, WEBP, HEIC or HEIF files are allowed. Please do not upload screenshots or unrelated pictures.")
 
+    from app.services.upload_guard import reject_duplicate
+    reject_duplicate(app_obj, uploaded_file, document_type)
     ext = _extension_from_upload(uploaded_file) or "bin"
     safe = secure_filename(uploaded_file.filename or f"upload.{ext}")
     if "." not in safe:
         safe = f"{safe}.{ext}"
     folder = os.path.join(application_folder(app_obj), "fica")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, f"{document_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe}")
+    path = os.path.join(folder, f"{document_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}_{safe}")
     uploaded_file.save(path)
     store_document(app_obj, path)
 
@@ -322,6 +324,8 @@ def _save_upload(app_obj, document_type, uploaded_file):
         row = _insert_fica_document_row(app_obj, document_type, safe, path, validation_status, validation_notes)
         if row:
             row.status = validation_status
+        from app.models import AuditLog
+        db.session.add(AuditLog(action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app_obj.id), details=f"{document_type}: {safe} uploaded by client; status {validation_status}. Previous versions retained in history."))
         return row
     except Exception:
         current_app.logger.exception("Dynamic FICA insert failed for application %s", app_obj.id)
@@ -459,7 +463,7 @@ def sign_application(token):
                 _signable_pdf(app_obj, doc_type)
                 db.session.commit()
                 session.pop(f"document_review_{app_obj.id}_{doc_type}", None)
-                flash("Document signed and saved.", "success")
+                # Completion badges provide persistent feedback without stacking flashes.
                 if doc_type in _signed_doc_types(app_obj):
                     return redirect(url_for("signing.sign_application", token=token))
                 return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
