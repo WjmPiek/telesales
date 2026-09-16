@@ -1,3 +1,4 @@
+from app.services.cdd_service import generate_cdd_pdf, answers_for, save_answers, completed as cdd_completed, FIELDS as CDD_FIELDS
 from app.services.signature_fields import application_fields, signed_documents, signature_rows
 from app.services.marketing_consent import consent_value, apply_consent
 from app.services.client_storage import application_folder, store_document
@@ -23,6 +24,7 @@ REQUIRED_SIGNATURE_DOCS = [
     ("popia", "POPIA Consent"),
     ("disclosure", "Policy Disclosure"),
     ("welcome", "Welcome Pack Acknowledgement"),
+    ("cdd", "Annexure J.1 - Client Due Diligence"),
 ]
 
 DOC_LABELS = dict(REQUIRED_SIGNATURE_DOCS + [("fica", "FICA Verification Checklist")])
@@ -401,6 +403,15 @@ def sign_application(token):
                 flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
                 return redirect(url_for("signing.sign_application", token=token))
 
+            if action == "save_cdd":
+                expected=session.get(f"document_review_{app_obj.id}_cdd")
+                if not expected or not secrets.compare_digest(expected,request.form.get("review_nonce", "")):
+                    raise ValueError("Open Annexure J.1 before completing its questions.")
+                save_answers(app_obj,request.form)
+                _signable_pdf(app_obj,"cdd")
+                db.session.commit()
+                return redirect(url_for("signing.edit_document",token=token,doc_type="cdd"))
+
             if action == "save_marketing_consent":
                 expected=session.get(f"document_review_{app_obj.id}_popia")
                 if not expected or not secrets.compare_digest(expected, request.form.get("review_nonce", "")):
@@ -430,6 +441,8 @@ def sign_application(token):
                     raise ValueError("Choose the specific signature space inside this document.")
                 if doc_type=="popia" and consent_value(app_obj) is None:
                     raise ValueError("Please save Yes or No for marketing consent before signing POPIA.")
+                if doc_type=="cdd" and not cdd_completed(app_obj):
+                    raise ValueError("Complete and save Annexure J.1 before signing.")
                 typed_name = request.form.get("typed_name", "").strip()
                 sig_data = request.form.get("signature_data", "")
                 if not typed_name:
@@ -479,6 +492,8 @@ def sign_application(token):
                 generate_popia_pdf(app_obj, popia_pdf, signature_path_override=signed_records["popia"].signature_image_path)
                 generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=signed_records["disclosure"].signature_image_path)
                 generate_fica_pdf(app_obj, fica_pdf, signature_path_override=sig_path)
+                cdd_pdf=os.path.join(folder,f"annexure_j1_{app_obj.id}.pdf")
+                generate_cdd_pdf(app_obj,cdd_pdf)
 
                 app_obj.status = "Signed"
                 app_obj.signed_at = datetime.utcnow()
@@ -508,11 +523,12 @@ def sign_application(token):
                     body = (
                         f"Dear {_signing_salutation(app_obj)},\n\n"
                         "Your signed documents have been received and submitted to Martin's Funerals.\n\n"
-                        "No documents are attached to this email. The signed documents are stored securely on the Martin's Funerals system."
+                        "Your signed documents are attached for your records. Please keep them in a safe place. Copies are also stored securely with your application."
                     )
-                    send_email(app_obj.email, "Martin's Funerals signed documents received", body, [])
+                    send_email(app_obj.email, "Martin's Funerals signed documents received", body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf])
                 office_email = os.getenv("MAIL_DOCUMENTS_TO")
-                if office_email:
+                from email.utils import parseaddr
+                if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(app_obj.email or '')[1].strip().casefold():
                     app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
                     send_email(office_email, "Signed documents received: " + app_obj.application_ref,
                                "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n" + app_link)
@@ -533,10 +549,13 @@ def _signable_pdf(app_obj, doc_type):
     generators = {"application": ("signed_application", generate_application_pdf),
                   "popia": ("popia_consent", generate_popia_pdf),
                   "disclosure": ("policy_disclosure", generate_disclosure_pdf),
-                  "welcome": ("welcome_pack", generate_welcome_pack)}
+                  "welcome": ("welcome_pack", generate_welcome_pack),
+                  "cdd": ("annexure_j1", generate_cdd_pdf)}
     prefix, generator = generators[doc_type]
     path = os.path.join(application_folder(app_obj), f"{prefix}_{app_obj.id}.pdf")
     generator(app_obj, path)
+    if doc_type=="cdd":
+        return path
     field = {"application": "signed_pdf_path", "popia": "popia_pdf_path", "disclosure": "disclosure_pdf_path", "welcome": "welcome_pack_path"}[doc_type]
     if doc_type != "application" or doc_type in _signed_doc_types(app_obj):
         setattr(app_obj, field, path)
@@ -563,7 +582,7 @@ def edit_document(token, doc_type):
     nonce = secrets.token_urlsafe(24)
     session[f"document_review_{app_obj.id}_{doc_type}"] = nonce
     response = current_app.make_response(render_template("sign/document.html", app=app_obj,
-        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], targets=targets, marketing_consent=consent_value(app_obj),
+        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], targets=targets, marketing_consent=consent_value(app_obj), cdd_fields=CDD_FIELDS, cdd_answers=answers_for(app_obj), cdd_complete=cdd_completed(app_obj),
         review_nonce=nonce, signed=doc_type in _signed_doc_types(app_obj)))
     response.headers['Cache-Control'] = 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'

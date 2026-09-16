@@ -19,6 +19,7 @@
     <p><b>Cover:</b> R{{app.cover_amount}} | <b>Premium:</b> R{{app.monthly_premium}}</p>
     <p><b>Joining Fee:</b> R{{app.joining_fee or 0}}</p>
 
+    <p><b>FIC screening:</b> {{screening.status if screening else 'Not checked'}} <a href="{{url_for('applications.screening_review',app_id=app.id)}}">View screening and saved evidence</a></p>
     {% if app.status != 'Signed' %}
     <form method="post" action="{{url_for('applications.send_sign_link', app_id=app.id)}}" style="display:inline-block;">
       <button class="btn btn-primary">Send Email Signing Link</button>

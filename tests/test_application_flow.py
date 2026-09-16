@@ -93,6 +93,48 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertFalse(next(t['signed'] for t in targets if t['page']==2))
         self.assertFalse(any(image.image.size==(80,30) for image in pdf.pages[1].images))
 
+    def test_failed_screening_blocks_email_and_token(self):
+        with patch('app.routes.applications.ensure_screened',return_value=(False,['FIC unavailable'])), patch('app.routes.applications.send_email') as mail:
+            response=self.client.post(f'/applications/{self.record_id}/send-sign-link',follow_redirects=True)
+            self.assertIn(b'FIC unavailable',response.data)
+            mail.assert_not_called()
+        self.assertIsNone(self.record.sign_token)
+
+    def test_fic_capture_is_stored_and_match_needs_human_review(self):
+        from app.services.screening_service import ensure_screened, latest
+        def capture(identity,name,folder,prefix):
+            from PIL import Image
+            path=str(Path(folder)/(prefix+'-id.png'));Image.new('RGB',(20,20),'white').save(path)
+            return [{'search':'id','query':identity,'results':[{'name':'Possible match'}]}],[path]
+        with patch('app.services.screening_service.capture_person_search',side_effect=capture):
+            ok,errors=ensure_screened(self.record)
+        self.assertFalse(ok);row=latest(self.record)
+        self.assertEqual(row.status,'Needs review')
+        self.assertEqual(ClientStoredFile.query.count(),2)
+        response=self.client.get(f'/applications/{self.record_id}/screening')
+        self.assertIn(b'Possible match',response.data)
+        self.client.post(f'/applications/{self.record_id}/screening',data={'action':'review','screening_id':row.id,'notes':'Reviewed independently; fictional test record is not the returned person.','confirmed':'yes'})
+        self.assertTrue(ensure_screened(self.record)[0])
+        self.record.surname='Changed';db.session.commit()
+        self.assertIsNone(latest(self.record))
+
+    def test_fic_errors_never_count_as_no_results(self):
+        from app.services.screening_service import ensure_screened, latest
+        with patch('app.services.screening_service.capture_person_search',side_effect=TimeoutError()):
+            ok,errors=ensure_screened(self.record)
+        self.assertFalse(ok);self.assertEqual(latest(self.record).status,'Error')
+
+    def test_cdd_requires_complete_answers_and_invalidates_changed_signature(self):
+        from app.services.cdd_service import save_answers, FIELDS, completed
+        from app.models import DocumentSignature
+        with self.assertRaises(ValueError):save_answers(self.record,{})
+        answers={k:o.split('|')[0] if o else 'Fictional value' for k,l,o in FIELDS}
+        answers['birth_date']='1980-01-01';save_answers(self.record,answers)
+        db.session.add(DocumentSignature(application_id=self.record_id,document_type='cdd',signature_image_path='unused',typed_name='Fictional'));db.session.flush()
+        self.assertTrue(completed(self.record))
+        answers['birth_place']='Changed birthplace';answers['birth_date']='1980-01-01';save_answers(self.record,answers)
+        self.assertEqual(DocumentSignature.query.filter_by(document_type='cdd').count(),0)
+
     def test_named_email_link_escapes_client_values(self):
         from app.services.email_service import signing_email_html
         self.record.first_names = '<Alex & Sam>'
@@ -122,7 +164,7 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual(len(pdf.pages), 3)
 
     def test_email_failure_is_not_reported_as_sent(self):
-        with patch('app.routes.applications.send_email', return_value=False):
+        with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False):
             response = self.client.post(f'/applications/{self.record.id}/send-sign-link', follow_redirects=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.record.status, 'Signing Link Prepared')
@@ -132,7 +174,7 @@ class ApplicationFlowTests(unittest.TestCase):
         from app.routes.recovery import _send_script_selected_signing_link
         db.session.add(TelesalesScriptSession(application_id=self.record_id, agent_id=self.user_id, branch='A', client_name='Fictional Test', status='Completed', answers_json='{}'))
         db.session.commit()
-        with self.app.test_request_context('/'), patch('app.routes.recovery.send_email', return_value=True) as mail:
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened', return_value=(True,[])), patch('app.routes.recovery.send_email', return_value=True) as mail:
             link, sent, errors = _send_script_selected_signing_link(self.record, 'email')
             self.assertTrue(sent); self.assertEqual(errors, [])
             self.assertIn('/sign/', mail.call_args.args[2])
@@ -158,7 +200,7 @@ class ApplicationFlowTests(unittest.TestCase):
         image = io.BytesIO(); Image.new('RGB',(80,30),'black').save(image,format='PNG')
         signature = 'data:image/png;base64,' + base64.b64encode(image.getvalue()).decode()
         from app.services.signature_fields import application_fields
-        for kind in ['application','popia','disclosure','welcome']:
+        for kind in ['application','popia','disclosure','welcome','cdd']:
             keys=[f['key'] for f in application_fields(self.record)] if kind=='application' else [kind]
             for index,key in enumerate(keys):
                 self.assertEqual(public.get(f'/sign/{token}/review/{kind}').status_code, 200)
@@ -166,6 +208,16 @@ class ApplicationFlowTests(unittest.TestCase):
                     nonce = session[f'document_review_{self.record_id}_{kind}']
                 if kind=='popia':
                     public.post(f'/sign/{token}',data={'action':'save_marketing_consent','marketing_choice':'no','review_nonce':nonce})
+                    public.get(f'/sign/{token}/review/{kind}')
+                    with public.session_transaction() as session:
+                        nonce=session[f'document_review_{self.record_id}_{kind}']
+                if kind=='cdd':
+                    self.assertIn(b'value="0821234567"',public.get(f'/sign/{token}/review/cdd').data)
+                    with public.session_transaction() as session:nonce=session[f'document_review_{self.record_id}_{kind}']
+                    from app.services.cdd_service import FIELDS
+                    answers={key:options.split('|')[-1] if options else 'Fictional answer' for key,label,options in FIELDS}
+                    answers['birth_date']='1980-01-01'
+                    public.post(f'/sign/{token}',data=dict(answers,action='save_cdd',review_nonce=nonce))
                     public.get(f'/sign/{token}/review/{kind}')
                     with public.session_transaction() as session:
                         nonce=session[f'document_review_{self.record_id}_{kind}']
@@ -182,8 +234,12 @@ class ApplicationFlowTests(unittest.TestCase):
                     page = pdf.pages[field['page']-1]
                     self.assertTrue(any(img.image.size == (80,30) for img in page.images))
                 self.assertIn(b'Document signed', public.get(f'/sign/{token}/review/{kind}').data)
-        with patch('app.routes.signing.send_email', return_value=False):
+        with patch.dict(os.environ,{'MAIL_DOCUMENTS_TO':self.record.email}), patch('app.routes.signing.send_email', return_value=True) as delivery:
             response = public.post(f'/sign/{token}',data={'action':'final_submit'})
+            self.assertEqual(delivery.call_count,1)
+            self.assertEqual(len(delivery.call_args.args[3]),5)
+            self.assertTrue(all(Path(p).exists() for p in delivery.call_args.args[3]))
+            self.assertIn('attached for your records',delivery.call_args.args[2])
         self.assertEqual(response.status_code,200)
         self.assertEqual(self.record.status,'Signed')
         self.assertTrue(self.record.sign_token_revoked)

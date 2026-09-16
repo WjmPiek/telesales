@@ -16,34 +16,36 @@
 <div class="tab-content">
   <section class="tab-pane fade show active" id="details-panel" role="tabpanel" aria-labelledby="details-tab">
     {% for a in applications %}
-    <div class="card card-body mb-3"><h2 class="h5">{{ a.first_names or '' }} {{ a.surname or '' }} â€” {{ a.application_ref }}</h2>
+    <div class="card card-body mb-3"><h2 class="h5">{{ a.first_names or '' }} {{ a.surname or '' }} — {{ a.application_ref }}</h2>
       <div class="row"><div class="col-md-6"><p><b>ID:</b> {{ a.id_number or '' }}</p><p><b>Phone:</b> {{ a.cell_number or '' }}</p><p><b>Email:</b> {{ a.email or '' }}</p><p><b>Address:</b> {{ a.residential_address or a.address or '' }}</p></div>
-      <div class="col-md-6"><p><b>Status:</b> {{ a.status }}</p><p><b>Policy:</b> {{ a.policy_number or a.original_policy_number or 'Not issued' }}</p><p><b>Product:</b> {{ a.product.product_name if a.product else '' }} {{ a.product.plan_name if a.product else '' }}</p><p><b>Premium:</b> R{{ a.monthly_premium }} Â· <b>Cover:</b> R{{ a.cover_amount }}</p></div></div>
+      <div class="col-md-6"><p><b>Status:</b> {{ a.status }}</p><p><b>Policy:</b> {{ a.policy_number or a.original_policy_number or 'Not issued' }}</p><p><b>Product:</b> {{ a.product.product_name if a.product else '' }} {{ a.product.plan_name if a.product else '' }}</p><p><b>Premium:</b> R{{ a.monthly_premium }} · <b>Cover:</b> R{{ a.cover_amount }}</p></div></div>
       <details class="mb-3"><summary>More member and payment details</summary><dl class="row mt-2">
       {% for field, label in [('date_of_birth','Date of birth'),('branch','Branch'),('agent_name','Agent'),('inception_date','Inception date'),('waiting_period','Waiting period'),('postal_address','Postal address'),('postal_code','Postal code'),('home_tel','Home telephone'),('work_tel','Work telephone'),('spouse_first_names','Spouse first names'),('spouse_surname','Spouse surname'),('spouse_id_number','Spouse ID'),('beneficiary_full_names','Beneficiary'),('beneficiary_id_number','Beneficiary ID'),('beneficiary_relationship','Beneficiary relationship'),('payment_method','Payment method'),('bank_name','Bank'),('branch_code','Branch code'),('account_number','Account number'),('account_holder','Account holder'),('account_type','Account type'),('debit_day','Debit day'),('employer','Employer'),('joining_fee','Joining fee')] %}
         {% if a|attr(field) %}<dt class="col-sm-4">{{ label }}</dt><dd class="col-sm-8" style="overflow-wrap:anywhere">{{ a|attr(field) }}</dd>{% endif %}
       {% endfor %}</dl></details>
       <a href="{{ url_for('applications.view_application', app_id=a.id) }}">Open application and signing actions</a>
     </div>{% endfor %}
-    {% for p in policies %}<div class="card card-body mb-3"><h2 class="h5">Imported record: {{ p.initials or '' }} {{ p.surname or '' }}</h2><p>Policy {{ p.policy_number or '' }} Â· {{ p.recovery_status }} Â· {{ p.cell_number or '' }} Â· {{ p.email_address or '' }}</p><p>{{ p.comments or '' }}</p><a href="{{ url_for('recovery.client_timeline', policy_id=p.id) }}">Open client timeline</a></div>{% endfor %}
+    {% for p in policies %}<div class="card card-body mb-3"><h2 class="h5">Imported record: {{ p.initials or '' }} {{ p.surname or '' }}</h2><p>Policy {{ p.policy_number or '' }} · {{ p.recovery_status }} · {{ p.cell_number or '' }} · {{ p.email_address or '' }}</p><p>{{ p.comments or '' }}</p><a href="{{ url_for('recovery.client_timeline', policy_id=p.id) }}">Open client timeline</a></div>{% endfor %}
   </section>
   <section class="tab-pane fade" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
     <h2 class="h5">Scripts</h2>
-    {% for s in scripts %}<div class="card card-body mb-2">{{ s.completed_at or s.created_at }} Â· {{ s.status }}<p>{{ s.qa_result or '' }} {{ s.blocked_reason or '' }}</p><a href="{{ url_for('recovery.download_script_pdf', session_id=s.id) }}">View completed script PDF</a></div>{% else %}<p>No scripts recorded.</p>{% endfor %}
+    {% for s in scripts %}<div class="card card-body mb-2">{{ s.completed_at or s.created_at }} · {{ s.status }}<p>{{ s.qa_result or '' }} {{ s.blocked_reason or '' }}</p><a href="{{ url_for('recovery.download_script_pdf', session_id=s.id) }}">View completed script PDF</a></div>{% else %}<p>No scripts recorded.</p>{% endfor %}
     <h2 class="h5 mt-3">Calls</h2>
-    {% for c in calls %}<div class="card card-body mb-2"><b>{{ c.created_at }} Â· {{ c.outcome }}</b><p style="white-space:pre-wrap">{{ c.notes or '' }}</p></div>{% else %}<p>No calls recorded.</p>{% endfor %}
+    {% for c in calls %}<div class="card card-body mb-2"><b>{{ c.created_at }} · {{ c.outcome }}</b><p style="white-space:pre-wrap">{{ c.notes or '' }}</p></div>{% else %}<p>No calls recorded.</p>{% endfor %}
   </section>
   <section class="tab-pane fade" id="chat-panel" role="tabpanel" aria-labelledby="chat-tab">
     <p>WhatsApp conversations linked by this client's phone number, within your access. Shared phone numbers can include messages from another member of the household.</p>
-    {% for m in messages %}<div class="card card-body mb-2"><small>{{ m.created_at }} Â· {{ m.direction }} Â· {{ m.status }}</small><p class="mb-0" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ m.body or ('[' ~ m.message_type ~ ' message]') }}</p></div>{% else %}<p>No WhatsApp messages recorded for this client's number.</p>{% endfor %}
+    {% for m in messages %}<div class="card card-body mb-2"><small>{{ m.created_at }} · {{ m.direction }} · {{ m.status }}</small><p class="mb-0" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ m.body or ('[' ~ m.message_type ~ ' message]') }}</p></div>{% else %}<p>No WhatsApp messages recorded for this client's number.</p>{% endfor %}
   </section>
   <section class="tab-pane fade" id="documents-panel" role="tabpanel" aria-labelledby="documents-tab">
     {% for a in applications %}<div class="card card-body mb-3"><h2 class="h5">{{ a.application_ref }}</h2><p>{{ 'Signed on ' ~ a.signed_at if a.signed_at else 'Awaiting client signature' }}</p>
       <div class="d-flex flex-wrap gap-2">{% for key, label, available in [('signed_application','Signed application',a.signed_pdf_path),('welcome_pack','Welcome pack',a.welcome_pack_path),('popia','POPIA consent',a.popia_pdf_path),('disclosure','Policy disclosure',a.disclosure_pdf_path)] %}{% if available %}<a class="btn btn-outline-primary btn-sm" href="{{ url_for('applications.download_document', app_id=a.id, doc_type=key) }}" target="_blank" rel="noopener">{{ label }}</a>{% endif %}{% endfor %}</div>
       <a class="mt-2" href="{{ url_for('applications.view_application', app_id=a.id) }}">View document checklist and signing actions</a>
     </div>{% endfor %}
+    <h2 class="h5 mt-3">CDD form and FIC screening evidence</h2>
+    {% for file in stored_files %}<div class="card card-body mb-2"><a href="{{url_for('client_files.stored_document',file_id=file.id)}}" target="_blank" rel="noopener">{{file.relative_path}}</a></div>{% else %}<p>No CDD or screening evidence saved yet.</p>{% endfor %}
     <h2 class="h5">Uploaded documents</h2>
-    {% for d in documents %}<div class="card card-body mb-2"><b>{{ d.document_type.replace('_',' ').title() }}</b><span>{{ d.original_filename }} Â· {{ d.status }} Â· {{ d.uploaded_at }}</span>{% if admin_role or manager_role %}<a href="{{ url_for('documents.download_fica', doc_id=d.id) }}" target="_blank" rel="noopener">Open document</a>{% endif %}</div>{% else %}<p>No documents uploaded yet.</p>{% endfor %}
+    {% for d in documents %}<div class="card card-body mb-2"><b>{{ d.document_type.replace('_',' ').title() }}</b><span>{{ d.original_filename }} · {{ d.status }} · {{ d.uploaded_at }}</span>{% if admin_role or manager_role %}<a href="{{ url_for('documents.download_fica', doc_id=d.id) }}" target="_blank" rel="noopener">Open document</a>{% endif %}</div>{% else %}<p>No documents uploaded yet.</p>{% endfor %}
   </section>
 </div>
 {% endif %}

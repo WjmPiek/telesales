@@ -5,3 +5,4 @@ instance/
 uploads/
 *.pyc
 *.sqlite
+.browsers/

@@ -35,7 +35,7 @@ def signature_rows(a):
 
 def signed_documents(a):
     rows=signature_rows(a)
-    done={k for k in ['popia','disclosure','welcome'] if k in rows}
+    done={k for k in ['popia','disclosure','welcome','cdd'] if k in rows}
     if all(f['key'] in rows for f in application_fields(a)):
         done.add('application')
     return done

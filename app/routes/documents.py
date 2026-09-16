@@ -1,3 +1,4 @@
+from app.services.screening_service import ensure_screened
 from app.services.client_storage import application_folder, store_document
 import os
 import secrets
@@ -44,6 +45,8 @@ def _send_rejected_document_email(app, rejected_labels, reason=None):
     if not app.email:
         return False, "Application has no client email address."
 
+    screened, errors=ensure_screened(app)
+    if not screened:return False, "; ".join(errors)
     token = _ensure_active_signing_link(app)
     base_url = current_app.config.get("BASE_URL") or request.url_root.rstrip("/")
     link = f"{base_url}{url_for('signing.sign_application', token=token)}"
@@ -236,6 +239,10 @@ def resend_missing(app_id, channel):
         flash("No missing documents to request.", "success")
         return redirect(url_for("documents.application_documents", app_id=app.id))
 
+    screened, errors=ensure_screened(app)
+    if not screened:
+        flash("; ".join(errors),"danger")
+        return redirect(url_for("documents.application_documents",app_id=app.id))
     if not app.sign_token or app.sign_token_revoked or app.sign_token_used_at:
         app.sign_token = secrets.token_urlsafe(32)
         app.sign_token_created_at = datetime.utcnow()

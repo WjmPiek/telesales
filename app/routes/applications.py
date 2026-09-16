@@ -1,3 +1,4 @@
+from app.services.screening_service import ensure_screened, latest as latest_screening
 from app.services.client_storage import application_folder
 import json
 import os, secrets
@@ -221,7 +222,7 @@ def new_application():
 def view_application(app_id):
     a = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(a, agent_attr="agent_id")
-    return render_template("applications/view.html", app=a, document_summary=document_summary(a))
+    return render_template("applications/view.html", app=a, document_summary=document_summary(a), screening=latest_screening(a))
 
 
 def _client_salutation(app_obj):
@@ -244,6 +245,10 @@ def send_sign_link(app_id):
     ensure_branch_access(a, agent_attr="agent_id")
     ok, errors = assert_application_rules(a)
     if not ok:
+        _block_signing_message(errors)
+        return redirect(url_for("applications.view_application", app_id=a.id))
+    screened, errors = ensure_screened(a)
+    if not screened:
         _block_signing_message(errors)
         return redirect(url_for("applications.view_application", app_id=a.id))
     token = secrets.token_urlsafe(32)
@@ -293,6 +298,10 @@ def send_sign_whatsapp(app_id):
         _block_signing_message(errors)
         return redirect(url_for("applications.view_application", app_id=app_obj.id))
 
+    screened, errors = ensure_screened(app_obj)
+    if not screened:
+        _block_signing_message(errors)
+        return redirect(url_for("applications.view_application", app_id=app_obj.id))
     token = secrets.token_urlsafe(32)
     app_obj.sign_token = token
     app_obj.sign_token_created_at = datetime.utcnow()
@@ -408,3 +417,31 @@ def download_document(app_id, doc_type):
         abort(404)
 
     return send_file(path, as_attachment=False)
+
+
+@applications_bp.route('/<int:app_id>/screening', methods=['GET','POST'])
+@login_required
+@permission_required('applications.send_signing')
+def screening_review(app_id):
+    from app.models import ApplicationScreening, ClientStoredFile, AuditLog
+    a=ClientApplication.query.get_or_404(app_id)
+    ensure_branch_access(a,agent_attr='agent_id')
+    screening=latest_screening(a)
+    if request.method=='POST':
+        if request.form.get('action')=='search':
+            ok,errors=ensure_screened(a,force=True)
+            flash('FIC search completed with no results.' if ok else '; '.join(errors),'success' if ok else 'warning')
+        elif request.form.get('action')=='review':
+            if not _is_admin():abort(403)
+            if not screening or screening.status!='Needs review' or str(screening.id)!=request.form.get('screening_id'):abort(409)
+            notes=(request.form.get('notes') or '').strip()
+            if request.form.get('confirmed')!='yes' or not 20<=len(notes)<=3000:
+                flash('Confirm the review and record your findings (20-3000 characters).','danger')
+            else:
+                screening.reviewed_by=current_user.id;screening.reviewed_at=datetime.utcnow();screening.review_notes=notes;screening.status='Reviewed'
+                db.session.add(AuditLog(action='FIC_STAFF_REVIEW',entity_type='ClientApplication',entity_id=str(a.id),details='Screening '+str(screening.id)+' reviewed by user '+str(current_user.id)))
+                db.session.commit();flash('Staff review recorded. You may send the signing link from the application.','success')
+        return redirect(url_for('applications.screening_review',app_id=a.id))
+    paths=json.loads(screening.evidence_json) if screening else []
+    evidence=ClientStoredFile.query.filter(ClientStoredFile.application_id==a.id,ClientStoredFile.relative_path.in_(paths)).all() if paths else []
+    return render_template('applications/screening.html',app=a,screening=screening,evidence=evidence,results=json.loads(screening.results_json) if screening else [],is_admin=_is_admin())

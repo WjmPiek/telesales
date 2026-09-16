@@ -1,63 +1,154 @@
 <!doctype html>
+
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
+
 <title>{{label}} | Martin's Funerals</title>
+
 <style>
+
 *{box-sizing:border-box}body{margin:0;background:#eef0f5;color:#19202b;font:16px Arial,sans-serif}header{position:sticky;top:0;z-index:3;background:white;border-bottom:1px solid #ddd;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}h1{font-size:20px;margin:0;flex:1}a{color:#69459c}button,.link-button{border:1px solid #69459c;border-radius:8px;background:white;color:#69459c;padding:12px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.5;cursor:wait}.primary{background:#69459c;color:white}.status{font-weight:bold;color:#246d46}main{padding:16px;max-width:960px;margin:auto}.hint{margin:0 0 16px;line-height:1.5}.page{position:relative;margin:0 auto 20px;background:white;box-shadow:0 3px 18px #0002;width:100%}.page canvas{display:block;width:100%;height:auto}.signature-space{position:absolute;border:2px dashed #69459c;background:#f5efffec;color:#523278;padding:2px;font-size:clamp(7px,1.2vw,14px);font-weight:bold;min-height:0;line-height:1;overflow:hidden}.signature-space.saved{background:transparent;border:2px solid #208753;color:transparent}.signature-space.saved:hover,.signature-space.saved:focus{background:#f5efffcc;color:#523278}.page-label{text-align:center;color:#667;margin:10px}dialog{border:0;border-radius:16px;padding:24px;width:min(580px,calc(100% - 24px));max-height:95dvh;overflow:auto;box-shadow:0 10px 50px #0005}dialog::backdrop{background:#17202b99}dialog h2{margin-top:0;font-size:22px}label{display:block;margin:12px 0 6px}input{width:100%;padding:12px;font:inherit;border:1px solid #bbc;border-radius:6px}#pad{width:100%;height:180px;border:1px solid #bbc;border-radius:8px;touch-action:none;background:white}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.error{color:#a12525;background:#fff1f1;padding:12px;border-radius:8px}[hidden]{display:none!important}@media(max-width:500px){header{padding:10px;gap:8px}h1{flex-basis:100%;font-size:18px}main{padding:10px}button,.link-button{padding:10px;font-size:14px}}
+
 </style></head><body>
+
 <header><a href="{{url_for('signing.sign_application',token=token)}}">Back to documents</a><h1>{{label}}</h1><span class="status" role="status">{{'Document signed' if signed else 'Not signed'}}</span><button id="jump" disabled>Find signature space</button></header>
+
 <main>
+
 {% if doc_type == 'popia' %}
+
 <section style="background:white;padding:18px;margin-bottom:16px;border:1px solid #bca9d6;border-radius:10px">
+
 <h2 style="margin-top:0;font-size:20px">Your marketing choice</h2>
+
 <p>Choose whether Martin's Funerals may contact you for telesales, product updates and marketing messages, including WhatsApp. Your application can proceed with either choice.</p>
+
 <form method="post" action="{{url_for('signing.sign_application',token=token)}}">
+
 <input type="hidden" name="action" value="save_marketing_consent"><input type="hidden" name="review_nonce" value="{{review_nonce}}">
+
 <label><input style="width:auto" type="radio" name="marketing_choice" value="yes" required {% if marketing_consent is sameas true %}checked{% endif %}> Yes, I consent to receiving product updates and marketing.</label>
+
 <label><input style="width:auto" type="radio" name="marketing_choice" value="no" required {% if marketing_consent is sameas false %}checked{% endif %}> No, do not contact me for telesales or marketing.</label>
+
 <button class="primary" style="margin-top:12px">Save marketing choice</button>
+
 {% if marketing_consent is not none %}<span role="status">Saved: {{'Yes' if marketing_consent else 'No'}}</span>{% endif %}
+
 </form></section>
+
 {% endif %}
+
+{% if doc_type == 'cdd' %}
+
+<section style="background:white;padding:18px;margin-bottom:16px;border:1px solid #bca9d6;border-radius:10px">
+
+<h2>Annexure J.1 - Your information</h2>
+
+<p><b>{{app.first_names}} {{app.surname}}</b> · ID / Passport: {{app.id_number}} · Date of birth: {{app.date_of_birth or 'Not recorded'}}</p>
+
+<p>Please complete your details and questions, save your answers, then review and sign the document below. Staff complete the risk assessment and organisation signature.</p>
+
+<form method="post" action="{{url_for('signing.sign_application',token=token)}}">
+
+<input type="hidden" name="action" value="save_cdd"><input type="hidden" name="review_nonce" value="{{review_nonce}}">
+
+{% for key,label,options in cdd_fields %}
+
+<label for="cdd-{{key}}">{{label}}</label>
+
+{% if options %}<select id="cdd-{{key}}" name="{{key}}" required style="width:100%;padding:12px;font:inherit"><option value="">Select an answer</option>{% for option in options.split('|') %}<option {% if cdd_answers.get(key)==option %}selected{% endif %}>{{option}}</option>{% endfor %}</select>
+
+{% else %}<input id="cdd-{{key}}" name="{{key}}" value="{{cdd_answers.get(key,'')}}" maxlength="300" required>{% endif %}
+
+{% endfor %}<button class="primary" style="margin-top:16px">Save answers and review document</button>
+
+</form></section>
+
+{% endif %}
+
 <p class="hint">Read the document, then tap the highlighted client signature space on the page. Sign each highlighted space separately. After the last signature is saved, you will return to your document list automatically.</p><p id="loading" role="status">Loading document…</p><p id="load-error" class="error" hidden>The document could not be loaded. Please reload this page to try again. <a href="{{url_for('signing.view_sign_document',token=token,doc_type=doc_type)}}">Download PDF for review</a></p><div id="pages"></div><noscript>JavaScript is required to sign this document.</noscript></main>
+
 <dialog id="signature-dialog" aria-labelledby="signature-title"><form method="post" action="{{url_for('signing.sign_application',token=token)}}" id="signature-form">
+
 <h2 id="signature-title">Sign {{label}}</h2><input type="hidden" name="action" value="sign_document"><input type="hidden" name="document_type" value="{{doc_type}}"><input type="hidden" name="review_nonce" value="{{review_nonce}}"><input type="hidden" name="signature_field" id="signature-field"><input type="hidden" name="signature_data" id="signature-data">
+
 <label for="full-name">Full name</label><input name="typed_name" id="full-name" value="{{app.first_names}} {{app.surname}}" required maxlength="200"><label for="pad">Draw your signature</label><canvas id="pad" aria-label="Draw signature with your finger, mouse or stylus"></canvas><p>Saving places your signature in this document's client signature space.</p><p id="signature-error" role="alert" class="error" hidden>Please draw your signature first.</p><div class="actions"><button type="button" id="cancel">Cancel</button><button type="button" id="clear">Clear</button><button class="primary" id="save">Save signature</button></div></form></dialog>
+
 <script type="module">
-const targets={{targets|tojson}}, canSign={{(doc_type != "popia" or marketing_consent is not none)|tojson}}, pdfUrl={{url_for('signing.view_sign_document',token=token,doc_type=doc_type)|tojson}};
+
+const targets={{targets|tojson}}, canSign={{((doc_type != "popia" or marketing_consent is not none) and (doc_type != "cdd" or cdd_complete))|tojson}}, pdfUrl={{url_for('signing.view_sign_document',token=token,doc_type=doc_type)|tojson}};
+
 const dialog=document.getElementById('signature-dialog'),pad=document.getElementById('pad'),ctx=pad.getContext('2d');let drawing=false,hasInk=false;
+
 function clear(){ctx.clearRect(0,0,pad.width,pad.height);hasInk=false;document.getElementById('signature-error').hidden=true;}
+
 function openPad(target){document.getElementById("signature-field").value=target.key;document.getElementById("signature-title").textContent=target.label;dialog.showModal();pad.width=Math.round(pad.clientWidth*2);pad.height=360;ctx.lineWidth=4;ctx.lineCap='round';ctx.strokeStyle='#152030';clear();document.getElementById('full-name').focus();}
+
 function point(e){const r=pad.getBoundingClientRect();return [(e.clientX-r.left)*pad.width/r.width,(e.clientY-r.top)*pad.height/r.height];}
+
 pad.addEventListener('pointerdown',e=>{e.preventDefault();drawing=true;pad.setPointerCapture(e.pointerId);const [x,y]=point(e);ctx.beginPath();ctx.moveTo(x,y);});
+
 pad.addEventListener('pointermove',e=>{if(!drawing)return;e.preventDefault();ctx.lineTo(...point(e));ctx.stroke();hasInk=true;});
+
 for(const event of ['pointerup','pointercancel'])pad.addEventListener(event,()=>drawing=false);
+
 document.getElementById('clear').onclick=clear;document.getElementById('cancel').onclick=()=>dialog.close();
+
 document.getElementById('signature-form').onsubmit=e=>{if(!hasInk){e.preventDefault();document.getElementById('signature-error').hidden=false;return;}document.getElementById('signature-data').value=pad.toDataURL('image/png');document.getElementById('save').disabled=true;document.getElementById('save').textContent='Saving document…';};
+
 try{
+
  const pdfjs=await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
+
  pdfjs.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+
  const pdf=await pdfjs.getDocument({url:pdfUrl}).promise;const signatureButtons=[];
+
  for(let i=1;i<=pdf.numPages;i++){
+
   const page=await pdf.getPage(i),viewport=page.getViewport({scale:1.5});
+
   const label=document.createElement('p');label.className='page-label';label.textContent=`Page ${i} of ${pdf.numPages}`;document.getElementById('pages').append(label);
+
   const wrapper=document.createElement('div');wrapper.className='page';const canvas=document.createElement('canvas');canvas.width=viewport.width;canvas.height=viewport.height;canvas.setAttribute('aria-label',`Document page ${i}`);wrapper.append(canvas);document.getElementById('pages').append(wrapper);
+
   await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+
   for(const target of targets.filter(t=>t.page===i)){
+
    const rect=viewport.convertToViewportRectangle(target.rect),button=document.createElement('button');
+
    button.type='button';button.disabled=true;button.className='signature-space'+(target.signed?' saved':'');
+
    button.textContent=target.signed?'Signed':'Sign here';button.title=target.label;
+
    button.setAttribute('aria-label',target.label+(target.signed?' — signed':' — tap to sign'));
+
    Object.assign(button.style,{left:Math.min(rect[0],rect[2])/viewport.width*100+'%',top:Math.min(rect[1],rect[3])/viewport.height*100+'%',width:Math.abs(rect[2]-rect[0])/viewport.width*100+'%',height:Math.abs(rect[3]-rect[1])/viewport.height*100+'%'});
+
    button.onclick=()=>openPad(target);wrapper.append(button);signatureButtons.push({button,target});
+
   }
+
  }
+
  if(!signatureButtons.length)throw new Error('Signature spaces missing');
+
  for(const {button} of signatureButtons)button.disabled=!canSign;
+
  document.getElementById('loading').hidden=true;const jump=document.getElementById('jump');jump.disabled=!canSign;
+
  const remaining=signatureButtons.filter(x=>!x.target.signed);
+
  document.querySelector('header .status').textContent=remaining.length?`${remaining.length} signature(s) remaining`:'Document signed';
+
  jump.textContent='Find next signature';jump.onclick=()=>{const item=remaining[0]||signatureButtons[0];item.button.scrollIntoView({behavior:'smooth',block:'center'});item.button.focus({preventScroll:true});};
- if(!canSign)document.getElementById('loading').textContent='Save your marketing choice above, then sign the POPIA document.';
+
+ if(!canSign)document.getElementById('loading').textContent='Complete and save the choices above, then sign the document.';
+
  if(!canSign)document.getElementById('loading').hidden=false;
+
 }catch(error){document.getElementById('loading').hidden=true;document.getElementById('load-error').hidden=false;}
+
 </script></body></html>
+
