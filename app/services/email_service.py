@@ -56,3 +56,18 @@ def send_email(to_email, subject, body, attachments=None, html_body=None):
         # Do not log email bodies, signing links or provider responses containing addresses.
         logging.getLogger(__name__).warning("Email delivery failed (%s)", type(exc).__name__)
         return False
+
+
+def signing_email_html(app_obj, link, body):
+    """Keep the opaque secure URL behind an escaped, descriptive email link."""
+    from html import escape
+    name = " ".join(str(value or "").strip() for value in
+                    (app_obj.first_names, app_obj.surname)).strip()
+    label = (name + " - Online Application") if name else "Online Application"
+    paragraphs = []
+    for paragraph in body.split("\n\n"):
+        if paragraph.strip() == link:
+            paragraphs.append('<p><a href="' + escape(link, quote=True) + '">' + escape(label) + '</a></p>')
+        else:
+            paragraphs.append("<p>" + escape(paragraph).replace("\n", "<br>") + "</p>")
+    return '<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#172337">' + "".join(paragraphs) + '</body></html>'

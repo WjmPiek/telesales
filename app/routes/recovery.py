@@ -11,7 +11,7 @@ from app import db
 from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument, AuditLog
 from app.security import permission_required
 from app.services.pdf_service import generate_telesales_script_pdf, generate_application_pdf, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
-from app.services.email_service import send_email
+from app.services.email_service import send_email, signing_email_html
 from app.services.whatsapp_service import send_whatsapp_message
 from app.services.compliance_service import dob_from_sa_id, age_from_dob, classify_product_template, assert_application_rules
 from app.services.branch_access import scope_by_branch, ensure_branch_access, can_view_all_branches, is_branch_manager, user_branch
@@ -1015,7 +1015,7 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     method = (delivery_method or "email").lower()
     sent = False
     if method in {"email", "sms_email", "whatsapp_email"} and app_obj.email:
-        sent = send_email(app_obj.email, "Your Martin's Funerals secure signing link", body, []) or sent
+        sent = send_email(app_obj.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(app_obj, link, body)) or sent
     if method in {"whatsapp", "whatsapp_email"} and app_obj.cell_number:
         sent = send_whatsapp_message(app_obj.cell_number, body) or sent
     if method == "sms":
