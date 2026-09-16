@@ -154,10 +154,8 @@ def _signed_date(app_obj):
 
 
 def _marketing_consent(app_obj):
-    sig = _latest_signature_record(app_obj)
-    if sig is None:
-        return None
-    return bool(getattr(sig, "consent_marketing", False))
+    from app.services.marketing_consent import consent_value
+    return consent_value(app_obj)
 
 
 def _wrap_text(text, max_chars=92):
@@ -321,7 +319,7 @@ def _add_terms_page(writer, app_obj, sig_path=None):
     c = canvas.Canvas(packet, pagesize=A4)
     y = 800
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, y, "Signed Application - Terms, Conditions and Electronic Signature Certificate")
+    c.drawString(40, y, "Application - Terms, Conditions and Electronic Signature Record")
     y -= 30
     c.setFont("Helvetica", 9)
     lines = [
@@ -335,10 +333,10 @@ def _add_terms_page(writer, app_obj, sig_path=None):
         f"Joining Fee: {'R 0 - Waived' if app_obj.joining_fee_waived else 'R ' + _money(app_obj.joining_fee)}",
         f"Waiting Period: {_safe(app_obj.waiting_period)}",
         "",
-        "The client signed electronically using ID-number verification, typed-name confirmation and drawn signature.",
+        "Client signatures are recorded using ID-number verification, typed name and a separate drawn signature.",
         "The signed application form must be read together with the policy terms and conditions supplied to the client.",
-        "The signature image below is used as the Principal Member signature on the application form.",
-        "Where debit order / account holder details were supplied, the same signature is also placed in the Account Holder signature box.",
+        "Each required client signature is captured separately at its labelled location.",
+        "The intermediary signature is reserved for staff and is not signed by the client.",
         "",
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
     ]
@@ -383,9 +381,20 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     for page in reader.pages:
         writer.add_page(page)
     _append_policy_terms(writer, template_choice)
-    _add_terms_page(writer, app_obj, sig_path)
-    from app.services.application_layout import SIGNATURE_RECTS
-    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"page": 1, "rect": SIGNATURE_RECTS[template_choice]})})
+    _add_terms_page(writer, app_obj, None)
+    from app.services.signature_fields import application_fields, signature_rows
+    fields, records = application_fields(app_obj), signature_rows(app_obj)
+    for target in fields:
+        row = records.get(target['key'])
+        target['signed'] = bool(row)
+        if row:
+            packet = io.BytesIO()
+            overlay = canvas.Canvas(packet, pagesize=A4)
+            x1,y1,x2,y2 = target['rect']
+            _draw_signature(overlay, row.signature_image_path, x1,y1,x2-x1,y2-y1)
+            overlay.save(); packet.seek(0)
+            writer.pages[target['page']-1].merge_page(PdfReader(packet).pages[0])
+    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"fields": fields})})
     with open(out_path, "wb") as f:
         writer.write(f)
 
@@ -795,14 +804,7 @@ def generate_fica_pdf(app_obj, out_path, signature_path_override=None):
             c.drawString(55, y, f"- {labels.get(row.document_type, row.document_type)}: {getattr(row, 'original_filename', '')} ({getattr(row, 'status', 'Received')})")
             y -= 12
 
-    sig_path = _signature_for_app(app_obj, signature_path_override, "fica")
-    if sig_path and os.path.exists(sig_path):
-        y -= 10
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(50, y, "Client Signature:")
-        _draw_signature(c, sig_path, 165, y - 42, 230, 70)
-        c.setFont("Helvetica", 9)
-        c.drawString(50, y - 58, f"Date: {datetime.now().strftime('%d/%m/%Y')}")
+    # FICA is a staff verification checklist, not a separately signed client document.
     _footer(c)
     c.save()
     return out_path

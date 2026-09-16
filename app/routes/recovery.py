@@ -11,6 +11,7 @@ from app import db
 from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument, AuditLog
 from app.security import permission_required
 from app.services.pdf_service import generate_telesales_script_pdf, generate_application_pdf, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
+from app.services.marketing_consent import telephone_blocked
 from app.services.email_service import send_email, signing_email_html
 from app.services.whatsapp_service import send_whatsapp_message
 from app.services.compliance_service import dob_from_sa_id, age_from_dob, classify_product_template, assert_application_rules
@@ -30,7 +31,7 @@ LEAD_OPEN_STATUSES = [
     "FICA Outstanding",
     "QA Review",
 ]
-LEAD_CLOSED_STATUSES = ["Approved", "Rejected", "Closed", "Reinstated", "Suspense"]
+LEAD_CLOSED_STATUSES = ["Opted Out", "Marketing Consented", "Approved", "Rejected", "Closed", "Reinstated", "Suspense"]
 SUSPENSE_STATUS = "Suspense"
 
 ID_HEADERS = ["ID_Number", "ID Number", "IDNumber", "ID No", "ID_No", "ID", "SA ID", "SA_ID", "Identity Number", "Client ID Number", "IdentityNumber", "IdNumber", "RSA ID"]
@@ -147,8 +148,9 @@ CALLBACK_OUTCOMES = {"No Answer", "Voicemail", "Callback Requested"}
 
 
 def open_recovery_query():
+    blocked_ids=[p.id for p in LapsedPolicy.query.all() if telephone_blocked(p)]
     return scope_by_branch(
-        LapsedPolicy.query.filter(LapsedPolicy.recovery_status.notin_(LEAD_CLOSED_STATUSES)),
+        LapsedPolicy.query.filter(LapsedPolicy.recovery_status.notin_(LEAD_CLOSED_STATUSES), LapsedPolicy.id.notin_(blocked_ids)),
         LapsedPolicy,
         agent_col=LapsedPolicy.assigned_agent_id,
     )
@@ -213,6 +215,10 @@ def update_status(policy_id):
     """Update a lead status from the Kanban board without opening the full call screen."""
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
+    if telephone_blocked(p):
+        flash("This client has opted out of telesales contact.", "warning")
+        return redirect(url_for("recovery.queue"))
+
     new_status = (request.form.get("status") or "").strip()
     allowed = set(LEAD_OPEN_STATUSES + LEAD_CLOSED_STATUSES + [SUSPENSE_STATUS])
     if new_status not in allowed:
@@ -429,6 +435,10 @@ def import_lapsed():
 def log_call(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
+    if telephone_blocked(p):
+        flash("This client has opted out of telesales contact.", "warning")
+        return redirect(url_for("recovery.queue"))
+
     outcomes = CALL_OUTCOMES
     previous_calls = RecoveryCallLog.query.filter_by(lapsed_policy_id=p.id).order_by(RecoveryCallLog.created_at.desc()).limit(10).all()
     if request.method == "POST":
@@ -1123,6 +1133,10 @@ def _script_score(answers):
 def start_script(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
+    if telephone_blocked(p):
+        flash("This client has opted out of telesales contact.", "warning")
+        return redirect(url_for("recovery.queue"))
+
     app_type = request.args.get("app_type", "new")
     client_name = f"{p.initials or ''} {p.surname or ''}".strip()
     session = TelesalesScriptSession(
@@ -1151,6 +1165,9 @@ def script_step(session_id):
     ensure_branch_access(session, agent_attr="agent_id")
     if session.agent_id != current_user.id and not _can_manage_scripts():
         abort(403)
+    if session.lapsed_policy and telephone_blocked(session.lapsed_policy):
+        flash("This client has opted out of telesales contact.", "warning")
+        return redirect(url_for("recovery.queue"))
     step = _script_step(session.current_step)
     if not step:
         return redirect(url_for("recovery.script_complete", session_id=session.id))
@@ -1323,6 +1340,10 @@ def reset_script_questions():
 def start_application(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
+    if telephone_blocked(p):
+        flash("This client has opted out of telesales contact.", "warning")
+        return redirect(url_for("recovery.queue"))
+
     app_type = request.args.get("app_type", "reinstatement")
     script_id = request.args.get("script_id") or request.form.get("script_id")
     script_session = TelesalesScriptSession.query.get(script_id) if script_id else None

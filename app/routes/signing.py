@@ -1,3 +1,5 @@
+from app.services.signature_fields import application_fields, signed_documents, signature_rows
+from app.services.marketing_consent import consent_value, apply_consent
 from app.services.client_storage import application_folder, store_document
 import os, base64, json, secrets, io
 from pypdf import PdfReader
@@ -139,8 +141,7 @@ def _fica_status(app_obj):
 
 
 def _signed_doc_types(app_obj):
-    rows = DocumentSignature.query.filter_by(application_id=app_obj.id).all()
-    return {r.document_type for r in rows}
+    return signed_documents(app_obj)
 
 
 def _latest_document_signature(app_obj):
@@ -400,6 +401,22 @@ def sign_application(token):
                 flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
                 return redirect(url_for("signing.sign_application", token=token))
 
+            if action == "save_marketing_consent":
+                expected=session.get(f"document_review_{app_obj.id}_popia")
+                if not expected or not secrets.compare_digest(expected, request.form.get("review_nonce", "")):
+                    raise ValueError("Open the POPIA document before selecting consent.")
+                choice=request.form.get("marketing_choice")
+                if choice not in {"yes", "no"}:
+                    raise ValueError("Please choose Yes or No for marketing consent.")
+                previous=consent_value(app_obj)
+                apply_consent(app_obj, choice=="yes", request.remote_addr, request.headers.get("User-Agent"))
+                if previous != (choice=="yes"):
+                    DocumentSignature.query.filter_by(application_id=app_obj.id,document_type="popia").delete(synchronize_session=False)
+                db.session.flush()
+                _signable_pdf(app_obj,"popia")
+                db.session.commit()
+                return redirect(url_for("signing.edit_document",token=token,doc_type="popia"))
+
             if action == "sign_document":
                 doc_type = request.form.get("document_type")
                 if doc_type not in dict(REQUIRED_SIGNATURE_DOCS):
@@ -407,12 +424,18 @@ def sign_application(token):
                 expected_nonce = session.get(f"document_review_{app_obj.id}_{doc_type}")
                 if not expected_nonce or not secrets.compare_digest(expected_nonce, request.form.get("review_nonce", "")):
                     raise ValueError("Open the document and sign in its signature space first.")
+                field_key=request.form.get("signature_field", doc_type)
+                allowed={f['key'] for f in application_fields(app_obj)} if doc_type=="application" else {doc_type}
+                if field_key not in allowed:
+                    raise ValueError("Choose the specific signature space inside this document.")
+                if doc_type=="popia" and consent_value(app_obj) is None:
+                    raise ValueError("Please save Yes or No for marketing consent before signing POPIA.")
                 typed_name = request.form.get("typed_name", "").strip()
                 sig_data = request.form.get("signature_data", "")
                 if not typed_name:
                     raise ValueError("Please type your full name before signing.")
-                sig_path = _save_signature_file(app_obj, doc_type, sig_data)
-                existing = DocumentSignature.query.filter_by(application_id=app_obj.id, document_type=doc_type).first()
+                sig_path = _save_signature_file(app_obj, field_key.replace(":", "_"), sig_data)
+                existing = DocumentSignature.query.filter_by(application_id=app_obj.id, document_type=field_key).first()
                 if existing:
                     existing.typed_name = typed_name
                     existing.signature_image_path = sig_path
@@ -420,12 +443,14 @@ def sign_application(token):
                     existing.user_agent = request.headers.get("User-Agent")
                     existing.signed_at = datetime.utcnow()
                 else:
-                    db.session.add(DocumentSignature(application_id=app_obj.id, document_type=doc_type, typed_name=typed_name, signature_image_path=sig_path, ip_address=request.remote_addr, user_agent=request.headers.get("User-Agent")))
+                    db.session.add(DocumentSignature(application_id=app_obj.id, document_type=field_key, typed_name=typed_name, signature_image_path=sig_path, ip_address=request.remote_addr, user_agent=request.headers.get("User-Agent")))
                 db.session.flush()
                 _signable_pdf(app_obj, doc_type)
                 db.session.commit()
                 session.pop(f"document_review_{app_obj.id}_{doc_type}", None)
                 flash("Document signed and saved.", "success")
+                if doc_type in _signed_doc_types(app_obj):
+                    return redirect(url_for("signing.sign_application", token=token))
                 return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
 
             if action == "final_submit":
@@ -441,7 +466,7 @@ def sign_application(token):
                     raise ValueError("Please upload outstanding FICA documents: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding))
 
                 signed_records = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=app_obj.id).all()}
-                sig = signed_records.get("application")
+                sig = signed_records.get("application:principal")
                 sig_path = sig.signature_image_path if sig else None
                 folder = application_folder(app_obj)
                 signed_pdf = os.path.join(folder, f"signed_application_{app_obj.id}.pdf")
@@ -474,7 +499,7 @@ def sign_application(token):
                         user_agent=request.headers.get("User-Agent"),
                         consent_popia=True,
                         consent_disclosure=True,
-                        consent_marketing=bool(request.form.get("consent_marketing")),
+                        consent_marketing=consent_value(app_obj) is True,
                         signed_at=datetime.utcnow(),
                     ))
                 db.session.commit()
@@ -530,11 +555,15 @@ def edit_document(token, doc_type):
     path = _signable_pdf(app_obj, doc_type)
     subject = PdfReader(path).metadata.get('/Subject', '')
     target = json.loads(subject.removeprefix('martins-signature:'))
+    if doc_type=="application":
+        targets=target['fields']
+    else:
+        targets=[dict(target,key=doc_type,label=DOC_LABELS[doc_type]+" signature",signed=doc_type in _signed_doc_types(app_obj))]
     db.session.commit()
     nonce = secrets.token_urlsafe(24)
     session[f"document_review_{app_obj.id}_{doc_type}"] = nonce
     response = current_app.make_response(render_template("sign/document.html", app=app_obj,
-        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], target=target,
+        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], targets=targets, marketing_consent=consent_value(app_obj),
         review_nonce=nonce, signed=doc_type in _signed_doc_types(app_obj)))
     response.headers['Cache-Control'] = 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'
@@ -580,3 +609,4 @@ def download_fica_upload(token, doc_id):
     if not path:
         abort(404)
     return send_file(path, as_attachment=False)
+
