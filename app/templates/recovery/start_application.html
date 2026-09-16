@@ -63,9 +63,7 @@
     <label>Send Documents By</label>
     <select class="form-control" name="delivery_method">
       <option value="">Do not send yet</option>
-      <option value="email" {% if selected_delivery == 'email' %}selected{% endif %}>Email</option>
-      <option value="whatsapp" {% if selected_delivery == 'whatsapp' %}selected{% endif %}>WhatsApp</option>
-      <option value="sms" {% if selected_delivery == 'sms' %}selected{% endif %}>SMS</option>
+      <option value="auto" {% if selected_delivery %}selected{% endif %}>Email first, then WhatsApp</option>
     </select>
   </div>
   <div class="col-md-3">
@@ -85,8 +83,8 @@
     <input class="form-control" name="cell_number" value="{{p.cell_number}}">
   </div>
   <div class="col-md-6">
-    <label>Email</label>
-    <input class="form-control" name="email" type="email" required>
+    <label>Email (optional)</label>
+    <input class="form-control" name="email" type="email" value="{{p.email_address or ''}}">
   </div>
   <div class="col-md-6">
     <label>Beneficiary Name</label>

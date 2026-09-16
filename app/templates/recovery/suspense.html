@@ -2,7 +2,7 @@
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
   <div>
     <h3 class="mb-0">Suspense Policies</h3>
-    <small class="text-muted">Imported clients missing ID number, contact number or email address. These clients stay under their own branch and are excluded from agent call queues.</small>
+    <small class="text-muted">Imported clients missing ID number or contact number. These clients stay under their own branch and are excluded from agent call queues.</small>
   </div>
   <div class="d-flex flex-wrap gap-2"><form method="post" action="{{ url_for('recovery.rebuild_suspense') }}"><button class="btn btn-warning" type="submit">Check existing imported data</button></form><a class="btn btn-outline-secondary" href="{{ url_for('recovery.queue') }}">Back to Queue</a></div>
 </div>
@@ -24,7 +24,7 @@
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div><b>{{ branch }}</b> <span class="badge bg-danger">{{ policies|length }} suspense</span></div>
-    {% set body %}Good day,%0D%0A%0D%0APlease correct the following policies for {{ branch }}. They are in suspense because ID number, contact number or email address is missing. These clients cannot be contacted until corrected.%0D%0A%0D%0A{% for p in policies %}Policy: {{ p.policy_number }} | Company: {{ p.company_name or p.franchise or p.branch }} | Client: {{ p.initials }} {{ p.surname }} | Missing: {{ p.suspense_reason or (p.comments or '')|replace('\n',' ') }}%0D%0A{% endfor %}%0D%0ARegards{% endset %}
+    {% set body %}Good day,%0D%0A%0D%0APlease correct the following policies for {{ branch }}. They are in suspense because ID number or contact number is missing. These clients cannot be contacted until corrected.%0D%0A%0D%0A{% for p in policies %}Policy: {{ p.policy_number }} | Company: {{ p.company_name or p.franchise or p.branch }} | Client: {{ p.initials }} {{ p.surname }} | Missing: {{ p.suspense_reason or (p.comments or '')|replace('\n',' ') }}%0D%0A{% endfor %}%0D%0ARegards{% endset %}
     <a class="btn btn-sm btn-outline-primary" href="mailto:?subject=Suspense policies needing correction - {{ branch|urlencode }}&body={{ body }}">Email business client</a>
   </div>
   <div class="table-responsive">

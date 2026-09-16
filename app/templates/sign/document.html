@@ -59,7 +59,7 @@
 
 {% if options %}<select id="cdd-{{key}}" name="{{key}}" required style="width:100%;padding:12px;font:inherit"><option value="">Select an answer</option>{% for option in options.split('|') %}<option {% if cdd_answers.get(key)==option %}selected{% endif %}>{{option}}</option>{% endfor %}</select>
 
-{% else %}<input id="cdd-{{key}}" name="{{key}}" value="{{cdd_answers.get(key,'')}}" maxlength="300" required>{% endif %}
+{% else %}<input id="cdd-{{key}}" name="{{key}}" value="{{cdd_answers.get(key,'')}}" maxlength="300" {% if key != 'email' %}required{% endif %}>{% endif %}
 
 {% endfor %}<button class="primary" style="margin-top:16px">Save answers and review document</button>
 

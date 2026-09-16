@@ -469,6 +469,8 @@ def sign_application(token):
                 return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
 
             if action == "final_submit":
+                from app.services.delivery_preferences import receipt_address
+                recipient = receipt_address(request.form, app_obj)
                 ok, errors = assert_application_rules(app_obj)
                 if not ok:
                     raise ValueError("Application blocked: " + "; ".join(errors))
@@ -497,6 +499,10 @@ def sign_application(token):
                 cdd_pdf=os.path.join(folder,f"annexure_j1_{app_obj.id}.pdf")
                 generate_cdd_pdf(app_obj,cdd_pdf)
 
+                if recipient != (app_obj.document_email or ''):
+                    from app.models import AuditLog
+                    db.session.add(AuditLog(action="Document email selected", entity_type="ClientApplication", entity_id=str(app_obj.id), details="ID-verified client selected the signed-document email recipient."))
+                app_obj.document_email = recipient
                 app_obj.status = "Signed"
                 app_obj.signed_at = datetime.utcnow()
                 app_obj.sign_token_used_at = datetime.utcnow()
@@ -521,16 +527,16 @@ def sign_application(token):
                     ))
                 db.session.commit()
                 session.pop(_unlocked_key(app_obj.id), None)
-                if app_obj.email:
+                if recipient:
                     body = (
                         f"Dear {_signing_salutation(app_obj)},\n\n"
                         "Your signed documents have been received and submitted to Martin's Funerals.\n\n"
                         "Your signed documents are attached for your records. Please keep them in a safe place. Copies are also stored securely with your application."
                     )
-                    send_email(app_obj.email, "Martin's Funerals signed documents received", body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
+                    send_email(recipient, "Martin's Funerals signed documents received", body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
                 office_email = os.getenv("MAIL_DOCUMENTS_TO")
                 from email.utils import parseaddr
-                if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(app_obj.email or '')[1].strip().casefold():
+                if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
                     app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
                     send_email(office_email, "Signed documents received: " + app_obj.application_ref,
                                "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n" + app_link)

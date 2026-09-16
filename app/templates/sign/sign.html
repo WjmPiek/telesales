@@ -140,6 +140,11 @@
     <input type="hidden" name="action" value="final_submit">
     <h4 class="fw-bold" style="color:var(--mf-purple)">Final Step: Submit Signed Documents</h4>
     <p class="text-muted">Once all required documents are uploaded and signed, submit them back to Martin's Funerals for processing.</p>
+    <div class="row g-3 mb-3">
+      <div class="col-md-6"><label for="document-email" class="form-label">Email for your signed documents (optional)</label><input id="document-email" name="document_email" type="email" maxlength="254" autocomplete="email" class="form-control" value="{{app.document_email or app.email or ''}}"></div>
+      <div class="col-md-6"><label for="document-email-confirm" class="form-label">Confirm email address</label><input id="document-email-confirm" name="document_email_confirm" type="email" maxlength="254" autocomplete="email" class="form-control" value="{{app.document_email or app.email or ''}}"></div>
+    </div>
+    <p>Enter an email address if you want your signed documents emailed after submission. You can leave both fields blank if you do not have email. Your documents will still be saved with Martin's Funerals.</p>
     <p>Marketing consent is recorded separately in your POPIA Consent document.</p>
     <button class="btn btn-success btn-lg w-100">Submit Signed Documents Back to Martin's Funerals</button>
   </form>

@@ -13,7 +13,7 @@
     <p><b>Application Type:</b> {{app.application_type or 'New Policy'}}</p>
     {% if app.original_policy_number %}<p><b>Original/Lapsed Policy Number:</b> {{app.original_policy_number}}</p>{% endif %}
     <p><b>Client:</b> {{app.first_names}} {{app.surname}}</p>
-    <p><b>Email:</b> {{app.email}}</p>
+    <p><b>Email:</b> {{app.email or 'Not supplied'}}</p><p><b>Signed-document email:</b> {{app.document_email or app.email or 'Not supplied'}}</p>
     <p><b>Status:</b> {{app.status}}</p>
     <p><b>Application Form Template:</b> {{app.form_template or "auto"}}</p>
     <p><b>Cover:</b> R{{app.cover_amount}} | <b>Premium:</b> R{{app.monthly_premium}}</p>
@@ -22,7 +22,7 @@
     <p><b>Employee FIC check:</b> {{screening.status if screening else 'Screenshot required before sending'}} <a href="{{url_for('applications.screening_review',app_id=app.id)}}">Record check / upload screenshots</a></p>
     {% if app.status != 'Signed' %}
     <form method="post" action="{{url_for('applications.send_sign_link', app_id=app.id)}}" style="display:inline-block;">
-      <button class="btn btn-primary">Send Email Signing Link</button>
+      <button class="btn btn-primary">Send Signing Link (Email first, then WhatsApp)</button>
     </form>
     <form method="post" action="{{url_for('applications.send_sign_whatsapp', app_id=app.id)}}" style="display:inline-block;">
       <button class="btn btn-success">Send WhatsApp Signing Link</button>

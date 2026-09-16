@@ -280,10 +280,21 @@ def send_sign_link(app_id):
         "No documents are attached to this email. Your documents are available only inside the secure signing link.\n\n"
         "The link can only be used once. After signing it will be deactivated."
     )
-    sent = send_email(a.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(a, link, body), application_id=a.id)
+    from app.services.delivery_preferences import valid_email
+    sent = False
+    channel = 'Email'
+    if valid_email(a.email):
+        sent = send_email(a.email.strip(), "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(a, link, body), application_id=a.id)
+    if not sent and a.cell_number:
+        channel = 'WhatsApp'
+        result = send_whatsapp_text(a.cell_number, body)
+        sent = result.ok
+        from app.services.conversation_history import record_communication
+        record_communication('WhatsApp',body,'Sent' if sent else 'Failed',application_id=a.id)
+
     a.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
-    flash("Signing email accepted for delivery." if sent else "Email was not sent. Check the email configuration and retry.", "success" if sent else "danger")
+    flash(f"Signing link accepted for delivery by {channel}." if sent else "Email was not sent and WhatsApp delivery did not succeed. Check the contact details and delivery settings.", "success" if sent else "danger")
     return redirect(url_for("applications.view_application", app_id=a.id))
 
 
