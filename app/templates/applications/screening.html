@@ -11,7 +11,7 @@
 <form method="post" enctype="multipart/form-data" class="card card-body my-3"><input type="hidden" name="action" value="upload">
 <h2 class="h5">Record a completed check</h2>
 <label for="checked-at">Check date and time (South Africa)</label><input id="checked-at" class="form-control mb-3" name="checked_at" type="datetime-local" required>
-<label for="outcome">Result</label><select id="outcome" class="form-select mb-3" name="outcome" required><option value="">Select result</option><option value="no_match">No matching person found</option><option value="possible_match">Possible match — administrator must review</option></select>
+<label for="outcome">Result</label><select id="outcome" class="form-select mb-3" name="outcome" required><option value="">Select result</option><option value="no_match">No results</option><option value="possible_match">Possible match — administrator must review</option></select>
 <label for="notes">Searches performed and findings</label><textarea id="notes" class="form-control mb-3" name="notes" minlength="10" maxlength="3000" required></textarea>
 <label for="screenshots">Result screenshots (PNG/JPEG, up to 5 files, 10 MB each)</label><input id="screenshots" class="form-control mb-3" type="file" name="screenshots" accept="image/png,image/jpeg" multiple required>
 <label><input type="checkbox" name="confirmed" value="yes" required> I performed the ID and name searches for this client and attached the result evidence.</label><button class="btn btn-primary mt-3">Save FIC check and screenshots</button></form>
