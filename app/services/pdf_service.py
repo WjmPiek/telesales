@@ -774,8 +774,6 @@ def generate_fica_pdf(app_obj, out_path, signature_path_override=None):
     required = ["id_copy" if citizen else "passport", "proof_of_address"]
     if not citizen:
         required.append("permit_visa")
-    if debit:
-        required.append("bank_statement")
 
     labels = {
         "id_copy": "South African ID copy",
@@ -797,7 +795,6 @@ def generate_fica_pdf(app_obj, out_path, signature_path_override=None):
         ("ID Number Verified", "Passed - entered ID matched signing link" if citizen else "Passport captured - document review required"),
         ("Identity Required", "South African ID copy" if citizen else "Passport copy and valid permit/visa"),
         ("Proof of Address", "Required"),
-        ("Bank Verification", "Required - Debit Order selected" if debit else "Not required - payment method is not Debit Order"),
         ("FICA Status", fica_status),
     ]
     y = _draw_key_values(c, rules, 50, y, label_w=140, leading=16, size=9)
@@ -812,10 +809,6 @@ def generate_fica_pdf(app_obj, out_path, signature_path_override=None):
         status = "Received" if key in uploaded_types else "Outstanding"
         prefix = "[X]" if key in uploaded_types else "[ ]"
         c.drawString(55, y, f"{prefix} {labels.get(key, key)} - {status}")
-        y -= 15
-
-    if not debit:
-        c.drawString(55, y, "[X] Bank verification not required because Debit Order was not selected")
         y -= 15
 
     if rows:
