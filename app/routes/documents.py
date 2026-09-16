@@ -8,7 +8,7 @@ from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from app import db
 from app.models import ClientApplication, ClientFicaDocument, AuditLog
-from app.services.document_status_service import document_summary, FICA_LABELS
+from app.services.document_status_service import document_summary, FICA_LABELS, STAFF_UPLOAD_LABELS
 from app.services.fica_validation_service import validate_fica_upload
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message
@@ -132,8 +132,8 @@ def application_documents(app_id):
     if request.method == "POST":
         doc_type = request.form.get("document_type")
         uploaded_file = request.files.get("file")
-        if doc_type not in FICA_LABELS:
-            flash("Invalid FICA document type.", "danger")
+        if doc_type not in STAFF_UPLOAD_LABELS:
+            flash("Invalid document type.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
         if not uploaded_file or not uploaded_file.filename:
             flash("Choose a file to upload.", "danger")
@@ -141,20 +141,31 @@ def application_documents(app_id):
         if not _allowed_file(uploaded_file.filename):
             flash("Only PDF, JPG, PNG or WEBP files are allowed.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
+        from app.services.upload_guard import reject_duplicate
+        try:
+            reject_duplicate(app, uploaded_file, doc_type)
+        except ValueError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("documents.application_documents", app_id=app.id))
         safe = secure_filename(uploaded_file.filename)
         folder = os.path.join(application_folder(app), "fica")
         os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, f"{doc_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe}")
+        path = os.path.join(folder, f"{doc_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}_{safe}")
         uploaded_file.save(path)
         store_document(app, path)
-        validation_status, validation_notes = validate_fica_upload(path, safe, doc_type, app)
+        validation_status, validation_notes = (validate_fica_upload(path, safe, doc_type, app)
+            if doc_type in FICA_LABELS else ("Needs Review", "Staff must verify the complete document and all required signatures."))
+        for previous in ClientFicaDocument.query.filter_by(application_id=app.id, document_type=doc_type).all():
+            previous.status = "Replaced"
         doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status=validation_status, uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
         db.session.add(doc)
+        if app.status not in {'QA Approved', 'Compliance Approved', 'QA Rejected', 'Compliance Rejected', 'Signed'}:
+            app.status = 'FICA Review'
         db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{FICA_LABELS.get(doc_type, doc_type)} uploaded by staff: {safe}; Status: {validation_status}; {validation_notes}"))
         db.session.commit()
         flash(f"Document uploaded. Status: {validation_status}. {validation_notes}", "warning" if validation_status == "Needs Review" else "danger")
         return redirect(url_for("documents.application_documents", app_id=app.id))
-    return render_template("documents/application.html", app=app, summary=document_summary(app), fica_labels=FICA_LABELS)
+    return render_template("documents/application.html", app=app, summary=document_summary(app), fica_labels=STAFF_UPLOAD_LABELS, upload_audit=AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(app.id)).filter(AuditLog.action.in_(["FICA Uploaded", "Duplicate upload rejected"])).order_by(AuditLog.id.desc()).limit(100).all())
 
 
 @documents_bp.route("/fica/<int:doc_id>/download")
@@ -186,6 +197,9 @@ def review_fica(doc_id, action):
 
     if action == "approve":
         doc.status = "Reviewed"
+        db.session.flush()
+        if document_summary(doc.application)['complete'] and doc.application.status not in {'QA Approved', 'Compliance Approved'}:
+            doc.application.status = 'QA Pending'
         audit_details = f"{label} changed from {old_status} to {doc.status}. {reason}"
         db.session.add(AuditLog(
             user_id=current_user.id,

@@ -3,6 +3,8 @@ from datetime import date
 from flask import Blueprint, render_template, redirect, url_for, request, flash
 from flask_login import login_required, current_user
 from app import db
+from app.services.document_status_service import document_summary
+from app.services.screening_service import ensure_screened
 from app.models import ClientApplication, ClientFicaDocument, ComplianceReview, LapsedPolicy, TelesalesScriptSession, AuditLog
 from app.services.branch_access import scope_by_branch, ensure_branch_access, selected_branch_arg, branch_choices_from_model
 
@@ -49,7 +51,8 @@ def _latest_script(app):
 
 def _fica_summary(app):
     docs = ClientFicaDocument.query.filter_by(application_id=app.id).order_by(ClientFicaDocument.uploaded_at.desc()).all()
-    received = [d for d in docs if d.status != 'Rejected']
+    docs = [d for d in docs if d.status != 'Replaced']
+    received = [d for d in docs if d.status in {'Reviewed', 'Approved'}]
     return docs, len(received)
 
 @qa_bp.route('/')
@@ -63,19 +66,20 @@ def qa_dashboard():
     app_q = scope_by_branch(ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id, selected_branch=branch)
     lead_q = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id, selected_branch=branch)
 
-    qa_statuses = ['Signed', 'QA Review', 'QA Pending', 'Application Started', 'Signing Link Sent', 'Signing Link Prepared']
+    qa_statuses = ['Signed', 'QA Review', 'QA Pending', 'Application Started', 'Signing Link Sent', 'Signing Link Prepared', 'Submitted', 'FICA Review', 'FICA Outstanding', 'QA Approved']
     qa_apps = app_q.filter(ClientApplication.status.in_(qa_statuses)).order_by(ClientApplication.updated_at.desc()).limit(50).all()
     signed_apps = app_q.filter(ClientApplication.signed_at.isnot(None), ClientApplication.status.notin_(['Compliance Approved', 'Compliance Rejected', 'QA Rejected'])).order_by(ClientApplication.signed_at.asc()).limit(50).all()
-    fica_docs = scope_by_branch(ClientFicaDocument.query.join(ClientApplication, ClientFicaDocument.application_id == ClientApplication.id), ClientApplication, branch_col=ClientApplication.branch, agent_col=ClientApplication.agent_id, selected_branch=branch).filter(ClientFicaDocument.status == 'Received')
+    fica_docs = scope_by_branch(ClientFicaDocument.query.join(ClientApplication, ClientFicaDocument.application_id == ClientApplication.id), ClientApplication, branch_col=ClientApplication.branch, agent_col=ClientApplication.agent_id, selected_branch=branch).filter(ClientFicaDocument.status.in_(['Received', 'Needs Review']))
     fica_docs = fica_docs.order_by(ClientFicaDocument.uploaded_at.asc()).limit(50).all()
-    recent_reviews = ComplianceReview.query.order_by(ComplianceReview.created_at.desc()).limit(20).all()
+    review_q = ComplianceReview.query.filter(ComplianceReview.application_id.in_(app_q.with_entities(ClientApplication.id)))
+    recent_reviews = review_q.order_by(ComplianceReview.created_at.desc()).limit(20).all()
 
     stats = {
         'qa_pending': len(qa_apps),
         'signed_pending': len(signed_apps),
         'fica_to_review': len(fica_docs),
-        'approved_today': ComplianceReview.query.filter(ComplianceReview.decision.in_(['QA Approved', 'Compliance Approved']), db.func.date(ComplianceReview.created_at) == date.today()).count(),
-        'rejected_today': ComplianceReview.query.filter(ComplianceReview.decision.in_(['QA Rejected', 'Compliance Rejected']), db.func.date(ComplianceReview.created_at) == date.today()).count(),
+        'approved_today': review_q.filter(ComplianceReview.decision.in_(['QA Approved', 'Compliance Approved']), db.func.date(ComplianceReview.created_at) == date.today()).count(),
+        'rejected_today': review_q.filter(ComplianceReview.decision.in_(['QA Rejected', 'Compliance Rejected']), db.func.date(ComplianceReview.created_at) == date.today()).count(),
     }
     branches = branch_choices_from_model(db, ClientApplication)
     return render_template('qa/dashboard.html', qa_apps=qa_apps, signed_apps=signed_apps, fica_docs=fica_docs, recent_reviews=recent_reviews, stats=stats, branches=branches, active_branch=branch)
@@ -94,12 +98,22 @@ def review_application(app_id):
 
     if request.method == 'POST':
         decision = request.form.get('decision') or 'QA Approved'
+        if decision not in {'QA Approved', 'QA Rejected', 'Compliance Approved', 'Compliance Rejected'}:
+            flash('Invalid review decision.', 'danger')
+            return redirect(url_for('qa.review_application', app_id=app.id))
         checked = {key: (request.form.get(key) == 'on') for key, _ in QA_CHECKLIST}
         score = round(sum(1 for ok in checked.values() if ok) / len(QA_CHECKLIST) * 100)
         notes = request.form.get('notes') or ''
         if decision in {'QA Approved', 'Compliance Approved'} and score < 100:
             flash('Approval blocked: all QA checklist items must be ticked before approving.', 'danger')
             return redirect(url_for('qa.review_application', app_id=app.id))
+
+        if decision in {'QA Approved', 'Compliance Approved'}:
+            summary = document_summary(app)
+            screened, errors = ensure_screened(app)
+            if not summary['complete'] or not screened:
+                flash('Approval blocked: complete and approve all required documents and the employee FIC check first. ' + '; '.join(errors), 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
 
         review = ComplianceReview(
             application_id=app.id,
@@ -122,7 +136,7 @@ def review_application(app_id):
     checklist_defaults = {key: False for key, _ in QA_CHECKLIST}
     if app.signed_at:
         checklist_defaults['signature_complete'] = True
-    if received_count > 0:
+    if all(row['status'] == 'Approved' for row in document_summary(app)['rows'] if row['key'] in document_summary(app)['required_fica_types']):
         checklist_defaults['fica_complete'] = True
     if script and script.status == 'Completed':
         for key in ['popia_confirmed', 'product_explained', 'premium_confirmed', 'waiting_periods', 'debit_order', 'contact_details']:
@@ -135,9 +149,15 @@ def review_fica(doc_id, decision):
     if not _is_qa_user():
         flash('Only managers/compliance users can access FICA review.', 'danger')
         return redirect(url_for('main.dashboard'))
+    if decision not in {'approve', 'reject'}:
+        from flask import abort
+        abort(400)
     doc = ClientFicaDocument.query.get_or_404(doc_id)
     ensure_branch_access(doc.application, agent_attr='agent_id')
     doc.status = 'Reviewed' if decision == 'approve' else 'Rejected'
+    db.session.flush()
+    if document_summary(doc.application)['complete'] and doc.application.status not in {'QA Approved', 'Compliance Approved'}:
+        doc.application.status = 'QA Pending'
     db.session.add(AuditLog(user_id=current_user.id, action=f'FICA {doc.status}', entity_type='ClientFicaDocument', entity_id=str(doc.id), details=doc.original_filename or doc.document_type))
     db.session.commit()
     flash(f'FICA document marked {doc.status}.', 'success')

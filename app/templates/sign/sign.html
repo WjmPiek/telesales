@@ -24,7 +24,7 @@
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
     <div class="mb-3">
-      {% for category, message in messages %}
+      {% for category, message in messages if message != 'Document signed and saved.' %}
         <div class="alert alert-{{ 'danger' if category == 'danger' else category }} mb-2">{{ message }}</div>
       {% endfor %}
     </div>

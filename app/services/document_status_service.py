@@ -17,6 +17,9 @@ FICA_LABELS = {
 }
 
 
+STAFF_UPLOAD_LABELS = {**FICA_LABELS, **dict(SIGNATURE_DOCUMENTS), "fic_evidence": "FIC screening screenshot", "other": "Other supporting document"}
+
+
 def _digits(value):
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
@@ -49,16 +52,19 @@ def document_summary(application):
     rows = []
     for key, label in SIGNATURE_DOCUMENTS:
         if key=="cdd" and application.signed_at and key not in signed_types:continue
+        manual = next((d for d in fica_docs if d.document_type == key and d.status != 'Replaced'), None)
         is_signed = key in complete_types
+        manual_approved = manual and manual.status in {'Reviewed', 'Approved'}
         rows.append({
-            "group": "Signature",
+            "group": "FICA" if manual and not is_signed else "Signature",
             "key": key,
             "label": label,
             "required": True,
-            "status": "Signed" if is_signed else "Missing",
+            "status": "Signed" if is_signed else ("Approved" if manual_approved else ("Rejected" if manual and manual.status == "Rejected" else "Needs Review" if manual else "Missing")),
             "badge": "success" if is_signed else "danger",
             "signed_at": signed_types[key].signed_at if is_signed else None,
-            "document": signed_types.get(key),
+            "document": signed_types.get(key) if is_signed else manual,
+            "uploaded_at": manual.uploaded_at if manual else None,
         })
 
     by_type = {}
@@ -90,7 +96,7 @@ def document_summary(application):
 
     # Show extra uploaded FICA documents that are not currently required, so nothing is hidden.
     for key, docs in by_type.items():
-        if key in required_fica_types(application):
+        if key in required_fica_types(application) or key in dict(SIGNATURE_DOCUMENTS):
             continue
         latest = docs[0]
         rows.append({

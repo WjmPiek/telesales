@@ -49,6 +49,44 @@ class ApplicationFlowTests(unittest.TestCase):
     def tearDown(self):
         db.session.remove(); db.drop_all(); self.ctx.pop(); self.tmp.cleanup()
 
+    def test_upload_duplicate_rejected_and_audited(self):
+        from app.models import ClientFicaDocument, AuditLog
+        payload=b'%PDF-1.4 fictional manual document'
+        response=self.client.post(f'/documents/application/{self.record_id}', data={'document_type':'application','file':(io.BytesIO(payload),'manual.pdf')})
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(ClientFicaDocument.query.count(),1)
+        self.assertEqual(ClientStoredFile.query.count(),1)
+        response=self.client.post(f'/documents/application/{self.record_id}', data={'document_type':'application','file':(io.BytesIO(payload),'renamed.pdf')})
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(ClientFicaDocument.query.count(),1)
+        self.assertEqual(ClientStoredFile.query.count(),1)
+        self.assertEqual(AuditLog.query.filter_by(action='Duplicate upload rejected').count(),1)
+        from app.services.document_status_service import document_summary
+        row=next(r for r in document_summary(self.record)['rows'] if r['key']=='application')
+        self.assertEqual(row['status'],'Needs Review')
+        self.client.post(f'/documents/fica/{ClientFicaDocument.query.one().id}/approve')
+        row=next(r for r in document_summary(self.record)['rows'] if r['key']=='application')
+        self.assertEqual(row['status'],'Approved')
+
+    def test_qa_missing_documents_cannot_be_checkbox_approved(self):
+        from app.routes.qa import QA_CHECKLIST
+        from app.models import ComplianceReview
+        data={key:'on' for key,label in QA_CHECKLIST};data['decision']='QA Approved'
+        self.assertEqual(self.client.post(f'/qa/application/{self.record_id}',data=data).status_code,302)
+        self.assertEqual(ComplianceReview.query.count(),0)
+        self.assertEqual(self.client.get(f'/qa/application/{self.record_id}').status_code,200)
+        self.assertEqual(self.client.get('/qa/').status_code,200)
+
+    def test_live_performance_and_visible_search(self):
+        response=self.client.get('/wallboard/data')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json['sales_today'],1)
+        self.assertTrue(any(a['sales']==1 for a in response.json['agents']))
+        response=self.client.get('/client-files/?id_number=8001015009087')
+        self.assertEqual(response.status_code,200)
+        self.assertIn(b'TEST-ONLY',response.data)
+        self.assertIn(b'Search clients by main member ID',response.data)
+
     def test_popia_choices_update_lists_and_preserve_other_blocks(self):
         from app.services.marketing_consent import apply_consent, consent_value, telephone_blocked
         from app.services.communication_service import preference_for, contact_hash, normalize_phone
