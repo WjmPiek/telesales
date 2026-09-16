@@ -62,7 +62,7 @@ def _send_rejected_document_email(app, rejected_labels, reason=None):
         "Only the document(s) listed above need to be resent.\n\n"
         "Thank you.\nMartin's Funerals"
     )
-    sent = send_email(app.email, "Martin's Funerals document rejected - please resend", body, [])
+    sent = send_email(app.email, "Martin's Funerals document rejected - please resend", body, [], application_id=app.id)
     return sent, None
 
 
@@ -263,12 +263,14 @@ def resend_missing(app_id, channel):
         if not app.email:
             flash("This application has no email address.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
-        sent = send_email(app.email, "Martin's Funerals missing documents", body, [])
+        sent = send_email(app.email, "Martin's Funerals missing documents", body, [], application_id=app.id)
     elif channel == "whatsapp":
         if not app.cell_number:
             flash("This application has no cellphone number.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
         sent = send_whatsapp_message(app.cell_number, body)
+        from app.services.conversation_history import record_communication
+        record_communication('WhatsApp',body,'Sent' if sent else 'Failed',application_id=app.id)
     else:
         abort(404)
 

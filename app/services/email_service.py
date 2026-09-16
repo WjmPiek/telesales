@@ -7,7 +7,12 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 
 
-def send_email(to_email, subject, body, attachments=None, html_body=None):
+def send_email(to_email, subject, body, attachments=None, html_body=None, application_id=None, policy_id=None):
+    def outcome(ok):
+        if application_id or policy_id:
+            from app.services.conversation_history import record_communication
+            record_communication('Email',body,'Accepted by mail server' if ok else 'Failed',application_id=application_id,policy_id=policy_id,subject=subject,attachments=attachments)
+        return ok
     host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
     # A different mail provider must have its own credentials; never send Gmail credentials to it.
     legacy_gmail = host.lower() == "smtp.gmail.com"
@@ -16,7 +21,7 @@ def send_email(to_email, subject, body, attachments=None, html_body=None):
     mail_from = os.getenv("MAIL_FROM", user or "no-reply@example.com")
     if not to_email or not user or not password:
         logging.getLogger(__name__).warning("Email not sent: SMTP credentials are not configured")
-        return False
+        return outcome(False)
 
     msg = EmailMessage()
     msg["From"] = mail_from
@@ -54,11 +59,11 @@ def send_email(to_email, subject, body, attachments=None, html_body=None):
                 smtp.ehlo()
             smtp.login(user, password)
             refused = smtp.send_message(msg)
-        return not bool(refused)
+        return outcome(not bool(refused))
     except (smtplib.SMTPException, OSError, ValueError) as exc:
         # Do not log email bodies, signing links or provider responses containing addresses.
         logging.getLogger(__name__).warning("Email delivery failed (%s)", type(exc).__name__)
-        return False
+        return outcome(False)
 
 
 def signing_email_html(app_obj, link, body):

@@ -1029,9 +1029,12 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     method = (delivery_method or "email").lower()
     sent = False
     if method in {"email", "sms_email", "whatsapp_email"} and app_obj.email:
-        sent = send_email(app_obj.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(app_obj, link, body)) or sent
+        sent = send_email(app_obj.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(app_obj, link, body), application_id=app_obj.id) or sent
     if method in {"whatsapp", "whatsapp_email"} and app_obj.cell_number:
-        sent = send_whatsapp_message(app_obj.cell_number, body) or sent
+        wa_sent = send_whatsapp_message(app_obj.cell_number, body)
+        from app.services.conversation_history import record_communication
+        record_communication('WhatsApp',body,'Sent' if wa_sent else 'Failed',application_id=app_obj.id)
+        sent = wa_sent or sent
     if method == "sms":
         current_app.logger.info("SMS selected for signing link, but no SMS provider is configured.")
     app_obj.status = "Signing Link Sent" if sent else "Signing Link Prepared"

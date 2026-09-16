@@ -280,7 +280,7 @@ def send_sign_link(app_id):
         "No documents are attached to this email. Your documents are available only inside the secure signing link.\n\n"
         "The link can only be used once. After signing it will be deactivated."
     )
-    sent = send_email(a.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(a, link, body))
+    sent = send_email(a.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(a, link, body), application_id=a.id)
     a.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
     flash("Signing email accepted for delivery." if sent else "Email was not sent. Check the email configuration and retry.", "success" if sent else "danger")
@@ -322,6 +322,9 @@ def send_sign_whatsapp(app_id):
 
     phone = app_obj.cell_number
     result = send_whatsapp_text(phone, message)
+    from app.services.conversation_history import record_communication
+    record_communication('WhatsApp',message,'Sent' if result.ok else 'Failed',application_id=app_obj.id)
+    db.session.commit()
 
     if result.ok:
         flash("WhatsApp signing link sent.", "success")
@@ -421,16 +424,24 @@ def download_document(app_id, doc_type):
 
 @applications_bp.route('/<int:app_id>/screening', methods=['GET','POST'])
 @login_required
-@permission_required('applications.send_signing')
+@permission_required('applications.view')
 def screening_review(app_id):
     from app.models import ApplicationScreening, ClientStoredFile, AuditLog
     a=ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(a,agent_attr='agent_id')
     screening=latest_screening(a)
     if request.method=='POST':
-        if request.form.get('action')=='search':
-            ok,errors=ensure_screened(a,force=True)
-            flash('FIC search completed with no results.' if ok else '; '.join(errors),'success' if ok else 'warning')
+        if request.form.get('action')=='upload':
+            from app.services.screening_service import save_employee_check
+            from datetime import timedelta
+            try:
+                if request.form.get('confirmed')!='yes':raise ValueError('Confirm that you performed the FIC searches for this client.')
+                checked=datetime.fromisoformat(request.form.get('checked_at',''))-timedelta(hours=2)
+                if checked.tzinfo is not None:raise ValueError('Use the South African local date and time.')
+                save_employee_check(a,request.files.getlist('screenshots'),request.form.get('outcome'),(request.form.get('notes') or '').strip(),checked,current_user.id)
+                db.session.commit();flash('FIC check and screenshots saved with the application.','success')
+            except (ValueError,TypeError) as exc:
+                db.session.rollback();flash(str(exc),'danger')
         elif request.form.get('action')=='review':
             if not _is_admin():abort(403)
             if not screening or screening.status!='Needs review' or str(screening.id)!=request.form.get('screening_id'):abort(409)

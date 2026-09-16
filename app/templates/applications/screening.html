@@ -1,17 +1,18 @@
 {% extends 'base.html' %}{% block content %}
-<h1 class="h3">FIC screening - {{app.application_ref}}</h1>
-<p>{{app.first_names}} {{app.surname}} · ID / Passport: {{app.id_number}}</p>
-<p>The official FIC person search is run separately for the ID/passport and full name before a signing link is sent. A search result is not identity verification or a final sanctions determination.</p>
-<a href="https://tfs.fic.gov.za/Pages/Search" target="_blank" rel="noopener">Open official FIC search (persons and entities)</a>
-{% if screening %}
-<div class="card card-body my-3"><h2 class="h5">{{screening.status}}</h2><p>Search time (UTC): {{screening.checked_at}}</p>
-{% for file in evidence %}<a class="my-1" target="_blank" rel="noopener" href="{{url_for('client_files.stored_document',file_id=file.id)}}">{{file.relative_path}}</a>{% endfor %}
-{% for search in results %}<h3 class="h6 mt-3">{{search.search|upper}} search: {{search.query}}</h3><p>{{search.results|length}} possible result(s)</p>
-{% if search.results %}<div class="table-responsive"><table class="table"><thead><tr><th>Name</th><th>ID</th><th>Date of birth</th><th>Nationality</th></tr></thead><tbody>{% for row in search.results %}<tr><td>{{row.get('name','')}}</td><td>{{row.get('idNumber','')}}</td><td>{{row.get('dateOfBirth','')}}</td><td>{{row.get('nationality','')}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}{% endfor %}
-{% if screening.reviewed_at %}<p>Staff review (UTC): {{screening.reviewed_at}} · {{screening.review_notes}}</p>{% endif %}</div>
-{% if screening.status=='Needs review' and is_admin %}
-<form method="post" class="card card-body my-3"><input type="hidden" name="action" value="review"><input type="hidden" name="screening_id" value="{{screening.id}}"><label for="notes">Review findings and reason the signing link may proceed</label><textarea id="notes" name="notes" required minlength="20" maxlength="3000" class="form-control"></textarea><label class="mt-3"><input type="checkbox" name="confirmed" value="yes" required> I have reviewed the saved evidence and confirmed that these results do not identify this client as a sanctioned person.</label><button class="btn btn-primary mt-3">Record staff review</button></form>
-{% endif %}{% endif %}
-<form method="post"><input type="hidden" name="action" value="search"><button class="btn btn-outline-primary">Run a fresh FIC search</button></form>
-<a class="d-block mt-3" href="{{url_for('applications.view_application',app_id=app.id)}}">Back to application</a>
-{% endblock %}
+<h1 class="h3">Employee FIC check — {{app.application_ref}}</h1>
+<p><strong>{{app.first_names}} {{app.surname}}</strong> · ID / Passport: {{app.id_number}}</p>
+<ol><li><a href="https://tfs.fic.gov.za/Pages/Search" target="_blank" rel="noopener">Open the official FIC search</a>.</li><li>Search Person using the ID number and also the full name. Review the results; a failed search is not a clear result.</li><li>Save screenshots showing the search details and results, then upload them below.</li></ol>
+<p>The evidence is saved privately with this application. A possible match requires administrator review before the application can be sent.</p>
+{% if screening %}<div class="card card-body my-3"><h2 class="h5">{{screening.status}}</h2><p>Check time (UTC): {{screening.checked_at}}</p>
+{% for file in evidence %}<a target="_blank" rel="noopener" href="{{url_for('client_files.stored_document',file_id=file.id)}}">{{file.relative_path}}</a>{% endfor %}
+{% for search in results %}<p>{{search.get('notes','')}}{% if search.get('employee_id') %} · Recorded by employee #{{search.employee_id}}{% endif %}</p>{% for row in search.get('results',[]) %}<p>{{row.get('name','')}} · {{row.get('idNumber','')}}</p>{% endfor %}{% endfor %}
+{% if screening.reviewed_at %}<p>Administrator review (UTC): {{screening.reviewed_at}} · {{screening.review_notes}}</p>{% endif %}</div>
+{% if screening.status=='Needs review' and is_admin %}<form method="post" class="card card-body my-3"><input type="hidden" name="action" value="review"><input type="hidden" name="screening_id" value="{{screening.id}}"><label for="review-notes">Review findings and reason the signing link may proceed</label><textarea id="review-notes" name="notes" required minlength="20" maxlength="3000" class="form-control"></textarea><label class="mt-3"><input type="checkbox" name="confirmed" value="yes" required> I reviewed the evidence and confirmed that the results do not identify this client as a sanctioned person.</label><button class="btn btn-primary mt-3">Record administrator review</button></form>{% endif %}{% endif %}
+<form method="post" enctype="multipart/form-data" class="card card-body my-3"><input type="hidden" name="action" value="upload">
+<h2 class="h5">Record a completed check</h2>
+<label for="checked-at">Check date and time (South Africa)</label><input id="checked-at" class="form-control mb-3" name="checked_at" type="datetime-local" required>
+<label for="outcome">Result</label><select id="outcome" class="form-select mb-3" name="outcome" required><option value="">Select result</option><option value="no_match">No matching person found</option><option value="possible_match">Possible match — administrator must review</option></select>
+<label for="notes">Searches performed and findings</label><textarea id="notes" class="form-control mb-3" name="notes" minlength="10" maxlength="3000" required></textarea>
+<label for="screenshots">Result screenshots (PNG/JPEG, up to 5 files, 10 MB each)</label><input id="screenshots" class="form-control mb-3" type="file" name="screenshots" accept="image/png,image/jpeg" multiple required>
+<label><input type="checkbox" name="confirmed" value="yes" required> I performed the ID and name searches for this client and attached the result evidence.</label><button class="btn btn-primary mt-3">Save FIC check and screenshots</button></form>
+<a href="{{url_for('applications.view_application',app_id=app.id)}}">Back to application</a>{% endblock %}

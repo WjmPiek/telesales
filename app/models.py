@@ -1021,3 +1021,21 @@ class ApplicationScreening(db.Model):
     reviewed_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     reviewed_at = db.Column(db.DateTime)
     review_notes = db.Column(db.Text)
+
+
+class ClientCommunication(db.Model):
+    __tablename__ = 'client_communications'
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey('client_applications.id', ondelete='CASCADE'), index=True)
+    lapsed_policy_id = db.Column(db.Integer, db.ForeignKey('lapsed_policies.id', ondelete='CASCADE'), index=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    channel = db.Column(db.String(20), nullable=False)
+    direction = db.Column(db.String(20), nullable=False)
+    subject = db.Column(db.String(255))
+    body = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(40), nullable=False)
+    source = db.Column(db.String(30), nullable=False, default='system')
+    attachments_json = db.Column(db.Text, nullable=False, default='[]')
+    occurred_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    actor = db.relationship('User')

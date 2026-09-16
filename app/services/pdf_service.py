@@ -272,7 +272,16 @@ def _latest_signature(app_obj):
 def _draw_signature(c, sig_path, x, y, w=95, h=28):
     if sig_path and os.path.exists(sig_path):
         try:
-            c.drawImage(ImageReader(sig_path), x, y, width=w, height=h, preserveAspectRatio=True, mask="auto")
+            from PIL import Image, ImageChops
+            image=Image.open(sig_path).convert('RGBA')
+            white=Image.new('RGBA',image.size,'white');white.alpha_composite(image)
+            ink=ImageChops.difference(white.convert('RGB'),Image.new('RGB',image.size,'white')).convert('L').point(lambda v:255 if v>35 else 0)
+            bounds=ink.getbbox()
+            if not bounds:return
+            image=image.crop(bounds)
+            scale=min(w/image.width,h/image.height)
+            sw,sh=image.width*scale,image.height*scale
+            c.drawImage(ImageReader(image), x+(w-sw)/2, y+(h-sh)/2, width=sw, height=sh, mask="auto")
         except Exception:
             pass
 
@@ -381,6 +390,21 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     for page in reader.pages:
         writer.add_page(page)
     _append_policy_terms(writer, template_choice)
+    # Move the original narrow signature line into a full-height signing band.
+    from pypdf import Transformation
+    terms_page=writer.pages[1]
+    packet=io.BytesIO();clean=canvas.Canvas(packet,pagesize=A4);clean.setFillColorRGB(1,1,1)
+    if template_choice=='member_product':clean.rect(304,A4[1]-437,270,10,fill=1,stroke=0)
+    else:clean.rect(13,A4[1]-833,280,14,fill=1,stroke=0)
+    clean.save();packet.seek(0);terms_page.merge_page(PdfReader(packet).pages[0])
+    terms_page.add_transformation(Transformation().scale(1,0.93).translate(0,A4[1]*0.07))
+    packet=io.BytesIO();band=canvas.Canvas(packet,pagesize=A4);band.setFont('Helvetica-Bold',9)
+    band.drawString(30,A4[1]-788,'Main member signature')
+    band.line(30,A4[1]-828,280,A4[1]-828)
+    if 'debit' in (app_obj.payment_method or '').lower() or any((app_obj.account_number,app_obj.account_holder,app_obj.bank_name)):
+        band.drawString(320,A4[1]-788,"Account holder's signature — debit order")
+        band.line(320,A4[1]-828,570,A4[1]-828)
+    band.save();packet.seek(0);terms_page.merge_page(PdfReader(packet).pages[0])
     _add_terms_page(writer, app_obj, None)
     from app.services.signature_fields import application_fields, signature_rows
     fields, records = application_fields(app_obj), signature_rows(app_obj)

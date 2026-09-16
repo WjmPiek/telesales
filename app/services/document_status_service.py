@@ -43,7 +43,7 @@ def document_summary(application):
     signed_types = {row.document_type: row for row in signed_rows}
     from app.services.signature_fields import signed_documents
     complete_types=signed_documents(application)
-    if application.signed_at and "application" in signed_types:complete_types.add("application")
+    if application.signed_at and application.signed_pdf_path and ("application" in signed_types or "application:principal" in signed_types):complete_types.add("application")
     if "application" in complete_types and "application" not in signed_types:
         signed_types["application"]=signed_types.get("application:principal")
     fica_docs = ClientFicaDocument.query.filter_by(application_id=application.id).order_by(ClientFicaDocument.uploaded_at.desc()).all()
