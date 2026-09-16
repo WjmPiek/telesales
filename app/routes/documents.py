@@ -159,6 +159,8 @@ def application_documents(app_id):
             previous.status = "Replaced"
         doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status=validation_status, uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
         db.session.add(doc)
+        if app.status not in {'QA Approved', 'Compliance Approved', 'QA Rejected', 'Compliance Rejected', 'Signed'}:
+            app.status = 'FICA Review'
         db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{FICA_LABELS.get(doc_type, doc_type)} uploaded by staff: {safe}; Status: {validation_status}; {validation_notes}"))
         db.session.commit()
         flash(f"Document uploaded. Status: {validation_status}. {validation_notes}", "warning" if validation_status == "Needs Review" else "danger")
@@ -195,6 +197,9 @@ def review_fica(doc_id, action):
 
     if action == "approve":
         doc.status = "Reviewed"
+        db.session.flush()
+        if document_summary(doc.application)['complete'] and doc.application.status not in {'QA Approved', 'Compliance Approved'}:
+            doc.application.status = 'QA Pending'
         audit_details = f"{label} changed from {old_status} to {doc.status}. {reason}"
         db.session.add(AuditLog(
             user_id=current_user.id,

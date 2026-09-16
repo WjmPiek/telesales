@@ -155,6 +155,9 @@ def review_fica(doc_id, decision):
     doc = ClientFicaDocument.query.get_or_404(doc_id)
     ensure_branch_access(doc.application, agent_attr='agent_id')
     doc.status = 'Reviewed' if decision == 'approve' else 'Rejected'
+    db.session.flush()
+    if document_summary(doc.application)['complete'] and doc.application.status not in {'QA Approved', 'Compliance Approved'}:
+        doc.application.status = 'QA Pending'
     db.session.add(AuditLog(user_id=current_user.id, action=f'FICA {doc.status}', entity_type='ClientFicaDocument', entity_id=str(doc.id), details=doc.original_filename or doc.document_type))
     db.session.commit()
     flash(f'FICA document marked {doc.status}.', 'success')
