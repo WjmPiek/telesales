@@ -115,6 +115,7 @@ class WhatsAppProcessTests(unittest.TestCase):
 
     def test_scheduled_sender_saves_each_recipient(self):
         recipient = self._campaign_recipient()
+        recipient.campaign.send_email = True  # Legacy campaigns must never email.
         recipient.campaign.status = "Scheduled"
         recipient.campaign.scheduled_at = __import__('datetime').datetime.utcnow()
         recipient.campaign.queue_status = "queued"
@@ -128,6 +129,39 @@ class WhatsAppProcessTests(unittest.TestCase):
             self.assertEqual(process_scheduled_campaigns()["sent"], 1)
             self.assertEqual(process_scheduled_campaigns()["processed"], 0)
             self.assertEqual(sender.call_count, 1)
+            self.assertEqual(sender.call_args.args[2], "whatsapp")
+
+    def test_campaign_email_delivery_is_blocked(self):
+        recipient = self._campaign_recipient()
+        from app.routes.communications import _send_to_recipient
+        with patch("app.services.email_service.send_email") as email:
+            ok, error = _send_to_recipient(recipient.campaign, recipient, "email")
+        self.assertFalse(ok)
+        self.assertIn("WhatsApp only", error)
+        email.assert_not_called()
+
+    def test_follow_up_forces_whatsapp_and_skips_legacy_email(self):
+        from app.models import CommunicationFollowUp
+        from datetime import datetime
+        recipient = self._campaign_recipient()
+        recipient.campaign.created_by.role.name = "Super Admin"
+        db.session.commit()
+        user_id, campaign_id, recipient_id = recipient.campaign.created_by_id, recipient.campaign_id, recipient.id
+        with self.client.session_transaction() as session:
+            session['_user_id'] = str(user_id)
+            session['_fresh'] = True
+        response = self.client.post(f"/communications/{campaign_id}/schedule-follow-up",
+                                    data={"channel": "email", "days": "3"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(CommunicationFollowUp.query.one().channel, "whatsapp")
+        legacy = CommunicationFollowUp(campaign_id=campaign_id, recipient_id=recipient_id,
+                                       due_at=datetime.utcnow(), channel="email", status="Pending")
+        db.session.add(legacy); db.session.commit()
+        with patch("app.routes.communications._send_to_recipient") as sender:
+            result = self.app.test_cli_runner().invoke(args=['process-communication-followups'])
+        self.assertEqual(result.exit_code, 0, result.output)
+        sender.assert_not_called()
+        self.assertEqual(legacy.status, "Skipped")
 
     def test_button_sender_must_own_recipient(self):
         recipient = self._campaign_recipient()

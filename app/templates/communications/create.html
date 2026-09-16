@@ -44,7 +44,7 @@
 </div>
 
 <div class="mt-4 border rounded-4 p-3 bg-light">
-<div class="fw-bold mb-2">Campaign delivery</div><div class="top-fields"><div><label class="form-label">Audience</label><select class="form-select" name="audience_type" id="audienceType"><option value="group">Group of clients</option><option value="individual">One individual client</option></select></div><div><label class="form-label">Email copy</label><select class="form-select" name="send_email"><option value="">WhatsApp only</option><option value="1">WhatsApp and email</option></select></div></div>
+<div class="fw-bold mb-2">Campaign delivery</div><div class="top-fields"><div><label class="form-label">Audience</label><select class="form-select" name="audience_type" id="audienceType"><option value="group">Group of clients</option><option value="individual">One individual client</option></select></div><div><label class="form-label">Delivery</label><div class="form-control-plaintext">WhatsApp only</div></div></div>
 <div id="individualFields" class="top-fields mt-3" style="display:none"><input class="form-control" name="individual_first_name" placeholder="Client name"><input class="form-control" name="individual_surname" placeholder="Surname"><input class="form-control" name="individual_phone" placeholder="0676200748"></div>
 </div>
 <input type="hidden" name="template_id" value="{{ selected_template.id if selected_template else '' }}"><input type="hidden" name="subject" value="Martin's Funerals policy offer"><input type="hidden" name="send_whatsapp" value="1"><input type="hidden" name="template_mode" value="{{ 'existing' if selected_template else 'create' }}">
