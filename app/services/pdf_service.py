@@ -294,183 +294,13 @@ def _merge_template(template_path, overlay_pdf_path, out_path):
 
 
 def _make_overlay_single_family(app_obj, overlay_path, sig_path=None):
-    c = canvas.Canvas(overlay_path, pagesize=A4)
-    # The new CorelDRAW SVG templates are A4. Existing overlay coordinates were
-    # built for 612 x 792, so scale them proportionally to A4 to keep each value
-    # positioned beside its field heading instead of drifting on the new template.
-    c.scale(A4[0] / 612.0, A4[1] / 792.0)
-
-    # Top section
-    _draw(c, app_obj.agent_name, 46, 647, 7, 24)
-    _draw(c, app_obj.agent_code, 232, 647, 7, 18)
-    _draw(c, app_obj.policy_number or app_obj.application_ref, 445, 647, 8, 22, True)
-
-    _draw(c, _money(app_obj.monthly_premium), 506, 744, 8, 12)
-    _draw(c, _money(app_obj.extended_premium), 506, 724, 8, 12)
-    _draw(c, _money(app_obj.total_payment or app_obj.monthly_premium), 506, 704, 8, 12)
-
-    # Policyholder
-    _draw(c, app_obj.surname, 65, 610, 7, 23)
-    _draw(c, app_obj.first_names, 318, 610, 7, 23)
-    _draw(c, app_obj.title, 35, 595, 7, 10)
-    _draw(c, app_obj.id_number, 218, 595, 7, 20)
-    _draw(c, _date_boxes(app_obj.date_of_birth), 502, 595, 7, 8)
-    _draw(c, app_obj.spouse_surname, 87, 580, 7, 23)
-    _draw(c, app_obj.spouse_first_names, 319, 580, 7, 23)
-    _draw(c, app_obj.spouse_title, 35, 565, 7, 10)
-    _draw(c, app_obj.spouse_id_number, 218, 565, 7, 20)
-    _draw(c, _date_boxes(app_obj.spouse_date_of_birth), 502, 565, 7, 8)
-    _draw(c, app_obj.residential_address or app_obj.address, 105, 549, 6, 43)
-    _draw(c, app_obj.postal_address, 321, 549, 6, 43)
-    _draw(c, app_obj.residential_postal_code, 217, 535, 7, 8)
-    _draw(c, app_obj.postal_code, 512, 535, 7, 8)
-    _draw(c, app_obj.home_tel, 86, 520, 7, 15)
-    _draw(c, app_obj.work_tel, 282, 520, 7, 15)
-    _draw(c, app_obj.cell_number, 456, 520, 7, 15)
-    _draw(c, app_obj.email, 40, 505, 7, 50)
-    _draw(c, _date_boxes(app_obj.inception_date), 83, 489, 7, 8)
-    _draw(c, _money(app_obj.monthly_premium), 506, 489, 7, 12)
-
-    # Children
-    y = 456
-    for i, r in enumerate(_rows(app_obj.dependents_json)[:6]):
-        _draw(c, r.get("full_name"), 45, y - i*16, 6, 35)
-        _draw(c, r.get("relationship"), 330, y - i*16, 6, 16)
-        _draw(c, r.get("id_or_dob"), 450, y - i*16, 6, 24)
-
-    # Extended family
-    y = 349
-    for i, r in enumerate(_rows(app_obj.extended_family_json)[:4]):
-        yy = y - i*17
-        _draw(c, r.get("full_name"), 45, yy, 6, 32)
-        _draw(c, r.get("relationship"), 190, yy, 6, 14)
-        _draw(c, r.get("id_or_dob"), 324, yy, 6, 18)
-        _draw(c, r.get("cover"), 465, yy, 6, 10)
-        _draw(c, r.get("premium"), 530, yy, 6, 10)
-
-    # Beneficiary
-    _draw(c, app_obj.beneficiary_full_names, 45, 240, 7, 45)
-    _draw(c, app_obj.beneficiary_relationship, 464, 240, 7, 18)
-    _draw(c, app_obj.beneficiary_title, 35, 225, 7, 10)
-    _draw(c, app_obj.beneficiary_id_number, 218, 225, 7, 18)
-    _draw(c, _date_boxes(app_obj.beneficiary_date_of_birth), 502, 225, 7, 8)
-
-    # Payment method
-    method = (_safe(app_obj.payment_method)).lower()
-    _draw_checkbox(c, "cash" in method, 167, 209)
-    _draw_checkbox(c, "debit" in method, 225, 209)
-    _draw_checkbox(c, "persal" in method, 289, 209)
-    _draw(c, _date_boxes(app_obj.first_deduction_date), 487, 209, 7, 8)
-
-    # Debit order
-    day = _safe(app_obj.debit_day)
-    for label, x in [("1st", 425), ("5th", 453), ("15th", 480), ("20th", 510), ("25th", 540), ("30th", 570)]:
-        _draw_checkbox(c, label == day, x, 194)
-    _draw(c, app_obj.bank_name, 35, 176, 6, 22)
-    _draw(c, app_obj.branch_name, 181, 176, 6, 22)
-    _draw(c, app_obj.branch_code, 344, 176, 6, 10)
-    _draw(c, app_obj.bank_town, 486, 176, 6, 12)
-    _draw(c, app_obj.account_number, 35, 160, 6, 22)
-    _draw(c, app_obj.account_type, 344, 160, 6, 16)
-    _draw(c, app_obj.account_holder, 35, 145, 6, 28)
-    # The client signature is placed in the labelled signature boxes below.
-
-    # Employment
-    _draw(c, app_obj.persal_no, 35, 113, 6, 14)
-    _draw(c, app_obj.employer, 180, 128, 6, 20)
-    _draw(c, _money(app_obj.salary), 495, 128, 6, 12)
-    _draw(c, app_obj.paypoint, 344, 113, 6, 20)
-    _draw(c, _money(app_obj.payroll_premium), 495, 113, 6, 12)
-    _draw(c, app_obj.personal_holder, 35, 98, 6, 25)
-
-    # Signatures at bottom
-    _draw_signature(c, sig_path, 155, 38, 135, 38)  # Account Holder
-    _draw_signature(c, sig_path, 300, 38, 135, 38)  # Policy Holder / Principal Member
-    _draw(c, datetime.utcnow().strftime("%d%m%Y"), 508, 37, 7, 8)
-
-    c.save()
+    from app.services.application_layout import draw_application_overlay
+    draw_application_overlay(app_obj, overlay_path, "single_family", sig_path)
 
 
 def _make_overlay_member_product(app_obj, overlay_path, sig_path=None):
-    c = canvas.Canvas(overlay_path, pagesize=A4)
-    # Scale legacy overlay coordinates to the new A4 SVG-derived template.
-    c.scale(A4[0] / 612.0, A4[1] / 792.0)
-
-    # Top section
-    _draw(c, app_obj.agent_name, 40, 647, 7, 24)
-    _draw(c, app_obj.agent_code, 222, 647, 7, 18)
-    _draw(c, app_obj.policy_number or app_obj.application_ref, 455, 647, 8, 22, True)
-
-    # Principal member
-    _draw(c, app_obj.surname, 64, 612, 7, 23)
-    _draw(c, app_obj.first_names, 318, 612, 7, 23)
-    _draw(c, app_obj.title, 35, 596, 7, 10)
-    _draw(c, app_obj.id_number, 218, 596, 7, 20)
-    _draw(c, _date_boxes(app_obj.date_of_birth), 504, 596, 7, 8)
-    _draw(c, app_obj.residential_address or app_obj.address, 105, 580, 6, 43)
-    _draw(c, app_obj.postal_address, 321, 580, 6, 43)
-    _draw(c, app_obj.residential_postal_code, 217, 566, 7, 8)
-    _draw(c, app_obj.postal_code, 512, 566, 7, 8)
-    _draw(c, app_obj.home_tel, 86, 550, 7, 15)
-    _draw(c, app_obj.work_tel, 282, 550, 7, 15)
-    _draw(c, app_obj.cell_number, 456, 550, 7, 15)
-    _draw(c, app_obj.email, 40, 535, 7, 50)
-    _draw(c, _money(app_obj.monthly_premium), 342, 520, 7, 10)
-    _draw(c, _money(app_obj.cover_amount), 525, 520, 7, 10)
-
-    # Plan choice
-    choice = _safe(app_obj.plan_choice).lower()
-    _draw_checkbox(c, "a" in choice, 166, 504)
-    _draw_checkbox(c, "b" in choice, 229, 504)
-    _draw_checkbox(c, "c" in choice, 292, 504)
-
-    # Product dependants (max 13)
-    y = 469
-    for i, r in enumerate(_rows(app_obj.product_dependents_json)[:13]):
-        yy = y - i*16
-        _draw(c, r.get("full_name"), 46, yy, 6, 35)
-        _draw(c, r.get("relationship"), 330, yy, 6, 16)
-        _draw(c, r.get("id_or_dob"), 448, yy, 6, 24)
-
-    # Beneficiary
-    _draw(c, app_obj.beneficiary_full_names, 45, 242, 7, 45)
-    _draw(c, app_obj.beneficiary_relationship, 465, 242, 7, 18)
-    _draw(c, app_obj.beneficiary_title, 35, 227, 7, 10)
-    _draw(c, app_obj.beneficiary_id_number, 218, 227, 7, 18)
-    _draw(c, _date_boxes(app_obj.beneficiary_date_of_birth), 502, 227, 7, 8)
-
-    # Payment
-    method = (_safe(app_obj.payment_method)).lower()
-    _draw_checkbox(c, "cash" in method, 114, 211)
-    _draw_checkbox(c, "debit" in method, 170, 211)
-    _draw_checkbox(c, "salary" in method or "persal" in method, 247, 211)
-    _draw(c, _date_boxes(app_obj.first_deduction_date), 495, 211, 7, 8)
-
-    # Bank/debit details
-    day = _safe(app_obj.debit_day)
-    for label, x in [("1st", 425), ("5th", 453), ("15th", 480), ("20th", 510), ("25th", 540), ("30th", 570)]:
-        _draw_checkbox(c, label == day, x, 194)
-    _draw(c, app_obj.bank_name, 35, 176, 6, 22)
-    _draw(c, app_obj.branch_name, 324, 176, 6, 22)
-    _draw(c, app_obj.account_number, 35, 161, 6, 22)
-    _draw(c, app_obj.account_type, 324, 161, 6, 16)
-    _draw(c, app_obj.branch_code, 35, 145, 6, 12)
-    _draw(c, app_obj.bank_town, 324, 145, 6, 16)
-    _draw(c, app_obj.account_holder, 35, 130, 6, 28)
-    # The client signature is placed in the labelled signature boxes below.
-
-    # Salary stop order
-    _draw(c, app_obj.employer, 35, 92, 6, 22)
-    _draw(c, app_obj.persal_no, 180, 92, 6, 15)
-    _draw(c, app_obj.department_code, 322, 92, 6, 15)
-    _draw(c, _money(app_obj.payroll_premium), 478, 92, 6, 12)
-
-    # Bottom signatures
-    _draw_signature(c, sig_path, 155, 38, 135, 38)  # Account Holder
-    _draw_signature(c, sig_path, 300, 38, 135, 38)  # Principal Member
-
-    c.save()
-
+    from app.services.application_layout import draw_application_overlay
+    draw_application_overlay(app_obj, overlay_path, "member_product", sig_path)
 
 
 def _append_policy_terms(writer, template_choice="single_family"):
@@ -554,7 +384,8 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
         writer.add_page(page)
     _append_policy_terms(writer, template_choice)
     _add_terms_page(writer, app_obj, sig_path)
-    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"page": 1, "rect": [300, 38, 435, 76]})})
+    from app.services.application_layout import SIGNATURE_RECTS
+    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"page": 1, "rect": SIGNATURE_RECTS[template_choice]})})
     with open(out_path, "wb") as f:
         writer.write(f)
 

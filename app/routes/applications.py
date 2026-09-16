@@ -8,7 +8,7 @@ from itsdangerous import URLSafeTimedSerializer
 from app import db
 from app.models import ClientApplication, PolicyProduct, LapsedPolicy, PolicyProductRule, ApplicationSignature, ClientFicaDocument, DocumentSignature, TelesalesScriptSession
 from app.security import permission_required
-from app.services.email_service import send_email
+from app.services.email_service import send_email, signing_email_html
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.pdf_service import generate_application_pdf, generate_welcome_pack, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.compliance_service import only_digits, format_dob, dob_from_sa_id, is_valid_sa_id, validate_age_limit, classify_product_template, assert_application_rules
@@ -275,7 +275,7 @@ def send_sign_link(app_id):
         "No documents are attached to this email. Your documents are available only inside the secure signing link.\n\n"
         "The link can only be used once. After signing it will be deactivated."
     )
-    sent = send_email(a.email, "Your Martin's Funerals secure signing link", body, [])
+    sent = send_email(a.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(a, link, body))
     a.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
     flash("Signing email accepted for delivery." if sent else "Email was not sent. Check the email configuration and retry.", "success" if sent else "danger")

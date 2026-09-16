@@ -49,6 +49,33 @@ class ApplicationFlowTests(unittest.TestCase):
     def tearDown(self):
         db.session.remove(); db.drop_all(); self.ctx.pop(); self.tmp.cleanup()
 
+    def test_named_email_link_escapes_client_values(self):
+        from app.services.email_service import signing_email_html
+        self.record.first_names = '<Alex & Sam>'
+        link = 'https://example.test/sign/opaque-token'
+        html = signing_email_html(self.record, link, 'Dear client,\n\n' + link)
+        self.assertIn('&lt;Alex &amp; Sam&gt; Test - Online Application</a>', html)
+        self.assertNotIn('<Alex', html)
+        self.assertEqual(html.count(link), 1)
+
+    def test_both_application_templates_keep_full_values_and_signature_target(self):
+        import json
+        from pypdf import PdfReader
+        from app.services.pdf_service import generate_application_pdf
+        from app.services.application_layout import SIGNATURE_RECTS
+        self.record.first_names = 'Alexandra Elizabeth Catherine'
+        self.record.surname = 'Van der Westhuizen'
+        for template in ['single_family', 'member_product']:
+            self.record.form_template = template
+            dest = str(Path(application_folder(self.record)) / (template + '.pdf'))
+            generate_application_pdf(self.record, dest)
+            pdf = PdfReader(dest)
+            self.assertIn(self.record.first_names, pdf.pages[0].extract_text())
+            self.assertIn(self.record.surname, pdf.pages[0].extract_text())
+            target = json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))
+            self.assertEqual(target['rect'], SIGNATURE_RECTS[template])
+            self.assertEqual(len(pdf.pages), 3)
+
     def test_email_failure_is_not_reported_as_sent(self):
         with patch('app.routes.applications.send_email', return_value=False):
             response = self.client.post(f'/applications/{self.record.id}/send-sign-link', follow_redirects=True)
@@ -64,6 +91,8 @@ class ApplicationFlowTests(unittest.TestCase):
             link, sent, errors = _send_script_selected_signing_link(self.record, 'email')
             self.assertTrue(sent); self.assertEqual(errors, [])
             self.assertIn('/sign/', mail.call_args.args[2])
+            self.assertIn('Fictional Test - Online Application</a>', mail.call_args.kwargs['html_body'])
+            self.assertIn('href="' + link + '"', mail.call_args.kwargs['html_body'])
         token = self.record.sign_token
         public = self.app.test_client()
         self.assertEqual(public.get(f'/sign/{token}/document/application').status_code, 403)
