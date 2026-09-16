@@ -22,13 +22,12 @@ def _ensure_lapsed_policy_contact_columns(app):
             if not str(db.engine.url).startswith("postgresql"):
                 return
             statements = [
+                "ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS document_email VARCHAR(255)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS company_name VARCHAR(160)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS id_number VARCHAR(30)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS email_address VARCHAR(255)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS suspense_reason TEXT",
                 "UPDATE lapsed_policies SET company_name = COALESCE(NULLIF(company_name,''), NULLIF(franchise,''), NULLIF(branch,'')) WHERE company_name IS NULL OR company_name = ''",
-                "UPDATE lapsed_policies SET suspense_reason = TRIM(BOTH ', ' FROM CONCAT(CASE WHEN id_number IS NULL OR TRIM(id_number) = '' THEN 'ID number, ' ELSE '' END, CASE WHEN (cell_number IS NULL OR TRIM(cell_number) = '') AND (home_tel IS NULL OR TRIM(home_tel) = '') THEN 'contact number, ' ELSE '' END, CASE WHEN email_address IS NULL OR TRIM(email_address) = '' THEN 'email address, ' ELSE '' END)) WHERE recovery_status NOT IN ('Suspense', 'Opted Out') AND ((id_number IS NULL OR TRIM(id_number) = '') OR ((cell_number IS NULL OR TRIM(cell_number) = '') AND (home_tel IS NULL OR TRIM(home_tel) = '')) OR (email_address IS NULL OR TRIM(email_address) = ''))",
-                "UPDATE lapsed_policies SET recovery_status = 'Suspense', assigned_agent_id = NULL, next_action_date = NULL, comments = CONCAT(COALESCE(comments,''), CASE WHEN COALESCE(comments,'') = '' THEN '' ELSE E'\\n' END, 'SUSPENSE: Missing ', COALESCE(NULLIF(suspense_reason,''),'required contact details'), '. Client cannot be contacted until business client/branch fixes these policy details.') WHERE recovery_status NOT IN ('Suspense', 'Opted Out') AND COALESCE(suspense_reason,'') <> ''",
             ]
             with db.engine.begin() as conn:
                 for stmt in statements:

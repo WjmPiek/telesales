@@ -49,6 +49,37 @@ class ApplicationFlowTests(unittest.TestCase):
     def tearDown(self):
         db.session.remove(); db.drop_all(); self.ctx.pop(); self.tmp.cleanup()
 
+    def test_import_email_is_optional_but_identity_and_phone_are_required(self):
+        from app.routes.recovery import _missing_contact_fields, _policy_missing_fields
+        row={'ID_Number':'8001015009087','Cell_Number':'0821234567','Email Address':''}
+        self.assertEqual(_missing_contact_fields(row)[0],[])
+        self.assertEqual(_policy_missing_fields(LapsedPolicy(id_number=row['ID_Number'],cell_number=row['Cell_Number'],email_address='')),[])
+        row['ID_Number']=''
+        self.assertIn('ID number',_missing_contact_fields(row)[0])
+        row['Cell_Number']=''
+        self.assertIn('contact number',_missing_contact_fields(row)[0])
+
+    def test_email_priority_and_whatsapp_fallback(self):
+        from app.routes.recovery import _send_script_selected_signing_link
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email',return_value=True) as mail, patch('app.routes.recovery.send_whatsapp_message',return_value=True) as wa:
+            self.assertTrue(_send_script_selected_signing_link(self.record,'auto')[1])
+            mail.assert_called_once();wa.assert_not_called()
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email',return_value=False) as mail, patch('app.routes.recovery.send_whatsapp_message',return_value=True) as wa:
+            self.assertTrue(_send_script_selected_signing_link(self.record,'auto')[1])
+            mail.assert_called_once();wa.assert_called_once()
+        self.record.email='';db.session.commit()
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email') as mail, patch('app.routes.recovery.send_whatsapp_message',return_value=True) as wa:
+            self.assertTrue(_send_script_selected_signing_link(self.record,'auto')[1])
+            mail.assert_not_called();wa.assert_called_once()
+
+    def test_document_email_validation_and_optional_blank(self):
+        from app.services.delivery_preferences import receipt_address
+        self.assertEqual(receipt_address({'document_email':'','document_email_confirm':''},self.record),'')
+        with self.assertRaises(ValueError):receipt_address({'document_email':'bad','document_email_confirm':'bad'},self.record)
+        with self.assertRaises(ValueError):receipt_address({'document_email':'copy@example.test','document_email_confirm':'other@example.test'},self.record)
+        self.assertEqual(receipt_address({'document_email':'copy@example.test','document_email_confirm':'copy@example.test'},self.record),'copy@example.test')
+        self.assertEqual(self.record.email,'test@example.test')
+
     def test_upload_duplicate_rejected_and_audited(self):
         from app.models import ClientFicaDocument, AuditLog
         payload=b'%PDF-1.4 fictional manual document'
@@ -260,7 +291,8 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual(len(pdf.pages), 3)
 
     def test_email_failure_is_not_reported_as_sent(self):
-        with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False):
+        with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False), patch('app.routes.applications.send_whatsapp_text') as wa:
+            wa.return_value.ok=False
             response = self.client.post(f'/applications/{self.record.id}/send-sign-link', follow_redirects=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.record.status, 'Signing Link Prepared')
@@ -330,8 +362,10 @@ class ApplicationFlowTests(unittest.TestCase):
                     page = pdf.pages[field['page']-1]
                     self.assertTrue(any(img.image.size == (80,30) for img in page.images))
                 self.assertIn(b'Document signed', public.get(f'/sign/{token}/review/{kind}').data)
-        with patch.dict(os.environ,{'MAIL_DOCUMENTS_TO':self.record.email}), patch('app.routes.signing.send_email', return_value=True) as delivery:
-            response = public.post(f'/sign/{token}',data={'action':'final_submit'})
+        with patch.dict(os.environ,{'MAIL_DOCUMENTS_TO':'copies@example.test'}), patch('app.routes.signing.send_email', return_value=True) as delivery:
+            response = public.post(f'/sign/{token}',data={'action':'final_submit','document_email':'copies@example.test','document_email_confirm':'copies@example.test'})
+            self.assertEqual(delivery.call_args.args[0],'copies@example.test')
+            self.assertEqual(self.record.document_email,'copies@example.test')
             self.assertEqual(delivery.call_count,1)
             self.assertEqual(len(delivery.call_args.args[3]),5)
             self.assertTrue(all(Path(p).exists() for p in delivery.call_args.args[3]))

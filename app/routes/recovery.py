@@ -84,8 +84,6 @@ def _missing_contact_fields(data):
         missing.append("ID number")
     if _is_missing(contact_number) or not contact_digits:
         missing.append("contact number")
-    if _is_missing(email_address) or "@" not in str(email_address):
-        missing.append("email address")
     return missing, id_number, contact_number, email_address
 
 
@@ -101,8 +99,6 @@ def _policy_missing_fields(policy):
         missing.append("ID number")
     if _is_missing(getattr(policy, "cell_number", None)) and _is_missing(getattr(policy, "home_tel", None)):
         missing.append("contact number")
-    if _is_missing(getattr(policy, "email_address", None)) or "@" not in str(getattr(policy, "email_address", "") or ""):
-        missing.append("email address")
     return missing
 
 
@@ -424,7 +420,7 @@ def import_lapsed():
         db.session.add(lp)
     db.session.commit()
     if suspense_count:
-        flash(f"Import complete. Call queue: {count}. Suspense: {suspense_count} clients missing ID number, contact number or email address.", "warning")
+        flash(f"Import complete. Call queue: {count}. Suspense: {suspense_count} clients missing ID number or contact number.", "warning")
         return redirect(url_for("recovery.suspense"))
     flash(f"Imported {count} lapsed policies", "success")
     return redirect(url_for("recovery.queue"))
@@ -1026,17 +1022,15 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     )
     for script in TelesalesScriptSession.query.filter_by(application_id=app_obj.id).all():
         _save_script_pdf(script)
-    method = (delivery_method or "email").lower()
+    from app.services.delivery_preferences import valid_email
     sent = False
-    if method in {"email", "sms_email", "whatsapp_email"} and app_obj.email:
-        sent = send_email(app_obj.email, "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(app_obj, link, body), application_id=app_obj.id) or sent
-    if method in {"whatsapp", "whatsapp_email"} and app_obj.cell_number:
+    if valid_email(app_obj.email):
+        sent = send_email(app_obj.email.strip(), "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(app_obj, link, body), application_id=app_obj.id)
+    if not sent and app_obj.cell_number:
         wa_sent = send_whatsapp_message(app_obj.cell_number, body)
         from app.services.conversation_history import record_communication
         record_communication('WhatsApp',body,'Sent' if wa_sent else 'Failed',application_id=app_obj.id)
-        sent = wa_sent or sent
-    if method == "sms":
-        current_app.logger.info("SMS selected for signing link, but no SMS provider is configured.")
+        sent = wa_sent
     app_obj.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
     return link, sent, []
@@ -1372,7 +1366,7 @@ def start_application(policy_id):
         application_ref = "APP-" + datetime.now().strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper()
         first_names = request.form.get("first_names") or p.initials or ""
         surname = request.form.get("surname") or p.surname or ""
-        email = request.form.get("email") or getattr(script_session, "client_email", None) or ""
+        email = request.form.get("email") or getattr(script_session, "client_email", None) or p.email_address or ""
         cell = request.form.get("cell_number") or p.cell_number or p.home_tel or ""
         beneficiary = script_payload.get("beneficiary", {}) if script_payload else {}
         bank = script_payload.get("bank", {}) if script_payload else {}
@@ -1435,7 +1429,7 @@ def start_application(policy_id):
         db.session.add(a)
         db.session.commit()
 
-        delivery_method = request.form.get("delivery_method") or selected_delivery
+        delivery_method = request.form.get("delivery_method", selected_delivery)
         if delivery_method:
             link, sent, send_errors = _send_script_selected_signing_link(a, delivery_method)
             if send_errors:

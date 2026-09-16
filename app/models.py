@@ -224,6 +224,7 @@ class ClientApplication(db.Model):
     id_number = db.Column(db.String(30))
     cell_number = db.Column(db.String(30))
     email = db.Column(db.String(255))
+    document_email = db.Column(db.String(255))
     address = db.Column(db.Text)
     inception_date = db.Column(db.Date)
     cover_amount = db.Column(db.Numeric(12,2), default=0)

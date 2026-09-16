@@ -18,7 +18,7 @@ FIELDS = [
     ('telephone', 'Telephone number', ''),
     ('residential_address', 'Residential address', ''),
     ('postal_address', 'Postal address', ''),
-    ('email', 'Email address', ''),
+    ('email', 'Email address (optional)', ''),
     ('birth_date', 'Date of birth (YYYY-MM-DD)', ''),
     ('birth_place', 'Place of birth', ''),
     ('employer', 'Place of employment (or Not employed)', ''),
@@ -52,7 +52,7 @@ def save_answers(a, form):
     values={}
     for key,label,options in FIELDS:
         value=(form.get(key) or '').strip()
-        if not value or len(value)>300:
+        if (not value and key != 'email') or len(value)>300:
             raise ValueError(f'Complete {label} (maximum 300 characters).')
         if options and value not in options.split('|'):
             raise ValueError(f'Select a valid answer for {label}.')

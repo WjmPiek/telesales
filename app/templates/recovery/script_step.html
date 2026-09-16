@@ -203,9 +203,7 @@
           {% elif step.id == 31 %}
             <label class="form-label"><b>How must the signing documents be sent?</b></label>
             <div class="row g-2 mb-3">
-              <div class="col-md-4"><button class="btn btn-outline-primary w-100" name="delivery_method" value="email">Email</button></div>
-              <div class="col-md-4"><button class="btn btn-outline-primary w-100" name="delivery_method" value="whatsapp">WhatsApp</button></div>
-              <div class="col-md-4"><button class="btn btn-outline-primary w-100" name="delivery_method" value="sms">SMS</button></div>
+              <div class="col-12"><button class="btn btn-outline-primary w-100" name="delivery_method" value="auto">Email first, then WhatsApp</button></div>
             </div>
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
             <input type="hidden" name="answer" value="yes">
