@@ -989,3 +989,13 @@ class ClientStoredFile(db.Model):
     content = db.Column(db.LargeBinary, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("application_id", "relative_path", name="uq_client_stored_file"),)
+
+
+class ApplicationMarketingConsent(db.Model):
+    __tablename__ = "application_marketing_consents"
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey("client_applications.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    allowed = db.Column(db.Boolean, nullable=False)
+    recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    ip_address = db.Column(db.String(80))
+    user_agent = db.Column(db.String(500))

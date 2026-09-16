@@ -49,6 +49,50 @@ class ApplicationFlowTests(unittest.TestCase):
     def tearDown(self):
         db.session.remove(); db.drop_all(); self.ctx.pop(); self.tmp.cleanup()
 
+    def test_popia_choices_update_lists_and_preserve_other_blocks(self):
+        from app.services.marketing_consent import apply_consent, consent_value, telephone_blocked
+        from app.services.communication_service import preference_for, contact_hash, normalize_phone
+        from app.models import ContactSuppression
+        apply_consent(self.record, True); db.session.commit()
+        policy=LapsedPolicy.query.one(); contact=WhatsAppContact.query.one()
+        self.assertTrue(consent_value(self.record))
+        self.assertTrue(preference_for(policy).whatsapp_allowed)
+        apply_consent(self.record, False); db.session.commit()
+        self.assertTrue(telephone_blocked(policy)); self.assertTrue(contact.opted_out)
+        self.assertEqual(policy.recovery_status, 'Opted Out')
+        from app.routes.recovery import open_recovery_query
+        with self.app.test_request_context('/'):
+            from flask_login import login_user
+            login_user(db.session.get(User, self.user_id))
+            self.assertEqual(open_recovery_query().count(), 0)
+        apply_consent(self.record, True); db.session.commit()
+        policy=LapsedPolicy.query.one();contact=WhatsAppContact.query.one()
+        self.assertFalse(telephone_blocked(policy)); self.assertFalse(contact.opted_out)
+        self.assertEqual(LapsedPolicy.query.count(), 1);self.assertEqual(WhatsAppContact.query.count(), 1)
+        db.session.add(ContactSuppression(phone_hash=contact_hash(normalize_phone(self.record.cell_number)),source='manual',reason='Administrative block'))
+        db.session.commit()
+        apply_consent(self.record, False);apply_consent(self.record, True);db.session.commit()
+        self.assertTrue(telephone_blocked(policy));self.assertTrue(contact.opted_out)
+        self.assertEqual(ContactSuppression.query.filter_by(source='manual').count(),1)
+
+    def test_one_signature_does_not_complete_or_copy_to_other_fields(self):
+        from app.models import DocumentSignature
+        from app.services.signature_fields import application_fields, signed_documents
+        from app.services.pdf_service import generate_application_pdf
+        from PIL import Image, ImageDraw
+        from pypdf import PdfReader
+        import json
+        path=str(Path(self.tmp.name)/'one.png')
+        im=Image.new('RGBA',(80,30));ImageDraw.Draw(im).line([(2,25),(40,2),(75,20)],fill='black',width=2);im.save(path)
+        db.session.add(DocumentSignature(application_id=self.record.id,document_type='application:principal',signature_image_path=path,typed_name='Fictional Test'))
+        db.session.flush()
+        self.assertNotIn('application', signed_documents(self.record))
+        dest=str(Path(application_folder(self.record))/'one.pdf');generate_application_pdf(self.record,dest)
+        pdf=PdfReader(dest);targets=json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))['fields']
+        self.assertEqual(sum(t['signed'] for t in targets),1)
+        self.assertFalse(next(t['signed'] for t in targets if t['page']==2))
+        self.assertFalse(any(image.image.size==(80,30) for image in pdf.pages[1].images))
+
     def test_named_email_link_escapes_client_values(self):
         from app.services.email_service import signing_email_html
         self.record.first_names = '<Alex & Sam>'
@@ -73,7 +117,8 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertIn(self.record.first_names, pdf.pages[0].extract_text())
             self.assertIn(self.record.surname, pdf.pages[0].extract_text())
             target = json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))
-            self.assertEqual(target['rect'], SIGNATURE_RECTS[template])
+            self.assertEqual(next(f['rect'] for f in target['fields'] if f['key']=='application:principal'), SIGNATURE_RECTS[template])
+            self.assertTrue(any(f['page']==2 for f in target['fields']))
             self.assertEqual(len(pdf.pages), 3)
 
     def test_email_failure_is_not_reported_as_sent(self):
@@ -112,21 +157,30 @@ class ApplicationFlowTests(unittest.TestCase):
         from PIL import Image
         image = io.BytesIO(); Image.new('RGB',(80,30),'black').save(image,format='PNG')
         signature = 'data:image/png;base64,' + base64.b64encode(image.getvalue()).decode()
+        from app.services.signature_fields import application_fields
         for kind in ['application','popia','disclosure','welcome']:
-            self.assertEqual(public.get(f'/sign/{token}/review/{kind}').status_code, 200)
-            with public.session_transaction() as session:
-                nonce = session[f'document_review_{self.record_id}_{kind}']
-            response = public.post(f'/sign/{token}',data={'action':'sign_document','document_type':kind,'typed_name':'Fictional Test','signature_data':signature,'review_nonce':nonce})
-            self.assertEqual(response.status_code,302)
+            keys=[f['key'] for f in application_fields(self.record)] if kind=='application' else [kind]
+            for index,key in enumerate(keys):
+                self.assertEqual(public.get(f'/sign/{token}/review/{kind}').status_code, 200)
+                with public.session_transaction() as session:
+                    nonce = session[f'document_review_{self.record_id}_{kind}']
+                if kind=='popia':
+                    public.post(f'/sign/{token}',data={'action':'save_marketing_consent','marketing_choice':'no','review_nonce':nonce})
+                    public.get(f'/sign/{token}/review/{kind}')
+                    with public.session_transaction() as session:
+                        nonce=session[f'document_review_{self.record_id}_{kind}']
+                response = public.post(f'/sign/{token}',data={'action':'sign_document','document_type':kind,'signature_field':key,'typed_name':'Fictional Test','signature_data':signature,'review_nonce':nonce})
+                self.assertEqual(response.status_code,302)
+                self.assertTrue(response.location.endswith(f'/sign/{token}') if index==len(keys)-1 else '/review/application' in response.location)
             from pypdf import PdfReader
-            from app.models import DocumentSignature
-            row = DocumentSignature.query.filter_by(application_id=self.record_id, document_type=kind).one()
             with public.get(f'/sign/{token}/document/{kind}') as saved:
                 pdf = PdfReader(io.BytesIO(saved.data))
                 import json
                 target = json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))
-                page = pdf.pages[target['page']-1]
-                self.assertTrue(any(img.image.size == (80,30) for img in page.images))
+                targets=target['fields'] if kind=='application' else [target]
+                for field in targets:
+                    page = pdf.pages[field['page']-1]
+                    self.assertTrue(any(img.image.size == (80,30) for img in page.images))
                 self.assertIn(b'Document signed', public.get(f'/sign/{token}/review/{kind}').data)
         with patch('app.routes.signing.send_email', return_value=False):
             response = public.post(f'/sign/{token}',data={'action':'final_submit'})
@@ -174,7 +228,7 @@ class ApplicationFlowTests(unittest.TestCase):
         public.post(f'/sign/{token}', data={'action':'unlock','id_number':self.record.id_number})
         from PIL import Image
         stream = io.BytesIO(); Image.new('RGB',(80,30),'black').save(stream,format='PNG')
-        form = {'action':'sign_document','document_type':'application','typed_name':'Fictional Test',
+        form = {'action':'sign_document','document_type':'application','signature_field':'application:principal','typed_name':'Fictional Test',
                 'signature_data':'data:image/png;base64,'+base64.b64encode(stream.getvalue()).decode()}
         self.assertIn(b'Open the document',public.post(f'/sign/{token}',data=form).data)
         self.assertEqual(DocumentSignature.query.count(),0)
@@ -218,3 +272,4 @@ class ApplicationFlowTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+

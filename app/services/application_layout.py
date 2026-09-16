@@ -177,13 +177,5 @@ def draw_application_overlay(a, path, template, signature=None):
             f(attr,x,y,right)
         m('salary',467.72,628.67,581.1)
         m('payroll_premium',481.89,642.08,581.1)
-    if signature:
-        x1,y1,x2,y2 = SIGNATURE_RECTS[template]
-        c.drawImage(ImageReader(signature),x1,y1,width=x2-x1,height=y2-y1,preserveAspectRatio=True,mask='auto')
-        # Preserve existing application behaviour: the same client's authorised
-        # signature also appears in the separately labelled account-holder box.
-        c.drawImage(ImageReader(signature),158,y1,width=137,height=y2-y1,preserveAspectRatio=True,mask='auto')
-        if not member:
-            from app.services.pdf_service import _signed_date
-            date_field(c,_signed_date(a),467.72,791.43,581.1)
+    # Client signature images are placed individually after merging the artwork.
     c.save()
