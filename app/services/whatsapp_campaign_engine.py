@@ -46,9 +46,6 @@ def process_scheduled_campaigns(limit=10):
                 if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed"}:
                     ok, _ = _send_to_recipient(campaign, recipient, "whatsapp")
                     sent += int(ok)
-                if campaign.send_email and recipient.email_status in {None, "Not Sent", "Failed"}:
-                    ok, _ = _send_to_recipient(campaign, recipient, "email")
-                    sent += int(ok)
                 db.session.commit()
             campaign.status = "Sent"
             campaign.queue_status = "completed"

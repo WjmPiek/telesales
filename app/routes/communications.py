@@ -19,7 +19,6 @@ from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
     record_not_interested, record_opt_out
 )
-from app.services.email_service import send_email
 from app.services.whatsapp_service import normalize_phone, send_whatsapp_text, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
@@ -132,6 +131,8 @@ def _event(recipient, event_type, channel=None, details=None):
 
 
 def _send_to_recipient(campaign, recipient, channel):
+    if channel != "whatsapp":
+        return False, "Campaigns support WhatsApp only"
     policy = recipient.policy
     pref = preference_for(policy)
     if pref.opted_out_all or is_suppressed(policy):
@@ -206,13 +207,6 @@ def _send_to_recipient(campaign, recipient, channel):
         ))
         conversation.last_message_preview = outbound_body[:500]
         conversation.last_message_at = datetime.utcnow()
-    else:
-        if not pref.email_allowed or not policy.email_address:
-            return False, "No permitted email address"
-        html = render_template("communications/email_message.html", policy=policy, campaign=campaign, links=links)
-        ok = send_email(policy.email_address, campaign.subject, text, html_body=html, policy_id=policy.id)
-        recipient.email_status = "Sent" if ok else "Failed"
-        error = None if ok else "Email provider returned failure"
     _event(recipient, "sent" if ok else "failed", channel, None if ok else error)
     return ok, None if ok else (error or "Provider returned failure")
 
@@ -447,8 +441,8 @@ def create_campaign():
             template_allow_category_change=request.form.get("allow_category_change") == "1",
             image_filename=image_filename, image_url=image_url, image_data=image_data, image_mimetype=image_mimetype,
             audience_type=(request.form.get("audience_type") or "group").strip().lower(),
-            send_whatsapp=bool(request.form.get("send_whatsapp")),
-            send_email=bool(request.form.get("send_email")),
+            send_whatsapp=True,
+            send_email=False,
             branch=(request.form.get("branch") or current_user.branch or "").strip() or None,
             created_by_id=current_user.id,
         )
@@ -638,7 +632,7 @@ def duplicate_campaign(campaign_id):
         whatsapp_template_name=source.whatsapp_template_name, whatsapp_template_language=source.whatsapp_template_language,
         image_filename=source.image_filename, image_url=source.image_url, image_data=source.image_data, image_mimetype=source.image_mimetype, audience_type=source.audience_type or "group",
         template_status="Pending", template_approved_at=None, template_approved_by_id=None,
-        send_whatsapp=source.send_whatsapp, send_email=source.send_email, branch=source.branch,
+        send_whatsapp=True, send_email=False, branch=source.branch,
         created_by_id=current_user.id, status="Draft")
     db.session.add(clone); db.session.flush()
     if request.form.get("copy_recipients"):
@@ -941,7 +935,7 @@ def schedule_follow_up(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
     days = max(1, min(30, int(request.form.get("days") or 3)))
-    channel = request.form.get("channel") or "email"
+    channel = "whatsapp"
     due_at = datetime.utcnow() + timedelta(days=days)
     count = 0
     for recipient in campaign.recipients:

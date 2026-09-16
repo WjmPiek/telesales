@@ -360,6 +360,12 @@ def create_app():
         ).order_by(CommunicationFollowUp.due_at.asc()).limit(500).all()
         sent = failed = skipped = 0
         for job in jobs:
+            if job.channel != "whatsapp":
+                job.status = "Skipped"
+                job.processed_at = datetime.utcnow()
+                job.last_error = "Campaigns support WhatsApp only"
+                skipped += 1
+                continue
             recipient = job.recipient
             if recipient.response_type:
                 job.status = "Skipped"; job.processed_at = datetime.utcnow(); skipped += 1
