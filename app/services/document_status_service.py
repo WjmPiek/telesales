@@ -33,8 +33,6 @@ def required_fica_types(application):
     required = ["id_copy" if client_is_sa(application) else "passport", "proof_of_address"]
     if not client_is_sa(application):
         required.append("permit_visa")
-    if is_debit_order(application):
-        required.append("bank_statement")
     return required
 
 
