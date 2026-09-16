@@ -1,3 +1,4 @@
+from app.services.client_storage import application_folder, store_document
 import os
 import secrets
 from datetime import datetime
@@ -138,10 +139,11 @@ def application_documents(app_id):
             flash("Only PDF, JPG, PNG or WEBP files are allowed.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
         safe = secure_filename(uploaded_file.filename)
-        folder = os.path.join(_upload_folder(), f"fica_app_{app.id}")
+        folder = os.path.join(application_folder(app), "fica")
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, f"{doc_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe}")
         uploaded_file.save(path)
+        store_document(app, path)
         validation_status, validation_notes = validate_fica_upload(path, safe, doc_type, app)
         doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status=validation_status, uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
         db.session.add(doc)
@@ -159,6 +161,7 @@ def download_fica(doc_id):
         abort(403)
     doc = ClientFicaDocument.query.get_or_404(doc_id)
     ensure_branch_access(doc.application, agent_attr="agent_id")
+    application_folder(doc.application)
     path = _resolve_existing(doc.file_path)
     if not path:
         abort(404)

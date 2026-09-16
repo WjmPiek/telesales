@@ -176,7 +176,7 @@ def create_app():
     if upload_folder:
         upload_folder = os.path.abspath(upload_folder)
     else:
-        upload_folder = os.path.join(app.root_path, "static", "uploads")
+        upload_folder = os.path.join(app.instance_path, "uploads")
     app.config["UPLOAD_FOLDER"] = upload_folder
     app.config["BASE_URL"] = os.getenv("BASE_URL", "http://localhost:5000")
     app.config["WHATSAPP_VERIFY_TOKEN"] = os.getenv("WHATSAPP_VERIFY_TOKEN")
@@ -307,6 +307,8 @@ def create_app():
     from app.routes.communications import communications_bp
     from app.routes.whatsapp import whatsapp_bp
 
+    from app.routes.client_files import client_files_bp
+    app.register_blueprint(client_files_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(applications_bp)

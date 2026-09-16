@@ -1,3 +1,4 @@
+from app.services.client_storage import durable_pdf
 import os
 import io
 import json
@@ -503,7 +504,7 @@ def _add_terms_page(writer, app_obj, sig_path=None):
         f"Joining Fee: {'R 0 - Waived' if app_obj.joining_fee_waived else 'R ' + _money(app_obj.joining_fee)}",
         f"Waiting Period: {_safe(app_obj.waiting_period)}",
         "",
-        "The client signed electronically using typed-name confirmation, OTP verification and drawn signature.",
+        "The client signed electronically using ID-number verification, typed-name confirmation and drawn signature.",
         "The signed application form must be read together with the policy terms and conditions supplied to the client.",
         "The signature image below is used as the Principal Member signature on the application form.",
         "Where debit order / account holder details were supplied, the same signature is also placed in the Account Holder signature box.",
@@ -522,6 +523,7 @@ def _add_terms_page(writer, app_obj, sig_path=None):
     writer.add_page(page)
 
 
+@durable_pdf
 def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
     sig = _latest_signature(app_obj)
@@ -564,9 +566,14 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
 
 
 
-def _signature_for_app(app_obj, signature_path_override=None):
+def _signature_for_app(app_obj, signature_path_override=None, document_type=None):
     if signature_path_override:
         return signature_path_override
+    if document_type:
+        from app.models import DocumentSignature
+        document_sig = DocumentSignature.query.filter_by(application_id=app_obj.id, document_type=document_type).order_by(DocumentSignature.signed_at.desc()).first()
+        if document_sig:
+            return document_sig.signature_image_path
     sig = _latest_signature(app_obj)
     return sig.signature_image_path if sig else None
 
@@ -598,6 +605,7 @@ def _draw_key_values(c, rows, x, y, label_w=120, leading=16, size=9):
         y -= leading
     return y
 
+@durable_pdf
 def generate_welcome_pack(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
     c = canvas.Canvas(out_path, pagesize=A4)
@@ -728,7 +736,7 @@ def generate_welcome_pack(app_obj, out_path, signature_path_override=None):
     c.setFont("Helvetica-Bold", 8.5)
     c.drawString(42, y, "Client Signature:")
     _box(c, 160, y + 12, 245, 55)
-    sig_path = _signature_for_app(app_obj, signature_path_override)
+    sig_path = _signature_for_app(app_obj, signature_path_override, "welcome")
     if sig_path and os.path.exists(sig_path):
         _draw_signature(c, sig_path, 165, y - 33, 235, 50)
 
@@ -736,6 +744,7 @@ def generate_welcome_pack(app_obj, out_path, signature_path_override=None):
     c.save()
     return out_path
 
+@durable_pdf
 def generate_popia_pdf(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
     c = canvas.Canvas(out_path, pagesize=A4)
@@ -793,7 +802,7 @@ def generate_popia_pdf(app_obj, out_path, signature_path_override=None):
     c.setFont("Helvetica-Bold", 9)
     c.drawString(42, y, "CLIENT SIGNATURE:")
     _box(c, 42, y - 6, 265, 52)
-    sig_path = _signature_for_app(app_obj, signature_path_override)
+    sig_path = _signature_for_app(app_obj, signature_path_override, "popia")
     if sig_path and os.path.exists(sig_path):
         _draw_signature(c, sig_path, 55, y - 50, 240, 48)
     c.setFont("Helvetica-Bold", 9)
@@ -809,6 +818,7 @@ def generate_popia_pdf(app_obj, out_path, signature_path_override=None):
     c.save()
     return out_path
 
+@durable_pdf
 def generate_disclosure_pdf(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
     c = canvas.Canvas(out_path, pagesize=A4)
@@ -846,7 +856,7 @@ def generate_disclosure_pdf(app_obj, out_path, signature_path_override=None):
         c.drawString(55, y, "[X] " + item)
         y -= 14
 
-    sig_path = _signature_for_app(app_obj, signature_path_override)
+    sig_path = _signature_for_app(app_obj, signature_path_override, "disclosure")
     if sig_path and os.path.exists(sig_path):
         y -= 10
         c.setFont("Helvetica-Bold", 10)
@@ -860,6 +870,7 @@ def generate_disclosure_pdf(app_obj, out_path, signature_path_override=None):
     return out_path
 
 
+@durable_pdf
 def generate_fica_pdf(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
     c = canvas.Canvas(out_path, pagesize=A4)
@@ -948,7 +959,7 @@ def generate_fica_pdf(app_obj, out_path, signature_path_override=None):
             c.drawString(55, y, f"- {labels.get(row.document_type, row.document_type)}: {getattr(row, 'original_filename', '')} ({getattr(row, 'status', 'Received')})")
             y -= 12
 
-    sig_path = _signature_for_app(app_obj, signature_path_override)
+    sig_path = _signature_for_app(app_obj, signature_path_override, "fica")
     if sig_path and os.path.exists(sig_path):
         y -= 10
         c.setFont("Helvetica-Bold", 10)

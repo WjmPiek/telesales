@@ -1,3 +1,4 @@
+from app.services.client_storage import application_folder, store_document
 from datetime import date, timedelta, datetime
 import secrets
 import json
@@ -988,7 +989,7 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     app_obj.sign_token_created_at = datetime.utcnow()
     app_obj.sign_token_used_at = None
     app_obj.sign_token_revoked = False
-    folder = current_app.config["UPLOAD_FOLDER"]
+    folder = application_folder(app_obj)
     os.makedirs(folder, exist_ok=True)
     preview_pdf = os.path.join(folder, f"review_application_{app_obj.id}.pdf")
     popia_pdf = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
@@ -1009,6 +1010,8 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
         "You will need your ID number to unlock the page.\n\n"
         "No documents are attached. Your documents are available only inside the secure signing link."
     )
+    for script in TelesalesScriptSession.query.filter_by(application_id=app_obj.id).all():
+        _save_script_pdf(script)
     method = (delivery_method or "email").lower()
     sent = False
     if method in {"email", "sms_email", "whatsapp_email"} and app_obj.email:
@@ -1016,7 +1019,7 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     if method in {"whatsapp", "whatsapp_email"} and app_obj.cell_number:
         sent = send_whatsapp_message(app_obj.cell_number, body) or sent
     if method == "sms":
-        current_app.logger.info("SMS selected for signing link, but no SMS provider is configured. Link: %s", link)
+        current_app.logger.info("SMS selected for signing link, but no SMS provider is configured.")
     app_obj.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
     return link, sent, []
@@ -1240,10 +1243,12 @@ def script_step(session_id):
 
 
 def _save_script_pdf(session):
-    folder = current_app.config["UPLOAD_FOLDER"]
+    folder = application_folder(session.application) if session.application else current_app.config["UPLOAD_FOLDER"]
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f"telesales_script_qa_{session.id}.pdf")
     generate_telesales_script_pdf(session, _current_script_steps(), QA_SECTIONS, path)
+    if session.application:
+        store_document(session.application, path)
     session.pdf_path = path
     db.session.commit()
 

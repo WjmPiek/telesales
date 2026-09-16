@@ -979,3 +979,13 @@ class WhatsAppAuditEvent(db.Model):
     details = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     user = db.relationship("User")
+
+
+class ClientStoredFile(db.Model):
+    __tablename__ = "client_stored_files"
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey("client_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    relative_path = db.Column(db.String(500), nullable=False)
+    content = db.Column(db.LargeBinary, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("application_id", "relative_path", name="uq_client_stored_file"),)

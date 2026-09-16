@@ -1,3 +1,4 @@
+from app.services.client_storage import application_folder
 import json
 import os, secrets
 from datetime import datetime
@@ -251,7 +252,7 @@ def send_sign_link(app_id):
     a.sign_token_used_at = None
     a.sign_token_revoked = False
 
-    folder = current_app.config["UPLOAD_FOLDER"]
+    folder = application_folder(a)
     os.makedirs(folder, exist_ok=True)
     preview_pdf = os.path.join(folder, f"review_application_{a.id}.pdf")
     popia_pdf = os.path.join(folder, f"popia_consent_{a.id}.pdf")
@@ -274,10 +275,10 @@ def send_sign_link(app_id):
         "No documents are attached to this email. Your documents are available only inside the secure signing link.\n\n"
         "The link can only be used once. After signing it will be deactivated."
     )
-    send_email(a.email, "Your Martin's Funerals secure signing link", body, [])
-    a.status = "Signing Link Sent"
+    sent = send_email(a.email, "Your Martin's Funerals secure signing link", body, [])
+    a.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
-    flash("Signing link and review documents sent", "success")
+    flash("Signing email accepted for delivery." if sent else "Email was not sent. Check the email configuration and retry.", "success" if sent else "danger")
     return redirect(url_for("applications.view_application", app_id=a.id))
 
 
@@ -353,7 +354,7 @@ def download_document(app_id, doc_type):
     app_obj = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(app_obj, agent_attr="agent_id")
 
-    upload_folder = os.path.abspath(current_app.config["UPLOAD_FOLDER"])
+    upload_folder = application_folder(app_obj)
     os.makedirs(upload_folder, exist_ok=True)
 
     def normalize_existing(path):
