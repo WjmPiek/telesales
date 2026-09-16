@@ -525,13 +525,14 @@ def sign_application(token):
                         "Your signed documents have been received and submitted to Martin's Funerals.\n\n"
                         "Your signed documents are attached for your records. Please keep them in a safe place. Copies are also stored securely with your application."
                     )
-                    send_email(app_obj.email, "Martin's Funerals signed documents received", body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf])
+                    send_email(app_obj.email, "Martin's Funerals signed documents received", body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
                 office_email = os.getenv("MAIL_DOCUMENTS_TO")
                 from email.utils import parseaddr
                 if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(app_obj.email or '')[1].strip().casefold():
                     app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
                     send_email(office_email, "Signed documents received: " + app_obj.application_ref,
                                "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n" + app_link)
+                db.session.commit()
                 return render_template("sign/complete.html", app=app_obj)
         except Exception as e:
             db.session.rollback()
@@ -628,4 +629,3 @@ def download_fica_upload(token, doc_id):
     if not path:
         abort(404)
     return send_file(path, as_attachment=False)
-

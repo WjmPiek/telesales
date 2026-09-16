@@ -19,13 +19,15 @@ def application_fields(a):
     if not member:
         fields.append(box('premium','Premium payment agreement',1,487,106,574,132))
     method = (a.payment_method or '').lower()
-    if 'debit' in method:
+    if 'debit' in method or any((a.account_number, a.account_holder, a.bank_name)):
         fields.append(box('bank','Debit order authorisation',1,340,611.6 if member else 615.8,580,623.8 if member else 628))
         rect = list(SIGNATURE_RECTS[application_template(a)]);rect[0]=158;rect[2]=295
         fields.append(dict(key='application:account',label='Account holder signature',page=1,rect=rect))
     if 'persal' in method or 'salary' in method:
         fields.append(box('salary','Salary deduction authorisation',1,440 if member else 383,665.5 if member else 656,580,677.8 if member else 668.3))
-    fields.append(box('terms','Main member signature - terms and conditions',2,394 if member else 102,429 if member else 820.4,556 if member else 264,436.6 if member else 828.5))
+    fields.append(box('terms','Main member signature - terms and conditions',2,30,792,280,826))
+    if 'debit' in method or any((a.account_number,a.account_holder,a.bank_name)):
+        fields.append(box('terms_account','Account holder signature - debit order',2,320,792,570,826))
     return sorted(fields,key=lambda f:(f['page'],-f['rect'][3]))
 
 

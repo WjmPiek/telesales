@@ -100,29 +100,57 @@ class ApplicationFlowTests(unittest.TestCase):
             mail.assert_not_called()
         self.assertIsNone(self.record.sign_token)
 
-    def test_fic_capture_is_stored_and_match_needs_human_review(self):
-        from app.services.screening_service import ensure_screened, latest
-        def capture(identity,name,folder,prefix):
-            from PIL import Image
-            path=str(Path(folder)/(prefix+'-id.png'));Image.new('RGB',(20,20),'white').save(path)
-            return [{'search':'id','query':identity,'results':[{'name':'Possible match'}]}],[path]
-        with patch('app.services.screening_service.capture_person_search',side_effect=capture):
-            ok,errors=ensure_screened(self.record)
-        self.assertFalse(ok);row=latest(self.record)
-        self.assertEqual(row.status,'Needs review')
-        self.assertEqual(ClientStoredFile.query.count(),2)
-        response=self.client.get(f'/applications/{self.record_id}/screening')
-        self.assertIn(b'Possible match',response.data)
+    def upload_screening(self,outcome='no_match',data=None):
+        from datetime import datetime,timedelta
+        from PIL import Image
+        raw=io.BytesIO();Image.new('RGB',(150,100),'white').save(raw,format='PNG');raw.seek(0)
+        return self.client.post(f'/applications/{self.record_id}/screening',data=data or dict(action='upload',outcome=outcome,notes='Searched ID and full name and reviewed both results.',checked_at=(datetime.utcnow()+timedelta(hours=2)).isoformat(timespec='minutes'),confirmed='yes',screenshots=(raw,'result.png')),content_type='multipart/form-data',follow_redirects=True)
+
+    def test_employee_screening_requires_evidence_and_identity_match(self):
+        from app.services.screening_service import ensure_screened,latest
+        self.assertFalse(ensure_screened(self.record)[0])
+        response=self.upload_screening()
+        self.assertIn(b'screenshots saved',response.data)
+        self.assertTrue(ensure_screened(self.record)[0]);self.assertEqual(latest(self.record).status,'Employee checked')
+        stored=ClientStoredFile.query.one();self.assertTrue(stored.content.startswith(b'\x89PNG'))
+        self.record.surname='Changed';db.session.commit()
+        self.assertFalse(ensure_screened(self.record)[0])
+
+    def test_possible_match_blocks_until_admin_review(self):
+        from app.services.screening_service import ensure_screened,latest
+        self.upload_screening('possible_match');row=latest(self.record)
+        self.assertFalse(ensure_screened(self.record)[0])
         self.client.post(f'/applications/{self.record_id}/screening',data={'action':'review','screening_id':row.id,'notes':'Reviewed independently; fictional test record is not the returned person.','confirmed':'yes'})
         self.assertTrue(ensure_screened(self.record)[0])
-        self.record.surname='Changed';db.session.commit()
-        self.assertIsNone(latest(self.record))
 
-    def test_fic_errors_never_count_as_no_results(self):
-        from app.services.screening_service import ensure_screened, latest
-        with patch('app.services.screening_service.capture_person_search',side_effect=TimeoutError()):
-            ok,errors=ensure_screened(self.record)
-        self.assertFalse(ok);self.assertEqual(latest(self.record).status,'Error')
+    def test_invalid_screenshot_does_not_release_application(self):
+        from datetime import datetime,timedelta
+        from app.services.screening_service import ensure_screened,latest
+        self.upload_screening(data=dict(action='upload',outcome='no_match',notes='Searched full name and ID.',confirmed='yes',checked_at=(datetime.utcnow()+timedelta(hours=2)).isoformat(timespec='minutes'),screenshots=(io.BytesIO(b'not an image'),'fake.png')))
+        self.assertIsNone(latest(self.record));self.assertFalse(ensure_screened(self.record)[0])
+
+    def test_chat_history_combines_channels_and_saves_external_reply(self):
+        from datetime import datetime,timedelta
+        from app.services.conversation_history import record_communication
+        from app.models import ClientCommunication
+        for channel,body,offset in [('Call','Discussed cover and debit order',0),('Email','Please review https://example.test/sign/secret-token',1),('WhatsApp','Thank you for the information',2)]:
+            record_communication(channel,body,'Recorded',application_id=self.record_id,occurred_at=datetime(2026,1,2,9,offset))
+        db.session.commit()
+        self.client.post('/client-files/communication',data=dict(application_id=self.record_id,channel='Email',direction='inbound',subject='Client reply',body='I received the documents.',occurred_at='2026-01-02T12:00'))
+        response=self.client.get(f'/client-files/?application_id={self.record_id}')
+        text=response.data.decode()
+        self.assertIn('11:00:00',text);self.assertNotIn('secret-token',text)
+        self.assertLess(text.index('Discussed cover'),text.index('Please review'))
+        self.assertLess(text.index('Please review'),text.index('Thank you for the information'))
+        self.assertIn('I received the documents.',text);self.assertEqual(ClientCommunication.query.count(),4)
+
+    def test_debit_details_require_separate_account_signatures(self):
+        from app.services.signature_fields import application_fields
+        self.record.account_number='TEST-ONLY'
+        fields=application_fields(self.record)
+        self.assertIn('application:account',[f['key'] for f in fields])
+        self.assertIn('application:terms_account',[f['key'] for f in fields])
+        self.assertTrue(all(f['rect'][3]-f['rect'][1]>=30 for f in fields if f['page']==2))
 
     def test_cdd_requires_complete_answers_and_invalidates_changed_signature(self):
         from app.services.cdd_service import save_answers, FIELDS, completed
@@ -308,7 +336,11 @@ class ApplicationFlowTests(unittest.TestCase):
                     'MAIL_REPLY_TO':'sales@example.test'}
         with patch.dict(os.environ,settings,clear=True), patch('app.services.email_service.smtplib.SMTP_SSL') as smtp:
             smtp.return_value.__enter__.return_value.send_message.return_value = {}
-            self.assertTrue(send_email('recipient@example.test','Test','Body'))
+            self.assertTrue(send_email('recipient@example.test','Test','Body',application_id=self.record_id))
+            from app.models import ClientCommunication
+            db.session.flush()
+            self.assertEqual(ClientCommunication.query.one().body,'Body')
+            self.assertEqual(ClientCommunication.query.one().status,'Accepted by mail server')
             connection = smtp.return_value.__enter__.return_value
             connection.login.assert_called_once_with('sales@example.test',test_password)
             message = connection.send_message.call_args.args[0]
@@ -328,4 +360,3 @@ class ApplicationFlowTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
-

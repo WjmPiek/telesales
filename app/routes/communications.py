@@ -210,7 +210,7 @@ def _send_to_recipient(campaign, recipient, channel):
         if not pref.email_allowed or not policy.email_address:
             return False, "No permitted email address"
         html = render_template("communications/email_message.html", policy=policy, campaign=campaign, links=links)
-        ok = send_email(policy.email_address, campaign.subject, text, html_body=html)
+        ok = send_email(policy.email_address, campaign.subject, text, html_body=html, policy_id=policy.id)
         recipient.email_status = "Sent" if ok else "Failed"
         error = None if ok else "Email provider returned failure"
     _event(recipient, "sent" if ok else "failed", channel, None if ok else error)
