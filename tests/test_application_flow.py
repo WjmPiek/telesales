@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,29 +123,30 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertEqual(self.client.get(f'/client-files/?application_id={self.record.id}').status_code,403)
 
     def test_custom_smtp_sender_and_reply_address(self):
-        from unittest.mock import MagicMock
-        settings = {'SMTP_HOST':'smtp.martinsdirect.com','SMTP_PORT':'465','SMTP_SECURITY':'ssl',
-                    'SMTP_USERNAME':'sales@martinsdirect.com','SMTP_PASSWORD':'fictional-password',
-                    'MAIL_FROM':"Martin's Funerals <sales@martinsdirect.com>",
-                    'MAIL_REPLY_TO':'sales@martinsdirect.com'}
+        # Generated only for the mocked SMTP connection; never a real credential.
+        test_password = uuid.uuid4().hex
+        settings = {'SMTP_HOST':'smtp.example.test','SMTP_PORT':'465','SMTP_SECURITY':'ssl',
+                    'SMTP_USERNAME':'sales@example.test','SMTP_PASSWORD':test_password,
+                    'MAIL_FROM':"Martin's Funerals <sales@example.test>",
+                    'MAIL_REPLY_TO':'sales@example.test'}
         with patch.dict(os.environ,settings,clear=True), patch('app.services.email_service.smtplib.SMTP_SSL') as smtp:
             smtp.return_value.__enter__.return_value.send_message.return_value = {}
             self.assertTrue(send_email('recipient@example.test','Test','Body'))
             connection = smtp.return_value.__enter__.return_value
-            connection.login.assert_called_once_with('sales@martinsdirect.com','fictional-password')
+            connection.login.assert_called_once_with('sales@example.test',test_password)
             message = connection.send_message.call_args.args[0]
-            self.assertEqual(message['Reply-To'],'sales@martinsdirect.com')
-            self.assertIn('sales@martinsdirect.com',message['From'])
-            self.assertEqual(smtp.call_args.args,('smtp.martinsdirect.com',465))
+            self.assertEqual(message['Reply-To'],'sales@example.test')
+            self.assertIn('sales@example.test',message['From'])
+            self.assertEqual(smtp.call_args.args,('smtp.example.test',465))
 
     def test_custom_host_never_receives_legacy_gmail_credentials(self):
-        with patch.dict(os.environ,{'SMTP_HOST':'smtp.martinsdirect.com','GMAIL_SMTP_USER':'old@gmail.com','GMAIL_SMTP_PASSWORD':'old'},clear=True), patch('app.services.email_service.smtplib.SMTP_SSL') as smtp:
+        with patch.dict(os.environ,{'SMTP_HOST':'smtp.example.test','GMAIL_SMTP_USER':'old@example.test','GMAIL_SMTP_PASSWORD':uuid.uuid4().hex},clear=True), patch('app.services.email_service.smtplib.SMTP_SSL') as smtp:
             self.assertFalse(send_email('recipient@example.test','Test','Body'))
             smtp.assert_not_called()
 
     def test_smtp_failure_returns_false(self):
         import smtplib
-        with patch.dict(os.environ,{'GMAIL_SMTP_USER':'test','GMAIL_SMTP_PASSWORD':'test'}), patch('app.services.email_service.smtplib.SMTP_SSL',side_effect=smtplib.SMTPAuthenticationError(535,b'bad credentials')):
+        with patch.dict(os.environ,{'GMAIL_SMTP_USER':'sender@example.test','GMAIL_SMTP_PASSWORD':uuid.uuid4().hex},clear=True), patch('app.services.email_service.smtplib.SMTP_SSL',side_effect=smtplib.SMTPAuthenticationError(535,b'bad credentials')):
             self.assertFalse(send_email('test@example.test','Test','Test'))
 
 
