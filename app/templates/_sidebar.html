@@ -4,9 +4,10 @@
 {%- endmacro %}
 <div class="sidebar-section">
   <a class="side-link{% if endpoint in ['role_portals.home', 'role_portals.workspace'] %} active{% endif %}" href="{{ url_for('role_portals.workspace') }}"><span>Home</span></a>
-  <details class="side-group"{% if request.blueprint in ['recovery', 'allocation'] %} open{% endif %}>
+  <details class="side-group"{% if request.blueprint in ['recovery', 'allocation', 'client_files'] %} open{% endif %}>
     <summary class="side-toggle"><span>Clients</span></summary>
     <div class="side-submenu">
+      {{ nav_link('Find client / client file', 'client_files.index') }}
       {{ nav_link('Client list & import', 'recovery.queue') }}
       {{ nav_link('Next client', 'recovery.next_client') }}
       {{ nav_link('Callbacks', 'recovery.callbacks') }}

@@ -1,3 +1,4 @@
+from app.services.client_storage import application_folder, store_document
 import os, base64
 from datetime import datetime
 from flask import Blueprint, render_template, request, current_app, abort, send_file, session, redirect, url_for, flash
@@ -103,6 +104,7 @@ def _required_fica_types(app_obj):
 
 
 def _fica_status(app_obj):
+    application_folder(app_obj)
     required = _required_fica_types(app_obj)
     docs = ClientFicaDocument.query.filter_by(application_id=app_obj.id).all()
 
@@ -123,7 +125,7 @@ def _fica_status(app_obj):
     # Extra safety for Render/live systems: if a file was saved successfully
     # but the DB row was not visible because of an older schema, still mark it
     # as received for the same request/session by checking the upload folder.
-    folder = os.path.join(_upload_folder(), f"fica_app_{app_obj.id}")
+    folder = os.path.join(application_folder(app_obj), "fica")
     if not docs and os.path.isdir(folder):
         for filename in os.listdir(folder):
             for doc_type in required:
@@ -146,11 +148,12 @@ def _latest_document_signature(app_obj):
 def _save_signature_file(app_obj, doc_type, sig_data):
     if not sig_data.startswith("data:image"):
         raise ValueError("Invalid signature data")
-    folder = _upload_folder()
+    folder = application_folder(app_obj)
     path = os.path.join(folder, f"signature_{doc_type}_{app_obj.id}.png")
     raw = sig_data.split(",", 1)[1]
     with open(path, "wb") as f:
         f.write(base64.b64decode(raw))
+    store_document(app_obj, path)
     return path
 
 
@@ -280,10 +283,11 @@ def _save_upload(app_obj, document_type, uploaded_file):
     safe = secure_filename(uploaded_file.filename or f"upload.{ext}")
     if "." not in safe:
         safe = f"{safe}.{ext}"
-    folder = os.path.join(_upload_folder(), f"fica_app_{app_obj.id}")
+    folder = os.path.join(application_folder(app_obj), "fica")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f"{document_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe}")
     uploaded_file.save(path)
+    store_document(app_obj, path)
 
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         raise ValueError("The uploaded file was empty or could not be saved. Please try again. If this was taken with a phone camera, try saving it as JPG or PDF first.")
@@ -312,7 +316,7 @@ def _save_upload(app_obj, document_type, uploaded_file):
 
 
 def _generate_review_docs(app_obj):
-    folder = _upload_folder()
+    folder = application_folder(app_obj)
     app_obj.popia_pdf_path = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
     app_obj.disclosure_pdf_path = os.path.join(folder, f"policy_disclosure_{app_obj.id}.pdf")
     app_obj.welcome_pack_path = os.path.join(folder, f"welcome_pack_{app_obj.id}.pdf")
@@ -337,7 +341,7 @@ def upload_fica_document(token):
         if doc_type not in FICA_LABELS:
             raise ValueError("Invalid document type")
         row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
-        generate_fica_pdf(app_obj, os.path.join(_upload_folder(), f"fica_verification_{app_obj.id}.pdf"))
+        generate_fica_pdf(app_obj, os.path.join(application_folder(app_obj), f"fica_verification_{app_obj.id}.pdf"))
         required, received, outstanding, docs = _fica_status(app_obj)
         if outstanding:
             app_obj.status = "FICA Outstanding"
@@ -377,7 +381,7 @@ def sign_application(token):
                 if doc_type not in FICA_LABELS:
                     raise ValueError("Invalid document type")
                 row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
-                generate_fica_pdf(app_obj, os.path.join(_upload_folder(), f"fica_verification_{app_obj.id}.pdf"))
+                generate_fica_pdf(app_obj, os.path.join(application_folder(app_obj), f"fica_verification_{app_obj.id}.pdf"))
                 required, received, outstanding, docs = _fica_status(app_obj)
                 app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
                 db.session.commit()
@@ -417,18 +421,19 @@ def sign_application(token):
                 if outstanding:
                     raise ValueError("Please upload outstanding FICA documents: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding))
 
-                sig = _latest_document_signature(app_obj)
+                signed_records = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=app_obj.id).all()}
+                sig = signed_records.get("application")
                 sig_path = sig.signature_image_path if sig else None
-                folder = _upload_folder()
+                folder = application_folder(app_obj)
                 signed_pdf = os.path.join(folder, f"signed_application_{app_obj.id}.pdf")
                 welcome_pdf = os.path.join(folder, f"welcome_pack_{app_obj.id}.pdf")
                 popia_pdf = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
                 disclosure_pdf = os.path.join(folder, f"policy_disclosure_{app_obj.id}.pdf")
                 fica_pdf = os.path.join(folder, f"fica_verification_{app_obj.id}.pdf")
                 generate_application_pdf(app_obj, signed_pdf, signature_path_override=sig_path)
-                generate_welcome_pack(app_obj, welcome_pdf, signature_path_override=sig_path)
-                generate_popia_pdf(app_obj, popia_pdf, signature_path_override=sig_path)
-                generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=sig_path)
+                generate_welcome_pack(app_obj, welcome_pdf, signature_path_override=signed_records["welcome"].signature_image_path)
+                generate_popia_pdf(app_obj, popia_pdf, signature_path_override=signed_records["popia"].signature_image_path)
+                generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=signed_records["disclosure"].signature_image_path)
                 generate_fica_pdf(app_obj, fica_pdf, signature_path_override=sig_path)
 
                 app_obj.status = "Signed"
@@ -444,13 +449,12 @@ def sign_application(token):
                     db.session.add(ApplicationSignature(
                         application_id=app_obj.id,
                         typed_name=sig.typed_name,
-                        otp_verified=True,
+                        otp_verified=False,
                         signature_image_path=sig_path,
                         ip_address=request.remote_addr,
                         user_agent=request.headers.get("User-Agent"),
                         consent_popia=True,
                         consent_disclosure=True,
-                        consent_fica=True,
                         consent_marketing=bool(request.form.get("consent_marketing")),
                         signed_at=datetime.utcnow(),
                     ))
@@ -463,6 +467,11 @@ def sign_application(token):
                         "No documents are attached to this email. The signed documents are stored securely on the Martin's Funerals system."
                     )
                     send_email(app_obj.email, "Martin's Funerals signed documents received", body, [])
+                office_email = os.getenv("MAIL_DOCUMENTS_TO")
+                if office_email:
+                    app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
+                    send_email(office_email, "Signed documents received: " + app_obj.application_ref,
+                               "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n" + app_link)
                 return render_template("sign/complete.html", app=app_obj)
         except Exception as e:
             db.session.rollback()
@@ -479,12 +488,12 @@ def sign_application(token):
 @signing_bp.route("/<token>/document/<doc_type>")
 def view_sign_document(token, doc_type):
     app_obj = ClientApplication.query.filter_by(sign_token=token).first_or_404()
-    if app_obj.sign_token_revoked and doc_type != "signed_application":
+    if app_obj.sign_token_revoked or app_obj.sign_token_used_at:
         abort(404)
-    if not session.get(_unlocked_key(app_obj.id)) and doc_type != "signed_application":
+    if not session.get(_unlocked_key(app_obj.id)):
         abort(403)
 
-    folder = _upload_folder()
+    folder = application_folder(app_obj)
     if doc_type == "application":
         path = os.path.join(folder, f"review_application_{app_obj.id}.pdf")
         generate_application_pdf(app_obj, path)
@@ -512,6 +521,7 @@ def view_sign_document(token, doc_type):
         abort(404)
     if not path or not os.path.exists(path):
         abort(404)
+    db.session.commit()
     return send_file(path, as_attachment=False)
 
 
@@ -520,6 +530,9 @@ def download_fica_upload(token, doc_id):
     app_obj = ClientApplication.query.filter_by(sign_token=token).first_or_404()
     if not session.get(_unlocked_key(app_obj.id)):
         abort(403)
+    if app_obj.sign_token_revoked or app_obj.sign_token_used_at:
+        abort(404)
+    application_folder(app_obj)
     doc = ClientFicaDocument.query.filter_by(id=doc_id, application_id=app_obj.id).first_or_404()
     path = _resolve_existing(doc.file_path)
     if not path:

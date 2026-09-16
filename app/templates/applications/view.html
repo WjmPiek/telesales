@@ -7,6 +7,7 @@
 </div>
 {% endif %}
 
+<a class="btn btn-outline-primary mb-3" href="{{ url_for('client_files.index', application_id=app.id) }}">Open complete client file</a>
 <div class="card">
   <div class="card-body">
     <p><b>Application Type:</b> {{app.application_type or 'New Policy'}}</p>
@@ -26,7 +27,7 @@
       <button class="btn btn-success">Send WhatsApp Signing Link</button>
     </form>
     {% else %}
-    <div class="alert alert-success">Application signed. Welcome pack generated and sent if email was available.</div>
+    <div class="alert alert-success">Application signed. Documents are stored securely. A confirmation email is sent when email delivery is available.</div>
     {% endif %}
   
 
