@@ -163,6 +163,36 @@ class ApplicationFlowTests(unittest.TestCase):
         answers['birth_place']='Changed birthplace';answers['birth_date']='1980-01-01';save_answers(self.record,answers)
         self.assertEqual(DocumentSignature.query.filter_by(document_type='cdd').count(),0)
 
+    def test_persisted_birth_date_opens_every_debit_order_document(self):
+        from app.services.cdd_service import answers_for
+        self.record.date_of_birth='01/01/1980'
+        self.record.payment_method='Debit Order'
+        self.record.account_number='TEST-ONLY'
+        self.record.sign_token='local-regression-test'
+        db.session.commit();db.session.expire_all()
+        self.assertIsInstance(self.record.date_of_birth,str)
+        self.assertEqual(answers_for(self.record)['birth_date'],'1980-01-01')
+        public=self.app.test_client()
+        with public.session_transaction() as session:session[f'sign_unlocked_{self.record_id}']=True
+        for kind in ['application','popia','disclosure','welcome','cdd']:
+            self.assertEqual(public.get('/sign/local-regression-test/review/'+kind).status_code,200,kind)
+            self.assertEqual(public.get('/sign/local-regression-test/document/'+kind).status_code,200,kind)
+        self.record.date_of_birth='1980-01-01';db.session.commit()
+        self.assertEqual(answers_for(self.record)['birth_date'],'1980-01-01')
+
+    def test_bank_statement_not_required_for_debit_order(self):
+        from app.routes.signing import _required_fica_types
+        from app.services.document_status_service import required_fica_types,document_summary
+        from app.services.pdf_service import generate_fica_pdf
+        from pypdf import PdfReader
+        self.record.payment_method='Debit Order'
+        self.assertNotIn('bank_statement',_required_fica_types(self.record))
+        self.assertNotIn('bank_statement',required_fica_types(self.record))
+        self.assertNotIn('bank_statement',[row['key'] for row in document_summary(self.record)['missing']])
+        path=str(Path(application_folder(self.record))/'fica.pdf');generate_fica_pdf(self.record,path)
+        text=' '.join(page.extract_text() for page in PdfReader(path).pages)
+        self.assertNotIn('Bank statement',text);self.assertNotIn('Bank Verification',text)
+
     def test_named_email_link_escapes_client_values(self):
         from app.services.email_service import signing_email_html
         self.record.first_names = '<Alex & Sam>'
