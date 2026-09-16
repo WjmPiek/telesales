@@ -999,3 +999,25 @@ class ApplicationMarketingConsent(db.Model):
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     ip_address = db.Column(db.String(80))
     user_agent = db.Column(db.String(500))
+
+
+class ApplicationCDD(db.Model):
+    __tablename__ = "application_cdd"
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey("client_applications.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    answers_json = db.Column(db.Text, nullable=False, default='{}')
+    completed_at = db.Column(db.DateTime)
+
+
+class ApplicationScreening(db.Model):
+    __tablename__ = "application_screenings"
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey("client_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    identity_hash = db.Column(db.String(64), nullable=False)
+    status = db.Column(db.String(40), nullable=False)
+    checked_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    results_json = db.Column(db.Text, nullable=False, default='[]')
+    evidence_json = db.Column(db.Text, nullable=False, default='[]')
+    reviewed_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    reviewed_at = db.Column(db.DateTime)
+    review_notes = db.Column(db.Text)

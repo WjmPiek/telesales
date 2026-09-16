@@ -2,6 +2,7 @@ import os
 import smtplib
 import logging
 import ssl
+import mimetypes
 from email.message import EmailMessage
 from email.utils import parseaddr
 
@@ -32,7 +33,9 @@ def send_email(to_email, subject, body, attachments=None, html_body=None):
         with open(path, "rb") as f:
             data = f.read()
         filename = os.path.basename(path)
-        msg.add_attachment(data, maintype="application", subtype="octet-stream", filename=filename)
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        maintype, subtype = mime.split("/", 1)
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
 
     try:
         security = os.getenv("SMTP_SECURITY", "ssl").strip().lower()

@@ -1,3 +1,4 @@
+from app.services.screening_service import ensure_screened
 from app.services.client_storage import application_folder, store_document
 from datetime import date, timedelta, datetime
 import secrets
@@ -993,6 +994,9 @@ def _application_salutation(app_obj):
 def _send_script_selected_signing_link(app_obj, delivery_method):
     ok, errors = assert_application_rules(app_obj)
     if not ok:
+        return None, False, errors
+    screened, errors = ensure_screened(app_obj)
+    if not screened:
         return None, False, errors
     token = secrets.token_urlsafe(32)
     app_obj.sign_token = token

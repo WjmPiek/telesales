@@ -1,4 +1,6 @@
-from flask import Blueprint, render_template, request
+from app import db
+from flask import Blueprint, render_template, request, send_file
+import io
 from flask_login import login_required
 from sqlalchemy import func, or_
 from app.models import (ClientApplication, LapsedPolicy, RecoveryCallLog,
@@ -55,7 +57,25 @@ def index():
         contacts = contacts.filter(or_(WhatsAppContact.wa_id.in_(phones), WhatsAppContact.phone_number.in_(phones | {'+' + p for p in phones}))).all() if phones else []
         conversations = WhatsAppConversation.query.filter(WhatsAppConversation.contact_id.in_([c.id for c in contacts])).all()
         messages = WhatsAppMessage.query.filter(WhatsAppMessage.conversation_id.in_([c.id for c in conversations])).order_by(WhatsAppMessage.created_at.asc()).all()
+    from app.models import ClientStoredFile
+    stored_files=ClientStoredFile.query.filter(ClientStoredFile.application_id.in_([a.id for a in applications])).filter(db.or_(ClientStoredFile.relative_path.like('fic-screening-%'),ClientStoredFile.relative_path.like('annexure_j1_%'))).all() if applications else []
     response = render_template('clients/file.html', identity=identity, searched=searched,
-                               applications=applications, policies=policies, calls=calls,
+                               applications=applications, policies=policies, calls=calls, stored_files=stored_files,
                                scripts=scripts, documents=documents, messages=messages)
     return response, 200, {'Cache-Control': 'no-store'}
+
+
+@client_files_bp.route('/document/<int:file_id>')
+@login_required
+@permission_required('recovery.view')
+def stored_document(file_id):
+    from app.models import ClientStoredFile
+    from pathlib import PurePosixPath
+    import mimetypes
+    row=ClientStoredFile.query.get_or_404(file_id)
+    a=ClientApplication.query.get_or_404(row.application_id)
+    ensure_branch_access(a,agent_attr='agent_id')
+    name=PurePosixPath(row.relative_path).name
+    response=send_file(io.BytesIO(row.content),download_name=name,mimetype=mimetypes.guess_type(name)[0] or 'application/octet-stream',as_attachment=name.endswith('.json'),max_age=0)
+    response.headers['Cache-Control']='no-store'
+    return response

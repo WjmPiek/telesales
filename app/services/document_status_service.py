@@ -5,6 +5,7 @@ SIGNATURE_DOCUMENTS = [
     ("popia", "POPIA Consent"),
     ("disclosure", "Policy Disclosure"),
     ("welcome", "Welcome Pack Acknowledgement"),
+    ("cdd", "Annexure J.1 - Client Due Diligence"),
 ]
 
 FICA_LABELS = {
@@ -40,11 +41,17 @@ def required_fica_types(application):
 def document_summary(application):
     signed_rows = DocumentSignature.query.filter_by(application_id=application.id).all()
     signed_types = {row.document_type: row for row in signed_rows}
+    from app.services.signature_fields import signed_documents
+    complete_types=signed_documents(application)
+    if application.signed_at and "application" in signed_types:complete_types.add("application")
+    if "application" in complete_types and "application" not in signed_types:
+        signed_types["application"]=signed_types.get("application:principal")
     fica_docs = ClientFicaDocument.query.filter_by(application_id=application.id).order_by(ClientFicaDocument.uploaded_at.desc()).all()
 
     rows = []
     for key, label in SIGNATURE_DOCUMENTS:
-        is_signed = key in signed_types
+        if key=="cdd" and application.signed_at and key not in signed_types:continue
+        is_signed = key in complete_types
         rows.append({
             "group": "Signature",
             "key": key,
