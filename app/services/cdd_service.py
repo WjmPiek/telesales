@@ -39,8 +39,13 @@ def answers_for(a):
     row=ApplicationCDD.query.filter_by(application_id=a.id).first()
     if row:
         return json.loads(row.answers_json)
+    from app.services.compliance_service import format_dob
+    try:
+        birth_date=datetime.strptime(format_dob(a.date_of_birth or a.id_number),'%d/%m/%Y').date().isoformat()
+    except (ValueError,TypeError):
+        birth_date=''
     return dict(telephone=a.cell_number or a.home_tel or '', residential_address=a.residential_address or a.address or '',
-                postal_address=a.postal_address or '', email=a.email or '', employer=a.employer or '', birth_date=a.date_of_birth.isoformat() if a.date_of_birth else '')
+                postal_address=a.postal_address or '', email=a.email or '', employer=a.employer or '', birth_date=birth_date)
 
 
 def save_answers(a, form):
