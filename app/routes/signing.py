@@ -104,8 +104,6 @@ def _required_fica_types(app_obj):
     required = ["id_copy" if _client_is_sa(app_obj) else "passport", "proof_of_address"]
     if not _client_is_sa(app_obj):
         required.append("permit_visa")
-    if _is_debit_order(app_obj):
-        required.append("bank_statement")
     return required
 
 
@@ -583,7 +581,7 @@ def edit_document(token, doc_type):
     nonce = secrets.token_urlsafe(24)
     session[f"document_review_{app_obj.id}_{doc_type}"] = nonce
     response = current_app.make_response(render_template("sign/document.html", app=app_obj,
-        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], targets=targets, marketing_consent=consent_value(app_obj), cdd_fields=CDD_FIELDS, cdd_answers=answers_for(app_obj), cdd_complete=cdd_completed(app_obj),
+        token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], targets=targets, marketing_consent=consent_value(app_obj), cdd_fields=CDD_FIELDS, cdd_answers=answers_for(app_obj) if doc_type=='cdd' else {}, cdd_complete=cdd_completed(app_obj),
         review_nonce=nonce, signed=doc_type in _signed_doc_types(app_obj)))
     response.headers['Cache-Control'] = 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'
