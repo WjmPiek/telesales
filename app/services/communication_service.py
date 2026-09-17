@@ -69,6 +69,7 @@ def record_callback(recipient, channel):
     recipient.callback_created = True
     policy.recovery_status = "Callback"
     policy.next_action_date = date.today()
+    policy.callback_at = None
     policy.comments = ((policy.comments or "") + f"\nCALLBACK REQUESTED via {channel.title()} on {datetime.utcnow():%Y-%m-%d %H:%M} UTC").strip()
     if policy.assigned_agent_id:
         db.session.add(AgentNotification(

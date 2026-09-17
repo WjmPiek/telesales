@@ -1,6 +1,7 @@
 from app.services.screening_service import ensure_screened
 from app.services.client_storage import application_folder, store_document
 from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 import secrets
 import json
 import os
@@ -256,20 +257,47 @@ def next_client():
 @permission_required("recovery.view")
 def callbacks():
     """Phase 2 callback worklist: overdue, today, upcoming and unscheduled follow-ups."""
-    today = date.today()
-    base = open_recovery_query().filter(LapsedPolicy.recovery_status == "Callback")
-    overdue = base.filter(LapsedPolicy.next_action_date < today).order_by(LapsedPolicy.next_action_date.asc()).all()
-    due_today = base.filter(LapsedPolicy.next_action_date == today).order_by(LapsedPolicy.imported_at.asc()).all()
-    upcoming = base.filter(LapsedPolicy.next_action_date > today).order_by(LapsedPolicy.next_action_date.asc()).limit(200).all()
-    unscheduled = base.filter(LapsedPolicy.next_action_date.is_(None)).order_by(LapsedPolicy.imported_at.asc()).limit(200).all()
-    return render_template(
-        "recovery/callbacks.html",
-        overdue=overdue,
-        due_today=due_today,
-        upcoming=upcoming,
-        unscheduled=unscheduled,
-        today=today,
-    )
+    now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
+    today = now.date()
+    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').order_by(LapsedPolicy.next_action_date.asc(), LapsedPolicy.callback_at.asc()).all()
+    overdue = [p for p in rows if (p.callback_at and p.callback_at <= now) or (not p.callback_at and p.next_action_date and p.next_action_date < today)]
+    due_today = [p for p in rows if p not in overdue and p.next_action_date == today]
+    upcoming = [p for p in rows if p not in overdue and p.next_action_date and p.next_action_date > today]
+    unscheduled = [p for p in rows if not p.next_action_date]
+    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming, unscheduled=unscheduled, today=today)
+
+
+@recovery_bp.route('/callback-reminders')
+@login_required
+@permission_required('recovery.view')
+def callback_reminders():
+    now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
+    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').filter(db.or_(LapsedPolicy.callback_at <= now, db.and_(LapsedPolicy.callback_at.is_(None), db.or_(LapsedPolicy.next_action_date <= now.date(), LapsedPolicy.next_action_date.is_(None))))).all()
+    return jsonify(reminders=[dict(name=((p.initials or '')+' '+(p.surname or '')).strip(), time=p.callback_at.strftime('%d %b %H:%M') if p.callback_at else 'Time not set', url=url_for('recovery.log_call', policy_id=p.id)) for p in rows])
+
+
+@recovery_bp.route('/<int:policy_id>/schedule-callback', methods=['POST'])
+@login_required
+@permission_required('recovery.call')
+def schedule_callback(policy_id):
+    p = LapsedPolicy.query.get_or_404(policy_id)
+    ensure_branch_access(p, agent_attr='assigned_agent_id')
+    if telephone_blocked(p):
+        abort(400)
+    try:
+        when = datetime.strptime(request.form.get('callback_at', ''), '%Y-%m-%dT%H:%M')
+    except ValueError:
+        flash('Choose a valid callback date and time.', 'warning')
+        return redirect(url_for('recovery.callbacks'))
+    if not p.assigned_agent_id:
+        p.assigned_agent_id = current_user.id
+    p.callback_at = when
+    p.next_action_date = when.date()
+    p.recovery_status = 'Callback'
+    db.session.add(AuditLog(user_id=current_user.id, action='Callback scheduled', entity_type='LapsedPolicy', entity_id=str(p.id), details=f'Callback scheduled for {when:%Y-%m-%d %H:%M} SAST; assigned user {p.assigned_agent_id}'))
+    db.session.commit()
+    flash('Callback date and time saved. A reminder will appear on the home page.', 'success')
+    return redirect(url_for('recovery.callbacks'))
 
 
 @recovery_bp.route("/<int:policy_id>/timeline")
@@ -442,6 +470,16 @@ def log_call(policy_id):
         outcome = request.form["outcome"]
         follow = request.form.get("follow_up_date") or None
         notes = (request.form.get("notes") or "").strip()
+        callback_time = request.form.get('callback_time', '').strip()
+        scheduled = None
+        if outcome in CALLBACK_OUTCOMES and callback_time:
+            try:
+                scheduled = datetime.strptime(f'{follow}T{callback_time}', '%Y-%m-%dT%H:%M')
+            except ValueError:
+                flash('Choose a callback date and valid time.', 'warning')
+                return redirect(url_for('recovery.log_call', policy_id=p.id))
+            notes += f'\nCallback scheduled: {scheduled:%Y-%m-%d %H:%M} SAST'
+        p.callback_at = scheduled
 
         if outcome in CALLBACK_OUTCOMES and not follow:
             follow = (date.today() + timedelta(days=1)).isoformat()
