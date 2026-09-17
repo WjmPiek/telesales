@@ -1,0 +1,102 @@
+"""Questionnaire mapping for campaign-origin applications only."""
+import json
+from datetime import datetime
+from app.services.cdd_service import FIELDS as CDD_FIELDS, save_answers
+from app.services.compliance_service import assert_application_rules, dob_from_sa_id
+from app.services.delivery_preferences import valid_email
+from app.services.marketing_consent import apply_consent
+
+FIELDS = [
+ ('Your details', [
+  ('title','Title','Mr|Mrs|Ms|Miss|Dr',False),
+  ('first_names','First names','',True),('surname','Surname','',True),
+  ('cell_number','Mobile number','',True),('email','Email for documents and policy confirmation','email',True),
+  ('residential_address','Residential address','',True),('residential_postal_code','Postal code','',True),
+  ('postal_address','Postal address','',True),('postal_code','Postal address code','',True)]),
+ ('Nominated beneficiary', [
+  ('beneficiary_full_names','Beneficiary full names and surname','',True),
+  ('beneficiary_relationship','Relationship','Spouse|Partner|Parent|Child|Sibling|Other',True),
+  ('beneficiary_id_number','Beneficiary ID number (if available)','',False),
+  ('beneficiary_date_of_birth','Beneficiary date of birth','date',True)]),
+ ('Payment', [
+  ('payment_method','How will you pay?','Cash|Debit Order|Stop Order',True),
+  ('bank_name','Bank (debit order only)','bank',False),('branch_code','Branch code','',False),
+  ('account_number','Account number','',False),('account_type','Account type','Savings|Cheque|Transmission',False),
+  ('account_holder','Account holder full names','',False),('debit_day','Debit day','1|5|15|20|25|30',False),
+  ('first_deduction_date','First deduction date','date',False)])]
+BANKS=['Absa','African Bank','Capitec','Discovery Bank','FNB','Investec','Nedbank','Standard Bank','TymeBank']
+
+
+def save_questionnaire(a, form):
+    for group, fields in FIELDS:
+        for key,label,options,required in fields:
+            value=form.get(key,'').strip()
+            if required and not value:
+                raise ValueError('Please complete '+label+'.')
+            if len(value)>min(300, getattr(a.__table__.columns[key].type,'length',None) or 300):
+                raise ValueError(label+' is too long.')
+            if '|' in options and value and value not in options.split('|'):
+                raise ValueError('Select a valid '+label+'.')
+            if options=='date' and value:
+                try: datetime.strptime(value,'%Y-%m-%d')
+                except ValueError: raise ValueError('Enter a valid date for '+label+'.')
+            setattr(a,key,value)
+    if not valid_email(a.email):
+        raise ValueError('Enter an email address for the signed documents and policy confirmation.')
+    a.document_email=a.email
+    a.address=a.residential_address
+    a.date_of_birth=dob_from_sa_id(a.id_number)
+    a.spouse_first_names=a.spouse_surname=a.spouse_id_number=a.spouse_date_of_birth=''
+    all_members=[]
+    for kind,limit,attribute in [('child',6,'dependents_json'),('extended',4,'extended_family_json'),('spouse',1,None)]:
+        rows=[]
+        for i in range(1,limit+1):
+            row={key:form.get(f'{kind}_{i}_{key}','').strip()[:150] for key in ('full_name','relationship','id_or_dob')}
+            if not any(row.values()):continue
+            if not all(row.values()):raise ValueError('Complete name, relationship and ID or date of birth for each added member.')
+            rows.append(row)
+        if attribute:setattr(a,attribute,json.dumps(rows))
+        elif rows:
+            row=rows[0];names=row['full_name'].rsplit(' ',1)
+            a.spouse_first_names=names[0];a.spouse_surname=names[1] if len(names)>1 else ''
+            if len(row['id_or_dob'])==13:a.spouse_id_number=row['id_or_dob']
+            else:a.spouse_date_of_birth=row['id_or_dob']
+        all_members.extend(rows)
+    a.product_dependents_json=json.dumps(all_members)
+    if a.payment_method=='Debit Order':
+        full=' '.join((a.first_names,a.surname)).strip().casefold()
+        if a.account_holder.strip().casefold()!=full:
+            raise ValueError('Single-signature applications require your own bank account. Ask staff for assistance if another account holder must sign.')
+        if not a.debit_day or not a.first_deduction_date:
+            raise ValueError('Select the debit day and first deduction date.')
+    else:
+        for key in ['bank_name','branch_code','account_number','account_type','account_holder','debit_day','first_deduction_date']:setattr(a,key,'')
+    ok,errors=assert_application_rules(a)
+    if not ok:raise ValueError('; '.join(errors))
+    choice=form.get('marketing_choice')
+    if choice not in {'yes','no'}:raise ValueError('Select Yes or No for marketing messages.')
+    cdd={key:form.get('cdd_'+key,'').strip() for key,label,options in CDD_FIELDS}
+    cdd.update(telephone=a.cell_number,residential_address=a.residential_address,postal_address=a.postal_address,email=a.email)
+    from app.services.compliance_service import format_dob
+    cdd['birth_date']=datetime.strptime(format_dob(a.date_of_birth),'%d/%m/%Y').strftime('%Y-%m-%d')
+    save_answers(a,cdd)
+    apply_consent(a,choice=='yes',None,None)
+    a.whatsapp_journey.ready=True
+
+
+def notify_activation(a):
+    """Do not resend on duplicate verification. Failed delivery can be retried explicitly."""
+    from app import db
+    from app.models import ApplicationJourney
+    from app.services.email_service import client_email_content, send_email
+    journey=ApplicationJourney.query.filter_by(application_id=a.id).with_for_update().populate_existing().one()
+    if not journey.activated_at or journey.notice_status in {'Sent','Sending'}:
+        return journey.notice_status=='Sent'
+    journey.notice_status='Sending'
+    db.session.commit()
+    subject,body=client_email_content('activation',a)
+    sent=send_email(a.document_email or a.email,subject,body,application_id=a.id)
+    journey.notice_status='Sent' if sent else 'Failed'
+    if sent:journey.notice_sent_at=datetime.utcnow()
+    db.session.commit()
+    return sent

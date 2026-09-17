@@ -159,7 +159,7 @@ def application_documents(app_id):
             previous.status = "Replaced"
         doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status=validation_status, uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
         db.session.add(doc)
-        if app.status not in {'QA Approved', 'Compliance Approved', 'QA Rejected', 'Compliance Rejected', 'Signed'}:
+        if app.status not in {'Active', 'QA Approved', 'Compliance Approved', 'QA Rejected', 'Compliance Rejected', 'Signed'}:
             app.status = 'FICA Review'
         db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{FICA_LABELS.get(doc_type, doc_type)} uploaded by staff: {safe}; Status: {validation_status}; {validation_notes}"))
         db.session.commit()
@@ -282,9 +282,9 @@ def resend_missing(app_id, channel):
         if not app.cell_number:
             flash("This application has no cellphone number.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
-        sent = send_whatsapp_message(app.cell_number, body)
-        from app.services.conversation_history import record_communication
-        record_communication('WhatsApp',body,'Sent' if sent else 'Failed',application_id=app.id)
+        from app.services.whatsapp_service import send_application_link
+        sent = send_application_link(app, link, body).ok
+
     else:
         abort(404)
 

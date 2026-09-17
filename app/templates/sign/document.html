@@ -21,7 +21,7 @@
 
 <h2 style="margin-top:0;font-size:20px">Your marketing choice</h2>
 
-<p>Choose whether Martin's Funerals may contact you for telesales, product updates and marketing messages, including WhatsApp. Your application can proceed with either choice.</p>
+<p>Choose whether Martin's Funerals may contact you for Insurance Sales, product updates and marketing messages, including WhatsApp. Your application can proceed with either choice.</p>
 
 <form method="post" action="{{url_for('signing.sign_application',token=token)}}">
 
@@ -29,7 +29,7 @@
 
 <label><input style="width:auto" type="radio" name="marketing_choice" value="yes" required {% if marketing_consent is sameas true %}checked{% endif %}> Yes, I consent to receiving product updates and marketing.</label>
 
-<label><input style="width:auto" type="radio" name="marketing_choice" value="no" required {% if marketing_consent is sameas false %}checked{% endif %}> No, do not contact me for telesales or marketing.</label>
+<label><input style="width:auto" type="radio" name="marketing_choice" value="no" required {% if marketing_consent is sameas false %}checked{% endif %}> No, do not contact me for Insurance Sales or marketing.</label>
 
 <button class="primary" style="margin-top:12px">Save marketing choice</button>
 

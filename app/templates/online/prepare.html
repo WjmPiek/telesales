@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% block content %}
+<h2>WhatsApp application form</h2><p>{{policy.initials}} {{policy.surname}}</p>
+<p>Select the product agreed with the client. Complete the employee FIC check on the application, then send the form through WhatsApp.</p>
+{% if error %}<div class="alert alert-danger">{{error}}</div>{% endif %}
+<form method="post"><label for="product">Policy product</label><select class="form-select mb-3" id="product" name="product_id" required><option value="">Select a product</option>{% for p in products %}<option value="{{p.id}}">{{p.product_name}} {{p.plan_name}} — R{{p.monthly_premium}} / month, cover R{{p.cover_amount}}</option>{% endfor %}</select><button class="btn btn-primary">Prepare WhatsApp application</button></form>
+{% endblock %}

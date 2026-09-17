@@ -390,6 +390,9 @@ def sign_application(token):
     if not session.get(_unlocked_key(app_obj.id)):
         return render_template("sign/unlock.html", app=app_obj, token=token)
 
+    if app_obj.whatsapp_journey:
+        return redirect(url_for("online_application.form", token=token))
+
     if request.method == "POST":
         action = request.form.get("action")
         try:
@@ -473,76 +476,8 @@ def sign_application(token):
                 return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
 
             if action == "final_submit":
-                from app.services.delivery_preferences import receipt_address
-                recipient = receipt_address(request.form, app_obj)
-                ok, errors = assert_application_rules(app_obj)
-                if not ok:
-                    raise ValueError("Application blocked: " + "; ".join(errors))
-                signed = _signed_doc_types(app_obj)
-                missing_sigs = [label for key, label in REQUIRED_SIGNATURE_DOCS if key not in signed]
-                required, received, outstanding, docs = _fica_status(app_obj)
-                if missing_sigs:
-                    raise ValueError("Please sign these documents first: " + ", ".join(missing_sigs))
-                if outstanding:
-                    raise ValueError("Please upload outstanding FICA documents: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding))
+                return finish_application(app_obj, token)
 
-                signed_records = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=app_obj.id).all()}
-                sig = signed_records.get("application:principal")
-                sig_path = sig.signature_image_path if sig else None
-                folder = application_folder(app_obj)
-                signed_pdf = os.path.join(folder, f"signed_application_{app_obj.id}.pdf")
-                welcome_pdf = os.path.join(folder, f"welcome_pack_{app_obj.id}.pdf")
-                popia_pdf = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
-                disclosure_pdf = os.path.join(folder, f"policy_disclosure_{app_obj.id}.pdf")
-                fica_pdf = os.path.join(folder, f"fica_verification_{app_obj.id}.pdf")
-                generate_application_pdf(app_obj, signed_pdf, signature_path_override=sig_path)
-                generate_welcome_pack(app_obj, welcome_pdf, signature_path_override=signed_records["welcome"].signature_image_path)
-                generate_popia_pdf(app_obj, popia_pdf, signature_path_override=signed_records["popia"].signature_image_path)
-                generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=signed_records["disclosure"].signature_image_path)
-                generate_fica_pdf(app_obj, fica_pdf, signature_path_override=sig_path)
-                cdd_pdf=os.path.join(folder,f"annexure_j1_{app_obj.id}.pdf")
-                generate_cdd_pdf(app_obj,cdd_pdf)
-
-                if recipient != (app_obj.document_email or ''):
-                    from app.models import AuditLog
-                    db.session.add(AuditLog(action="Document email selected", entity_type="ClientApplication", entity_id=str(app_obj.id), details="ID-verified client selected the signed-document email recipient."))
-                app_obj.document_email = recipient
-                app_obj.status = "Signed"
-                app_obj.signed_at = datetime.utcnow()
-                app_obj.sign_token_used_at = datetime.utcnow()
-                app_obj.sign_token_revoked = True
-                app_obj.signed_pdf_path = signed_pdf
-                app_obj.welcome_pack_path = welcome_pdf
-                app_obj.popia_pdf_path = popia_pdf
-                app_obj.disclosure_pdf_path = disclosure_pdf
-
-                if sig:
-                    db.session.add(ApplicationSignature(
-                        application_id=app_obj.id,
-                        typed_name=sig.typed_name,
-                        otp_verified=False,
-                        signature_image_path=sig_path,
-                        ip_address=request.remote_addr,
-                        user_agent=request.headers.get("User-Agent"),
-                        consent_popia=True,
-                        consent_disclosure=True,
-                        consent_marketing=consent_value(app_obj) is True,
-                        signed_at=datetime.utcnow(),
-                    ))
-                db.session.commit()
-                session.pop(_unlocked_key(app_obj.id), None)
-                if recipient:
-                    from app.services.email_service import client_email_content
-                    subject, body = client_email_content("receipt", app_obj)
-                    send_email(recipient, subject, body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
-                office_email = os.getenv("MAIL_DOCUMENTS_TO")
-                from email.utils import parseaddr
-                if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
-                    app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
-                    send_email(office_email, "Signed documents received: " + app_obj.application_ref,
-                               "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n" + app_link)
-                db.session.commit()
-                return render_template("sign/complete.html", app=app_obj)
         except Exception as e:
             db.session.rollback()
             current_app.logger.exception("Client signing/FICA action failed for application %s", app_obj.id)
@@ -638,3 +573,78 @@ def download_fica_upload(token, doc_id):
     if not path:
         abort(404)
     return send_file(path, as_attachment=False)
+
+
+def finish_application(app_obj, token):
+    from app.services.delivery_preferences import receipt_address
+    recipient = receipt_address(request.form, app_obj)
+    ok, errors = assert_application_rules(app_obj)
+    if not ok:
+        raise ValueError("Application blocked: " + "; ".join(errors))
+    signed = _signed_doc_types(app_obj)
+    missing_sigs = [label for key, label in REQUIRED_SIGNATURE_DOCS if key not in signed]
+    required, received, outstanding, docs = _fica_status(app_obj)
+    if missing_sigs:
+        raise ValueError("Please sign these documents first: " + ", ".join(missing_sigs))
+    if outstanding:
+        raise ValueError("Please upload outstanding FICA documents: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding))
+
+    signed_records = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=app_obj.id).all()}
+    sig = signed_records.get("application:principal")
+    sig_path = sig.signature_image_path if sig else None
+    folder = application_folder(app_obj)
+    signed_pdf = os.path.join(folder, f"signed_application_{app_obj.id}.pdf")
+    welcome_pdf = os.path.join(folder, f"welcome_pack_{app_obj.id}.pdf")
+    popia_pdf = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
+    disclosure_pdf = os.path.join(folder, f"policy_disclosure_{app_obj.id}.pdf")
+    fica_pdf = os.path.join(folder, f"fica_verification_{app_obj.id}.pdf")
+    generate_application_pdf(app_obj, signed_pdf, signature_path_override=sig_path)
+    generate_welcome_pack(app_obj, welcome_pdf, signature_path_override=signed_records["welcome"].signature_image_path)
+    generate_popia_pdf(app_obj, popia_pdf, signature_path_override=signed_records["popia"].signature_image_path)
+    generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=signed_records["disclosure"].signature_image_path)
+    generate_fica_pdf(app_obj, fica_pdf, signature_path_override=sig_path)
+    cdd_pdf=os.path.join(folder,f"annexure_j1_{app_obj.id}.pdf")
+    generate_cdd_pdf(app_obj,cdd_pdf)
+
+    if recipient != (app_obj.document_email or ''):
+        from app.models import AuditLog
+        db.session.add(AuditLog(action="Document email selected", entity_type="ClientApplication", entity_id=str(app_obj.id), details="ID-verified client selected the signed-document email recipient."))
+    app_obj.document_email = recipient
+    app_obj.status = "Signed"
+    app_obj.signed_at = datetime.utcnow()
+    app_obj.sign_token_used_at = datetime.utcnow()
+    app_obj.sign_token_revoked = True
+    app_obj.signed_pdf_path = signed_pdf
+    app_obj.welcome_pack_path = welcome_pdf
+    app_obj.popia_pdf_path = popia_pdf
+    app_obj.disclosure_pdf_path = disclosure_pdf
+
+    if sig:
+        db.session.add(ApplicationSignature(
+            application_id=app_obj.id,
+            typed_name=sig.typed_name,
+            otp_verified=False,
+            signature_image_path=sig_path,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get("User-Agent"),
+            consent_popia=True,
+            consent_disclosure=True,
+            consent_marketing=consent_value(app_obj) is True,
+            signed_at=datetime.utcnow(),
+        ))
+    db.session.commit()
+    session.pop(_unlocked_key(app_obj.id), None)
+    if recipient:
+        from app.services.email_service import client_email_content
+        subject, body = client_email_content("receipt", app_obj)
+        send_email(recipient, subject, body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
+    office_email = os.getenv("MAIL_DOCUMENTS_TO")
+    from email.utils import parseaddr
+    if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
+        app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
+        from app.services.email_service import signing_email_html
+        office_body = "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n\n" + app_link
+        send_email(office_email, "Signed documents received: " + app_obj.application_ref,
+                   office_body, html_body=signing_email_html(app_obj,app_link,office_body), application_id=app_obj.id)
+    db.session.commit()
+    return render_template("sign/complete.html", app=app_obj)

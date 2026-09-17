@@ -708,7 +708,7 @@ def create_campaign_template(campaign_id):
 
     ok, message = submit_campaign_template(campaign, force=True)
     if ok:
-        flash("Template submitted automatically to 360dialog/Meta. TeleSales will monitor it until approved.", "success")
+        flash("Template submitted automatically to 360dialog/Meta. Insurance Sales will monitor it until approved.", "success")
     else:
         queue_provider_job("submit_template", campaign.id, delay_seconds=120, max_attempts=5)
         flash(f"Template submission is queued for automatic retry: {message}", "warning")

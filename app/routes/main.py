@@ -44,7 +44,7 @@ def login_alias():
 
 @main_bp.route("/healthz")
 def healthz():
-    return {"ok": True, "service": "telesales"}
+    return {"ok": True, "service": "Insurance Sales"}
 
 
 def _is_manager_user():

@@ -154,6 +154,8 @@ def _ensure_client_fica_document_columns(app):
 
 def create_app():
     app = Flask(__name__)
+    from app.services.branding import display_brand
+    app.jinja_env.finalize = display_brand
     secret_key = os.getenv("SECRET_KEY")
     if not secret_key and os.getenv("FLASK_ENV") == "production":
         raise RuntimeError("SECRET_KEY must be set in production")
@@ -314,6 +316,8 @@ def create_app():
     app.register_blueprint(main_bp)
     app.register_blueprint(applications_bp)
     app.register_blueprint(signing_bp)
+    from app.routes.online_application import online_bp
+    app.register_blueprint(online_bp)
     app.register_blueprint(policies_bp)
     app.register_blueprint(recovery_bp)
     app.register_blueprint(qa_bp)

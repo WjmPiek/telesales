@@ -14,7 +14,7 @@
   <div class="row justify-content-center">
     <div class="col-md-5 mt-5">
       <div class="card shadow">
-        <div class="card-header martins-card-header">Martins System - TeleSales QR Login</div>
+        <div class="card-header martins-card-header">Martin's Funerals - Insurance Sales QR Login</div>
         <div class="card-body">
           {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -26,8 +26,8 @@
 
           {% if state == 'pair_required' %}
             <h5>Link this phone</h5>
-            <p>A desktop browser is requesting access to TeleSales.</p>
-            <p class="small text-muted">First time only: enter your TeleSales login details to trust this phone. After this, scanning a QR code from this phone will sign the desktop in automatically.</p>
+            <p>A desktop browser is requesting access to Insurance Sales.</p>
+            <p class="small text-muted">First time only: enter your Insurance Sales login details to trust this phone. After this, scanning a QR code from this phone will sign the desktop in automatically.</p>
             <form method="post">
               <label>Email</label>
               <input class="form-control mb-2" name="email" autocomplete="username" required>

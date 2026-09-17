@@ -188,7 +188,7 @@ def queue():
 @login_required
 @permission_required("recovery.view")
 def pipeline():
-    """Kanban-style lead pipeline for daily telesales follow-up."""
+    """Kanban-style lead pipeline for daily Insurance Sales follow-up."""
     columns = [
         "Imported", "No Answer", "Callback", "Interested",
         "Application Started", "Signature Sent", "FICA Outstanding",
@@ -214,7 +214,7 @@ def update_status(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
     if telephone_blocked(p):
-        flash("This client has opted out of telesales contact.", "warning")
+        flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))
 
     new_status = (request.form.get("status") or "").strip()
@@ -496,7 +496,7 @@ def log_call(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
     if telephone_blocked(p):
-        flash("This client has opted out of telesales contact.", "warning")
+        flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))
 
     outcomes = CALL_OUTCOMES
@@ -1091,9 +1091,9 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     if valid_email(app_obj.email):
         sent = send_email(app_obj.email.strip(), subject, body, [], html_body=signing_email_html(app_obj, link, body), application_id=app_obj.id)
     if not sent and app_obj.cell_number:
-        wa_sent = send_whatsapp_message(app_obj.cell_number, body)
-        from app.services.conversation_history import record_communication
-        record_communication('WhatsApp',body,'Sent' if wa_sent else 'Failed',application_id=app_obj.id)
+        from app.services.whatsapp_service import send_application_link
+        wa_sent = send_application_link(app_obj, link, body).ok
+
         sent = wa_sent
     app_obj.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
@@ -1138,7 +1138,7 @@ def _load_script_steps():
                     step[field] = edit[field]
         return steps
     except Exception as exc:
-        current_app.logger.exception("Could not load telesales script config: %s", exc)
+        current_app.logger.exception("Could not load Insurance Sales script config: %s", exc)
         return steps
 
 
@@ -1231,7 +1231,7 @@ def start_script(policy_id):
     p = LapsedPolicy.query.filter_by(id=policy_id).with_for_update().first_or_404()
     ensure_branch_access(p, agent_attr="assigned_agent_id")
     if telephone_blocked(p):
-        flash("This client has opted out of telesales contact.", "warning")
+        flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))
 
     app_type = request.args.get("app_type", "new")
@@ -1273,7 +1273,7 @@ def script_step(session_id):
     if session.status != 'In Progress':
         return redirect(url_for('recovery.script_complete', session_id=session.id))
     if session.lapsed_policy and telephone_blocked(session.lapsed_policy):
-        flash("This client has opted out of telesales contact.", "warning")
+        flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))
     if _answer_value(session, "members_pending", False):
         return redirect(url_for("recovery.script_members", session_id=session.id))
@@ -1507,7 +1507,7 @@ def download_script_pdf(session_id):
         abort(403)
     if not session.pdf_path or not os.path.exists(session.pdf_path):
         _save_script_pdf(session)
-    return send_file(session.pdf_path, as_attachment=False)
+    return send_file(session.pdf_path, as_attachment=False, download_name=f"insurance_sales_script_{session.id}.pdf")
 
 
 @recovery_bp.route("/scripts")
@@ -1594,7 +1594,7 @@ def start_application(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
     if telephone_blocked(p):
-        flash("This client has opted out of telesales contact.", "warning")
+        flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))
 
     app_type = request.args.get("app_type", "reinstatement")

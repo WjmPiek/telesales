@@ -1,6 +1,6 @@
-"""Enterprise WhatsApp template/media orchestration for TeleSales.
+"""Enterprise WhatsApp template/media orchestration for Insurance Sales.
 
-Meta Cloud API is the transport provider; TeleSales owns the operational state.
+Meta Cloud API is the transport provider; Insurance Sales owns the operational state.
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def publish_campaign_image(campaign: CommunicationCampaign) -> MediaPublishResul
     api_secret = os.getenv("CLOUDINARY_API_SECRET")
     if cloud_name and api_key and api_secret:
         timestamp = int(time.time())
-        public_id = f"telesales/whatsapp/campaign_{campaign.id}_{timestamp}"
+        public_id = f"insurance_sales/whatsapp/campaign_{campaign.id}_{timestamp}"
         signature_base = f"public_id={public_id}&timestamp={timestamp}{api_secret}"
         signature = hashlib.sha1(signature_base.encode("utf-8")).hexdigest()
         files = {

@@ -690,7 +690,7 @@ def qr_approve(token):
         password = request.form.get("password", "")
         user = User.query.filter_by(email=email).first()
         if not user or not user.check_password(password) or not user.active or not _role_allowed(user):
-            flash("Access denied. Use an active TeleSales user account.", "danger")
+            flash("Access denied. Use an active Insurance Sales user account.", "danger")
             return render_template("auth/qr_approve.html", state="pair_required", token=qr_token)
 
         raw_device_token = secrets.token_urlsafe(48)

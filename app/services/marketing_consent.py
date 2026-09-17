@@ -1,4 +1,4 @@
-"""Explicit POPIA choices, applied atomically to the telesales marketing lists."""
+"""Explicit POPIA choices, applied atomically to the Insurance Sales marketing lists."""
 from datetime import datetime
 from app import db
 from app.models import (ApplicationMarketingConsent, ContactSuppression, LapsedPolicy,

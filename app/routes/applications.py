@@ -243,6 +243,9 @@ def _block_signing_message(errors):
 def send_sign_link(app_id):
     a = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(a, agent_attr="agent_id")
+    if a.whatsapp_journey and a.whatsapp_journey.signed_bundle_at:
+        flash("These application documents have already been signed. Use the document review page to request replacement uploads.", "info")
+        return redirect(url_for("applications.view_application", app_id=a.id))
     ok, errors = assert_application_rules(a)
     if not ok:
         _block_signing_message(errors)
@@ -276,18 +279,22 @@ def send_sign_link(app_id):
     from app.services.delivery_preferences import valid_email
     sent = False
     channel = 'Email'
-    if valid_email(a.email):
+    if a.whatsapp_journey:
+        from app.services.whatsapp_service import send_application_link
+        channel = "WhatsApp"
+        sent = send_application_link(a, link, body).ok
+    elif valid_email(a.email):
         sent = send_email(a.email.strip(), subject, body, [], html_body=signing_email_html(a, link, body), application_id=a.id)
-    if not sent and a.cell_number:
+    if not sent and a.cell_number and not a.whatsapp_journey:
         channel = 'WhatsApp'
-        result = send_whatsapp_text(a.cell_number, body)
+        from app.services.whatsapp_service import send_application_link
+        result = send_application_link(a, link, body)
         sent = result.ok
-        from app.services.conversation_history import record_communication
-        record_communication('WhatsApp',body,'Sent' if sent else 'Failed',application_id=a.id)
+
 
     a.status = "Signing Link Sent" if sent else "Signing Link Prepared"
     db.session.commit()
-    flash(f"Signing link accepted for delivery by {channel}." if sent else "Email was not sent and WhatsApp delivery did not succeed. Check the contact details and delivery settings.", "success" if sent else "danger")
+    flash(f"Signing link accepted for delivery by {channel}." if sent else "Delivery did not succeed. Check the contact details and delivery settings. WhatsApp buttons require a recent client reply.", "success" if sent else "danger")
     return redirect(url_for("applications.view_application", app_id=a.id))
 
 
@@ -297,6 +304,9 @@ def send_sign_link(app_id):
 def send_sign_whatsapp(app_id):
     app_obj = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(app_obj, agent_attr="agent_id")
+    if app_obj.whatsapp_journey and app_obj.whatsapp_journey.signed_bundle_at:
+        flash("These application documents have already been signed. Use the document review page to request replacement uploads.", "info")
+        return redirect(url_for("applications.view_application", app_id=app_obj.id))
     ok, errors = assert_application_rules(app_obj)
     if not ok:
         _block_signing_message(errors)
@@ -325,9 +335,8 @@ def send_sign_whatsapp(app_id):
     )
 
     phone = app_obj.cell_number
-    result = send_whatsapp_text(phone, message)
-    from app.services.conversation_history import record_communication
-    record_communication('WhatsApp',message,'Sent' if result.ok else 'Failed',application_id=app_obj.id)
+    from app.services.whatsapp_service import send_application_link
+    result = send_application_link(app_obj, sign_url, message)
     db.session.commit()
 
     if result.ok:
