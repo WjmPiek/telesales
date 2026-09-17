@@ -261,10 +261,10 @@ def callbacks():
     today = now.date()
     rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').order_by(LapsedPolicy.next_action_date.asc(), LapsedPolicy.callback_at.asc()).all()
     overdue = [p for p in rows if (p.callback_at and p.callback_at <= now) or (not p.callback_at and p.next_action_date and p.next_action_date < today)]
-    due_today = [p for p in rows if p not in overdue and p.next_action_date == today]
-    upcoming = [p for p in rows if p not in overdue and p.next_action_date and p.next_action_date > today]
+    due_today = [p for p in rows if p not in overdue and not p.callback_at and p.next_action_date == today]
+    upcoming = [p for p in rows if p not in overdue and ((p.callback_at and p.callback_at > now) or (p.next_action_date and p.next_action_date > today))]
     unscheduled = [p for p in rows if not p.next_action_date]
-    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming, unscheduled=unscheduled, today=today)
+    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming, unscheduled=unscheduled, today=today, unfinished=_unfinished_clients())
 
 
 @recovery_bp.route('/callback-reminders')
@@ -272,8 +272,16 @@ def callbacks():
 @permission_required('recovery.view')
 def callback_reminders():
     now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
-    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').filter(LapsedPolicy.callback_at <= now).all()
-    return jsonify(reminders=[dict(name=((p.initials or '')+' '+(p.surname or '')).strip(), time=p.callback_at.strftime('%d %b %H:%M') if p.callback_at else 'Time not set', url=url_for('recovery.log_call', policy_id=p.id)) for p in rows])
+    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback', LapsedPolicy.callback_at <= now + timedelta(minutes=2)).order_by(LapsedPolicy.callback_at).all()
+    reminders, alerts = [], []
+    for p in rows:
+        call = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).filter_by(lapsed_policy_id=p.id,status='In Progress').order_by(TelesalesScriptSession.created_at.desc()).first()
+        item = dict(name=((p.initials or '')+' '+(p.surname or '')).strip(), time=p.callback_at.strftime('%d %b %Y %H:%M'), url=url_for('recovery.start_script',policy_id=p.id) if call else url_for('recovery.log_call',policy_id=p.id), label='Resume script' if call else 'Call client', key=f'{current_user.id}:{p.id}:{p.callback_at.isoformat()}', due=p.callback_at <= now)
+        alerts.append(item)
+        if item['due']:
+            reminders.append(item)
+    return jsonify(reminders=reminders, alerts=alerts)
+
 
 
 @recovery_bp.route('/script/<int:session_id>/end-call', methods=['POST'])
@@ -1457,6 +1465,10 @@ def script_records():
 @permission_required('recovery.view')
 def not_finalised():
     q = request.args.get('q', '').strip()
+    return render_template('recovery/not_finalised.html', rows=_unfinished_clients(q), q=q)
+
+
+def _unfinished_clients(q=''):
     terminal = {'QA Approved', 'Compliance Approved', 'Approved', 'Rejected', 'Closed', 'Cancelled', 'Issued', 'Active', 'Reinstated'}
     scripts = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).filter(TelesalesScriptSession.status.in_(['In Progress', 'Completed']))
     if not _can_manage_scripts():
@@ -1479,7 +1491,11 @@ def not_finalised():
         row = rows.setdefault(key, dict(name=s.client_name, phone=s.client_cell, reference=s.policy_number, status='Script '+s.status, script=None, application=None, policy_id=s.lapsed_policy_id, date=s.created_at))
         if row['script'] is None:
             row['script'] = s
-    return render_template('recovery/not_finalised.html', rows=sorted(rows.values(), key=lambda row: row['date'] or datetime.min, reverse=True), q=q)
+    result = sorted(rows.values(), key=lambda row: row['date'] or datetime.min, reverse=True)
+    for row in result:
+        policy = db.session.get(LapsedPolicy, row['policy_id']) if row['policy_id'] else None
+        row['callback_at'] = policy.callback_at if policy and policy.recovery_status == 'Callback' else None
+    return result
 
 
 

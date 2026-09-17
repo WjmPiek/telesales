@@ -141,6 +141,33 @@ class ApplicationFlowTests(unittest.TestCase):
         db.session.get(User,self.user_id).role=other.role;db.session.commit()
         self.assertEqual(self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'no_more_calls'}).status_code,403)
 
+    def test_home_unfinished_clients_and_two_minute_callback_alert(self):
+        from datetime import datetime,timedelta
+        sid=self._new_call_script(8,{'1':{'answer':'yes'}})
+        pid=db.session.get(TelesalesScriptSession,sid).lapsed_policy_id
+        now=datetime(2026,9,17,12,0)
+        policy=db.session.get(LapsedPolicy,pid)
+        policy.callback_at=now+timedelta(minutes=2)
+        policy.next_action_date=now.date()
+        db.session.commit()
+        with patch('app.routes.recovery.datetime',wraps=datetime) as clock:
+            clock.now.return_value=now
+            data=self.client.get('/recovery/callback-reminders').json
+            self.assertEqual(len(data['alerts']),1)
+            self.assertEqual(data['reminders'],[])
+            self.assertEqual(data['alerts'][0]['label'],'Resume script')
+            self.assertTrue(data['alerts'][0]['url'].endswith(f'/{pid}/script/start'))
+            html=self.client.get('/recovery/callbacks').get_data(as_text=True)
+            self.assertIn('Not finalised',html)
+            self.assertIn('17 Sep 2026 12:02',html)
+            self.assertIn('Test Callback',html.split('Upcoming callbacks')[1])
+            policy=db.session.get(LapsedPolicy,pid);policy.callback_at=now+timedelta(minutes=3);db.session.commit()
+            self.assertEqual(self.client.get('/recovery/callback-reminders').json['alerts'],[])
+            policy=db.session.get(LapsedPolicy,pid);policy.callback_at=now-timedelta(minutes=1);db.session.commit()
+            data=self.client.get('/recovery/callback-reminders').json
+            self.assertTrue(data['alerts'][0]['due'])
+            self.assertEqual(len(data['reminders']),1)
+
     def _new_call_script(self, step, answers=None):
         import json
         policy = LapsedPolicy(initials='Test', surname='Callback', cell_number='0821234567',
