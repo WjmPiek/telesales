@@ -4,6 +4,7 @@
   <span class="badge bg-primary">Step {{step.id}} of {{total_steps}}</span>
 </div>
 <div class="progress mb-3"><div class="progress-bar" style="width: {{progress}}%"></div></div>
+<p><a href="{{ url_for('recovery.not_finalised') }}">Back to Not finalised</a> <small class="text-muted">Your completed answers are saved. Use Continue to save the current answer before leaving.</small></p>
 <div class="row">
   <div class="col-md-4">
     <div class="card mb-3"><div class="card-header"><b>Client Details</b></div><div class="card-body small">

@@ -10,7 +10,7 @@ from flask_login import login_required, current_user
 from openpyxl import load_workbook
 from app import db
 from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument, AuditLog
-from app.security import permission_required
+from app.security import permission_required, is_admin_user
 from app.services.pdf_service import generate_telesales_script_pdf, generate_application_pdf, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.marketing_consent import telephone_blocked
 from app.services.email_service import send_email, signing_email_html
@@ -1100,7 +1100,7 @@ def _role_name():
 
 def _can_manage_scripts():
     role = _role_name()
-    return role in {"admin", "branch manager", "branch_manager", "manager"}
+    return is_admin_user() or role in {"branch manager", "branch_manager", "manager"}
 
 
 def _script_step(step_id):
@@ -1136,13 +1136,18 @@ def _script_score(answers):
 @login_required
 @permission_required("recovery.call")
 def start_script(policy_id):
-    p = LapsedPolicy.query.get_or_404(policy_id)
+    p = LapsedPolicy.query.filter_by(id=policy_id).with_for_update().first_or_404()
     ensure_branch_access(p, agent_attr="assigned_agent_id")
     if telephone_blocked(p):
         flash("This client has opted out of telesales contact.", "warning")
         return redirect(url_for("recovery.queue"))
 
     app_type = request.args.get("app_type", "new")
+    existing = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).filter_by(lapsed_policy_id=p.id, status='In Progress').order_by(TelesalesScriptSession.created_at.desc()).first()
+    if existing and (existing.agent_id == current_user.id or _can_manage_scripts()):
+        existing_id = existing.id
+        db.session.commit()
+        return redirect(url_for('recovery.script_step', session_id=existing_id))
     client_name = f"{p.initials or ''} {p.surname or ''}".strip()
     session = TelesalesScriptSession(
         lapsed_policy_id=p.id,
@@ -1170,6 +1175,8 @@ def script_step(session_id):
     ensure_branch_access(session, agent_attr="agent_id")
     if session.agent_id != current_user.id and not _can_manage_scripts():
         abort(403)
+    if session.status != 'In Progress':
+        return redirect(url_for('recovery.script_complete', session_id=session.id))
     if session.lapsed_policy and telephone_blocked(session.lapsed_policy):
         flash("This client has opted out of telesales contact.", "warning")
         return redirect(url_for("recovery.queue"))
@@ -1324,10 +1331,10 @@ def script_complete(session_id):
 @login_required
 @permission_required("applications.view")
 def download_script_pdf(session_id):
-    if not _can_manage_scripts():
-        abort(403)
     session = TelesalesScriptSession.query.get_or_404(session_id)
     ensure_branch_access(session, agent_attr="agent_id")
+    if session.agent_id != current_user.id and not _can_manage_scripts():
+        abort(403)
     if not session.pdf_path or not os.path.exists(session.pdf_path):
         _save_script_pdf(session)
     return send_file(session.pdf_path, as_attachment=False)
@@ -1337,10 +1344,44 @@ def download_script_pdf(session_id):
 @login_required
 @permission_required("applications.view")
 def script_records():
+    q = request.args.get('q', '').strip()
+    query = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id)
     if not _can_manage_scripts():
-        abort(403)
-    sessions = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).order_by(TelesalesScriptSession.created_at.desc()).limit(300).all()
-    return render_template("recovery/script_records.html", sessions=sessions)
+        query = query.filter_by(agent_id=current_user.id)
+    if q:
+        query = query.filter(db.or_(TelesalesScriptSession.client_name.ilike('%'+q+'%'), TelesalesScriptSession.client_cell.ilike('%'+q+'%'), TelesalesScriptSession.policy_number.ilike('%'+q+'%'), TelesalesScriptSession.lapsed_policy.has(LapsedPolicy.id_number.ilike('%'+q+'%'))))
+    sessions = query.order_by(TelesalesScriptSession.created_at.desc()).limit(300).all()
+    return render_template("recovery/script_records.html", sessions=sessions, q=q, can_setup=is_admin_user())
+
+
+@recovery_bp.route('/not-finalised')
+@login_required
+@permission_required('recovery.view')
+def not_finalised():
+    q = request.args.get('q', '').strip()
+    terminal = {'QA Approved', 'Compliance Approved', 'Approved', 'Rejected', 'Closed', 'Cancelled', 'Issued', 'Active', 'Reinstated'}
+    scripts = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).filter(TelesalesScriptSession.status.in_(['In Progress', 'Completed']))
+    if not _can_manage_scripts():
+        scripts = scripts.filter_by(agent_id=current_user.id)
+    apps = scope_by_branch(ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id).filter(db.or_(ClientApplication.status.is_(None), ClientApplication.status.notin_(terminal)))
+    if q:
+        pattern = '%'+q+'%'
+        scripts = scripts.filter(db.or_(TelesalesScriptSession.client_name.ilike(pattern), TelesalesScriptSession.client_cell.ilike(pattern), TelesalesScriptSession.policy_number.ilike(pattern), TelesalesScriptSession.lapsed_policy.has(LapsedPolicy.id_number.ilike(pattern))))
+        apps = apps.filter(db.or_((db.func.coalesce(ClientApplication.first_names,'')+' '+db.func.coalesce(ClientApplication.surname,'')).ilike(pattern), ClientApplication.cell_number.ilike(pattern), ClientApplication.id_number.ilike(pattern), ClientApplication.policy_number.ilike(pattern), ClientApplication.application_ref.ilike(pattern)))
+    rows = {}
+    for a in apps.order_by(ClientApplication.created_at.desc()).limit(500):
+        key = ('policy', a.lapsed_policy_id) if a.lapsed_policy_id else ('application', a.id)
+        rows.setdefault(key, dict(name=((a.first_names or '')+' '+(a.surname or '')).strip(), phone=a.cell_number, reference=a.application_ref, status=a.status, script=None, application=a, policy_id=a.lapsed_policy_id, date=a.created_at))
+    for s in scripts.order_by(TelesalesScriptSession.created_at.desc()).limit(500):
+        if s.application and s.application.status in terminal:
+            continue
+        if s.lapsed_policy and s.lapsed_policy.recovery_status in terminal:
+            continue
+        key = ('policy', s.lapsed_policy_id) if s.lapsed_policy_id else ('application', s.application_id) if s.application_id else ('script', s.id)
+        row = rows.setdefault(key, dict(name=s.client_name, phone=s.client_cell, reference=s.policy_number, status='Script '+s.status, script=None, application=None, policy_id=s.lapsed_policy_id, date=s.created_at))
+        if row['script'] is None:
+            row['script'] = s
+    return render_template('recovery/not_finalised.html', rows=sorted(rows.values(), key=lambda row: row['date'] or datetime.min, reverse=True), q=q)
 
 
 
@@ -1349,7 +1390,7 @@ def script_records():
 @login_required
 @permission_required("applications.view")
 def admin_script_questions():
-    if _role_name() != "admin":
+    if not is_admin_user():
         abort(403)
     if request.method == "POST":
         _save_script_steps_from_form()
@@ -1362,7 +1403,7 @@ def admin_script_questions():
 @login_required
 @permission_required("applications.view")
 def reset_script_questions():
-    if _role_name() != "admin":
+    if not is_admin_user():
         abort(403)
     path = _script_config_path()
     if os.path.exists(path):

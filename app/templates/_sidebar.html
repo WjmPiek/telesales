@@ -11,6 +11,8 @@
       {{ nav_link('Client list & import', 'recovery.queue') }}
       {{ nav_link('Next client', 'recovery.next_client') }}
       {{ nav_link('Callbacks', 'recovery.callbacks') }}
+      {{ nav_link('Not finalised', 'recovery.not_finalised') }}
+      {{ nav_link('Call scripts', 'recovery.script_records') }}
       {% if admin_role %}{{ nav_link('Suspense', 'recovery.suspense') }}{% endif %}
       {% if admin_role or manager_role %}{{ nav_link('Assign clients', 'allocation.index') }}{% endif %}
     </div>
@@ -55,6 +57,7 @@
       {{ nav_link('Legacy franchises', 'auth.old_franchises') }}
       {{ nav_link('Security', 'security_center.index') }}
       {{ nav_link('System settings', 'settings.index') }}
+      {{ nav_link('Script Setup', 'recovery.admin_script_questions') }}
       {% else %}{{ nav_link('Employees', 'main.franchise_employees') }}{% endif %}
     </div>
   </details>

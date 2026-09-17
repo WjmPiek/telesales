@@ -135,6 +135,58 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertEqual(session.status,'Completed')
         self.assertEqual(json.loads(session.answers_json)['10']['number_of_lives'],4)
 
+    def test_unfinished_script_is_searchable_and_resumed_without_duplicate(self):
+        import json
+        sid = self._new_call_script(8, {'2': {'answer':'yes', 'note':'Saved conversation'}})
+        session = db.session.get(TelesalesScriptSession, sid)
+        pid = session.lapsed_policy_id
+        session.policy_number = 'RESUME-POLICY'
+        session.client_cell = '0821234567'
+        db.session.commit()
+        for term in ['Callback', '0821234567', 'RESUME-POLICY']:
+            response = self.client.get('/recovery/not-finalised', query_string={'q':term})
+            self.assertEqual(response.status_code,200)
+            self.assertIn('Resume script',response.get_data(as_text=True))
+        before = TelesalesScriptSession.query.count()
+        response = self.client.get(f'/recovery/{pid}/script/start')
+        self.assertTrue(response.location.endswith(f'/recovery/script/{sid}'))
+        self.assertEqual(TelesalesScriptSession.query.count(),before)
+        session = db.session.get(TelesalesScriptSession,sid)
+        self.assertEqual(session.current_step,8)
+        self.assertEqual(json.loads(session.answers_json)['2']['note'],'Saved conversation')
+
+    def test_script_navigation_respects_employee_scope_and_admin_setup(self):
+        sid = self._new_call_script(8)
+        private = self._new_call_script(8)
+        other_role = Role(name='Agent')
+        other = User(name='Other',email='other@example.test',password_hash='unused',role=other_role,branch='B')
+        db.session.add(other);db.session.flush()
+        private_session = db.session.get(TelesalesScriptSession,private)
+        private_session.agent_id=other.id;private_session.branch='B';private_session.client_name='PRIVATE OTHER CLIENT'
+        db.session.commit()
+        self.assertEqual(self.client.get('/recovery/scripts/admin/questions').status_code,200)
+        user=db.session.get(User,self.user_id);user.role=Role.query.filter_by(name='Agent').one();db.session.commit()
+        for path in ['/recovery/not-finalised','/recovery/scripts']:
+            response=self.client.get(path)
+            self.assertEqual(response.status_code,200)
+            self.assertIn('Resume script',response.get_data(as_text=True))
+            self.assertNotIn('PRIVATE OTHER CLIENT',response.get_data(as_text=True))
+        self.assertEqual(self.client.get('/recovery/scripts/admin/questions').status_code,403)
+        self.assertEqual(self.client.get(f'/recovery/script/{private}').status_code,403)
+
+    def test_finished_script_cannot_be_changed_by_resume_post(self):
+        sid=self._new_call_script(8,{'8':{'answer':'no'}})
+        session=db.session.get(TelesalesScriptSession,sid);session.status='Completed';db.session.commit()
+        response=self.client.post(f'/recovery/script/{sid}',data={'answer':'yes','step_id':'8'})
+        self.assertTrue(response.location.endswith('/complete'))
+        self.assertEqual(db.session.get(TelesalesScriptSession,sid).answers_json,'{"8": {"answer": "no"}}')
+
+    def test_finalised_applications_leave_unfinished_list(self):
+        self.record.status='Draft';db.session.commit()
+        self.assertIn('TEST-ONLY',self.client.get('/recovery/not-finalised').get_data(as_text=True))
+        self.record.status='QA Approved';db.session.commit()
+        self.assertNotIn('TEST-ONLY',self.client.get('/recovery/not-finalised').get_data(as_text=True))
+
     def tearDown(self):
         db.session.remove(); db.drop_all(); self.ctx.pop(); self.tmp.cleanup()
 
