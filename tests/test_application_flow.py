@@ -1,3 +1,4 @@
+import json
 import base64
 import io
 import os
@@ -59,6 +60,42 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertTrue(self.client.get('/').location.endswith('/recovery/callbacks'))
             self.assertTrue(self.client.get('/home').location.endswith('/recovery/callbacks'))
             self.assertEqual(self.client.get('/recovery/callbacks').status_code, 200)
+
+    def test_script_versions_preserve_existing_calls_and_answers(self):
+        from app.routes.recovery import _current_script_steps
+        sid = self._new_call_script(1, {'1': {'answer': 'yes', 'question': 'Historical wording', 'title': 'Original title'}})
+        with self.app.app_context():
+            old = TelesalesScriptSession.query.get(sid)
+            answers_before = old.answers_json
+            defaults = _current_script_steps()
+        form = {f'enabled_{step["id"]}': 'on' for step in defaults}
+        form['question_1'] = 'New question'
+        form.pop('enabled_1')
+        self.assertEqual(self.client.post('/recovery/scripts/admin/questions', data=form).status_code, 302)
+        with self.app.app_context():
+            old = TelesalesScriptSession.query.get(sid)
+            self.assertEqual(old.answers_json, answers_before)
+            self.assertEqual(_current_script_steps(old)[0]['question'], 'Historical wording')
+            self.assertTrue(_current_script_steps(old)[0].get('enabled', True))
+            self.assertEqual(_current_script_steps()[0]['question'], 'New question')
+            self.assertFalse(_current_script_steps()[0]['enabled'])
+        self.client.post('/recovery/scripts/admin/questions/reset')
+        with self.app.app_context():
+            self.assertEqual(_current_script_steps(TelesalesScriptSession.query.get(sid))[0]['question'], 'Historical wording')
+
+    def test_all_disabled_questions_complete_without_recording_consent(self):
+        self.client.post('/recovery/scripts/admin/questions', data={})
+        sid = self._new_call_script(1)
+        with patch('app.routes.recovery._save_script_pdf'):
+            response = self.client.get(f'/recovery/script/{sid}')
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            call = TelesalesScriptSession.query.get(sid)
+            self.assertEqual(call.status, 'Completed')
+            answers = json.loads(call.answers_json)
+            self.assertEqual(len(answers), 31)
+            self.assertEqual({item['answer'] for item in answers.values()}, {'skipped'})
+            self.assertEqual(call.qa_score, 0)
 
     def _new_call_script(self, step, answers=None):
         import json

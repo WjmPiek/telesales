@@ -2,13 +2,13 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3>Admin Script Questions</h3>
-    <p class="text-muted mb-0">Edit wording only. Step order, QA mapping and compliance flow remain fixed.</p>
+    <p class="text-muted mb-0">Choose which questions to ask and edit their wording. Changes apply only to new calls.</p>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('recovery.script_records') }}">Back to Script QA</a>
 </div>
 
 <div class="alert alert-info">
-  Admin can change how the agent wording appears on screen. The system keeps the same step numbers, stop-call logic and QA sections so reports remain consistent.
+  Existing and unfinished calls keep their original questions and settings. Disabled questions are recorded as skipped, never as consent. Disabling questions can leave details to collect in the application and reduce the QA score.
 </div>
 
 <form method="post">
@@ -22,6 +22,10 @@
       </h2>
       <div id="step{{step.id}}" class="accordion-collapse collapse" data-bs-parent="#scriptAccordion">
         <div class="accordion-body">
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" name="enabled_{{step.id}}" id="enabled{{step.id}}" {% if step.get('enabled', true) %}checked{% endif %}>
+            <label class="form-check-label" for="enabled{{step.id}}">Ask this question</label>
+          </div>
           <div class="mb-2">
             <label class="form-label">Screen Title</label>
             <input class="form-control" name="title_{{step.id}}" value="{{step.title}}">
@@ -46,7 +50,7 @@
     {% endfor %}
   </div>
   <div class="mt-3">
-    <button class="btn btn-primary btn-lg">Save Script Wording</button>
+    <button class="btn btn-primary btn-lg">Save for New Calls</button>
   </div>
 </form>
 

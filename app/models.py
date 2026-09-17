@@ -575,6 +575,7 @@ class TelesalesScriptSession(db.Model):
     current_step = db.Column(db.Integer, default=1)
     status = db.Column(db.String(50), default="In Progress")  # In Progress, Completed, Blocked
     blocked_reason = db.Column(db.Text)
+    script_snapshot_json = db.Column(db.Text)
     answers_json = db.Column(db.Text, default="{}")
     qa_score = db.Column(db.Integer, default=0)
     qa_result = db.Column(db.String(20))

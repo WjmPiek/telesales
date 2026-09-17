@@ -22,6 +22,7 @@ def _ensure_lapsed_policy_contact_columns(app):
             if not str(db.engine.url).startswith("postgresql"):
                 return
             statements = [
+                "ALTER TABLE telesales_script_sessions ADD COLUMN IF NOT EXISTS script_snapshot_json TEXT",
                 "ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS document_email VARCHAR(255)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS company_name VARCHAR(160)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS id_number VARCHAR(30)",

@@ -907,7 +907,7 @@ def generate_telesales_script_pdf(session, script_steps, qa_sections, output_pat
         section_has_block = False
         for step in script_steps:
             rec = ans.get(str(step.get("id")), {})
-            if step.get("qa") == name and step.get("block_on_no") and rec.get("answer") == "no":
+            if step.get("qa") == name and ((step.get("block_on_no") and rec.get("answer") == "no") or not step.get("enabled", True)):
                 section_has_block = True
         scored = 0 if section_has_block else points
         total += scored
