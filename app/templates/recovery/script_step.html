@@ -122,7 +122,7 @@
             <input type="hidden" name="answer" value="yes">
           {% elif step.id == 10 %}
             <label class="form-label" for="numberOfLives">How many people does the client want to cover?</label>
-            <input id="numberOfLives" class="form-control mb-3" type="number" name="number_of_lives" min="1" required>
+            <input id="numberOfLives" class="form-control mb-3" type="number" name="number_of_lives" min="1" value="{{1 + (script_payload.members|length)}}" required>
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Record any details the client gives"></textarea>
             <button class="btn btn-success btn-lg" name="answer" value="yes">Save answer and continue</button>
           {% elif step.id == 11 %}
@@ -185,9 +185,11 @@
               <b>Confirm beneficiary details with the client.</b> These details will pull through to the application documents.
             </div>
             <div class="row g-2 mb-3">
-              <div class="col-md-5"><label class="form-label">Beneficiary Name</label><input class="form-control" name="beneficiary_name" value="{{selected_beneficiary.name}}"></div>
+              <div class="col-md-5"><label class="form-label">Beneficiary Name</label><input class="form-control" name="beneficiary_name" required value="{{selected_beneficiary.name}}"></div>
+              <div class="col-md-6"><label class="form-label">Beneficiary ID number (if available)</label><input class="form-control" name="beneficiary_id_number" maxlength="30" value="{{selected_beneficiary.id_number}}"></div>
+              <div class="col-md-6"><label class="form-label">Beneficiary date of birth</label><input class="form-control" type="date" name="beneficiary_date_of_birth" value="{{selected_beneficiary.date_of_birth}}"></div>
               <div class="col-md-4"><label class="form-label">Beneficiary Contact Number</label><input class="form-control" name="beneficiary_contact" value="{{selected_beneficiary.contact}}"></div>
-              <div class="col-md-3"><label class="form-label">Relationship</label><input class="form-control" name="beneficiary_relationship" value="{{selected_beneficiary.relationship}}"></div>
+              <div class="col-md-3"><label class="form-label">Relationship</label><input class="form-control" name="beneficiary_relationship" required value="{{selected_beneficiary.relationship}}"></div>
             </div>
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
             <button class="btn btn-success btn-lg" name="answer" value="yes">Beneficiary Confirmed</button>

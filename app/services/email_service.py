@@ -77,5 +77,72 @@ def signing_email_html(app_obj, link, body):
         if paragraph.strip() == link:
             paragraphs.append('<p><a href="' + escape(link, quote=True) + '">' + escape(label) + '</a></p>')
         else:
-            paragraphs.append("<p>" + escape(paragraph).replace("\n", "<br>") + "</p>")
+            text = escape(paragraph).replace("\n", "<br>")
+            if link:
+                text = text.replace(escape(link), '<a href="' + escape(link, quote=True) + '">' + escape(label) + '</a>')
+            paragraphs.append("<p>" + text + "</p>")
     return '<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#172337">' + "".join(paragraphs) + '</body></html>'
+
+
+CLIENT_EMAIL_DEFAULTS = {
+    "invitation": {
+        "label": "Application signing invitation",
+        "subject": "Your Martin's Funerals secure signing link",
+        "body": "Dear {client_name},\n\nPlease open this secure Martin's Funerals link to review your application documents, upload your required FICA documents and sign electronically:\n\n{link}\n\nYou will need your ID number to unlock the page.\n\nYour documents are available inside the secure signing link. After final submission, the link is locked.",
+    },
+    "receipt": {
+        "label": "Signed documents receipt",
+        "subject": "Martin's Funerals signed documents received",
+        "body": "Dear {client_name},\n\nYour signed documents have been received and submitted to Martin's Funerals.\n\nYour signed documents are attached for your records. Please keep them in a safe place. Copies are also stored securely with your application.",
+    },
+}
+
+
+def client_email_templates():
+    import json
+    from app.models import SystemSetting
+    row = SystemSetting.query.filter_by(category="Email", key="client_templates_v1").first()
+    try:
+        saved = json.loads(row.value) if row and row.active else {}
+    except (ValueError, TypeError):
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    return {key: {**default, **(saved.get(key) if isinstance(saved.get(key), dict) else {})}
+            for key, default in CLIENT_EMAIL_DEFAULTS.items()}
+
+
+def validate_client_email_templates(templates):
+    from string import Formatter
+    allowed = {"client_name", "first_names", "surname", "application_ref", "link"}
+    for key in CLIENT_EMAIL_DEFAULTS:
+        fields = set()
+        for part in ("subject", "body"):
+            value = templates[key][part].strip()
+            if not value or len(value) > (200 if part == "subject" else 10000):
+                raise ValueError("Enter a subject (up to 200 characters) and message (up to 10,000 characters).")
+            if part == "subject" and ("\n" in value or "\r" in value):
+                raise ValueError("The email subject must be a single line.")
+            for literal, field, spec, conversion in Formatter().parse(value):
+                if field is not None:
+                    if field not in allowed or spec or conversion:
+                        raise ValueError("Use only the placeholders shown below the editor.")
+                    if key == "receipt" and field == "link":
+                        raise ValueError("The receipt cannot use the signing link because it is locked after submission.")
+                    if part == "body":
+                        fields.add(field)
+        if key == "invitation" and "link" not in fields:
+            raise ValueError("The signing invitation must contain {link} in its message.")
+
+
+def client_email_content(kind, application, link=""):
+    templates = client_email_templates()
+    try:
+        validate_client_email_templates(templates)
+    except (ValueError, KeyError, TypeError):
+        templates = CLIENT_EMAIL_DEFAULTS
+    item = templates[kind]
+    values = {"client_name": " ".join(filter(None, [application.first_names, application.surname])) or "Client",
+              "first_names": application.first_names or "", "surname": application.surname or "",
+              "application_ref": application.application_ref or "", "link": link}
+    return item["subject"].format(**values), item["body"].format(**values)

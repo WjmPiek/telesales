@@ -271,20 +271,13 @@ def send_sign_link(app_id):
     a.disclosure_pdf_path = disclosure_pdf
 
     link = f"{current_app.config['BASE_URL']}{url_for('signing.sign_application', token=token)}"
-    salutation = _client_salutation(a)
-    body = (
-        f"Dear {salutation},\n\n"
-        "Please open this secure Martin's Funerals link to review your application documents, upload any required FICA documents and sign electronically:\n\n"
-        f"{link}\n\n"
-        "For your security, you will need your ID number to unlock the document page.\n\n"
-        "No documents are attached to this email. Your documents are available only inside the secure signing link.\n\n"
-        "The link can only be used once. After signing it will be deactivated."
-    )
+    from app.services.email_service import client_email_content
+    subject, body = client_email_content("invitation", a, link)
     from app.services.delivery_preferences import valid_email
     sent = False
     channel = 'Email'
     if valid_email(a.email):
-        sent = send_email(a.email.strip(), "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(a, link, body), application_id=a.id)
+        sent = send_email(a.email.strip(), subject, body, [], html_body=signing_email_html(a, link, body), application_id=a.id)
     if not sent and a.cell_number:
         channel = 'WhatsApp'
         result = send_whatsapp_text(a.cell_number, body)

@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Add covered members</h2><p>{{session.client_name}} — capture the people the client chose to cover. Leave unused rows empty.</p>
+{% if error %}<div class="alert alert-danger">{{error}}</div>{% endif %}
+<form method="post">
+{% for kind, label, maximum, required in groups %}
+<section class="card card-body mb-3"><h3>{{label}}{% if not required %} (optional){% endif %}</h3>
+{% for i in range(1, maximum+1) %}<div class="row g-2 mb-3">
+{% for key, text in [('full_name','Full names and surname'),('relationship','Relationship'),('id_or_dob','ID number or date of birth')] %}
+<div class="col-md-4"><label for="{{kind}}-{{i}}-{{key}}">{{i}}. {{text}}</label><input class="form-control" id="{{kind}}-{{i}}-{{key}}" name="{{kind}}_{{i}}_{{key}}" maxlength="200" value="{{request.form.get(kind~'_'~i~'_'~key,'')}}" {% if key == 'id_or_dob' %}placeholder="ID number or YYYY-MM-DD"{% endif %}></div>
+{% endfor %}</div>{% endfor %}</section>{% endfor %}
+<button class="btn btn-success">Save members and continue script</button>
+<button class="btn btn-outline-secondary" name="action" value="change_coverage" formnovalidate>Change who needs cover</button>
+<a class="btn btn-secondary" href="{{url_for('recovery.not_finalised')}}">Back to unfinished clients</a>
+</form>{% endblock %}

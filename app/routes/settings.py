@@ -32,3 +32,40 @@ def seed():
     for cat,key,val in defaults:
         if not SystemSetting.query.filter_by(category=cat,key=key).first(): db.session.add(SystemSetting(category=cat,key=key,value=val,description='Default Phase 7 setting',updated_by_id=current_user.id))
     db.session.commit(); flash('Default settings created','success'); return redirect(url_for('settings.index'))
+
+
+@settings_bp.route('/email-templates', methods=['GET', 'POST'])
+@login_required
+def email_templates():
+    from flask import abort
+    import json
+    from app.services.email_service import client_email_templates, validate_client_email_templates, CLIENT_EMAIL_DEFAULTS
+    if not is_admin():
+        abort(403)
+    templates = client_email_templates()
+    error = None
+    if request.method == 'POST':
+        templates = {key: {"label": default["label"],
+                          "subject": request.form.get(key + '_subject', '').strip(),
+                          "body": request.form.get(key + '_body', '').strip()}
+                     for key, default in CLIENT_EMAIL_DEFAULTS.items()}
+        try:
+            validate_client_email_templates(templates)
+        except ValueError as exc:
+            error = str(exc)
+        if not error:
+            row = SystemSetting.query.filter_by(category='Email', key='client_templates_v1').first()
+            if row is None:
+                row = SystemSetting(category='Email', key='client_templates_v1')
+                db.session.add(row)
+            row.value = json.dumps(templates)
+            row.active = True
+            row.updated_by_id = current_user.id
+            row.description = 'Client invitation and signed-document receipt wording'
+            db.session.add(AuditLog(user_id=current_user.id, action='Email templates updated',
+                entity_type='SystemSetting', entity_id='Email:client_templates_v1',
+                details='Updated client email wording for future messages.'))
+            db.session.commit()
+            flash('Email templates saved. Future emails will use this wording.', 'success')
+            return redirect(url_for('settings.email_templates'))
+    return render_template('settings/email_templates.html', templates=templates, error=error)

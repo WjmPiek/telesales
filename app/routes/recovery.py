@@ -971,6 +971,8 @@ def _selected_script_beneficiary(session):
     return {
         "name": _answer_value(session, "beneficiary_name", "") or "",
         "contact": _answer_value(session, "beneficiary_contact", "") or "",
+        "id_number": _answer_value(session, "beneficiary_id_number", "") or "",
+        "date_of_birth": _answer_value(session, "beneficiary_date_of_birth", "") or "",
         "relationship": _answer_value(session, "beneficiary_relationship", "") or "",
     }
 
@@ -993,7 +995,9 @@ def _existing_member_summary(session):
     rows = []
     if p.surname or p.initials:
         rows.append({"role": "Principal Member", "name": f"{p.initials or ''} {p.surname or ''}".strip(), "id": _script_client_id_number(session), "contact": p.cell_number or p.home_tel or ""})
-    # Current import file does not always include spouse/children/extended rows. Keep the structure so it can display when those fields are later imported.
+    for member in _answer_value(session, "members", []) or []:
+        rows.append({"role": member.get("relationship", "Member"), "name": member.get("full_name", ""),
+                     "id": member.get("id_or_dob", ""), "contact": ""})
     return rows
 
 
@@ -1005,6 +1009,7 @@ def _script_answers_for_application(session):
         "additional_benefits": _selected_additional_benefits(session),
         "beneficiary": _selected_script_beneficiary(session),
         "bank": _selected_script_bank_details(session),
+        "members": _answer_value(session, "members", []) or [],
     }
 
 
@@ -1077,19 +1082,14 @@ def _send_script_selected_signing_link(app_obj, delivery_method):
     app_obj.disclosure_pdf_path = disclosure_pdf
     base_url = current_app.config.get("BASE_URL") or request.url_root.rstrip("/")
     link = f"{base_url}{url_for('signing.sign_application', token=token)}"
-    body = (
-        f"Dear {_application_salutation(app_obj)},\n\n"
-        "Please open this secure Martin's Funerals link to upload your FICA documents and sign your application documents:\n\n"
-        f"{link}\n\n"
-        "You will need your ID number to unlock the page.\n\n"
-        "No documents are attached. Your documents are available only inside the secure signing link."
-    )
+    from app.services.email_service import client_email_content
+    subject, body = client_email_content("invitation", app_obj, link)
     for script in TelesalesScriptSession.query.filter_by(application_id=app_obj.id).all():
         _save_script_pdf(script)
     from app.services.delivery_preferences import valid_email
     sent = False
     if valid_email(app_obj.email):
-        sent = send_email(app_obj.email.strip(), "Your Martin's Funerals secure signing link", body, [], html_body=signing_email_html(app_obj, link, body), application_id=app_obj.id)
+        sent = send_email(app_obj.email.strip(), subject, body, [], html_body=signing_email_html(app_obj, link, body), application_id=app_obj.id)
     if not sent and app_obj.cell_number:
         wa_sent = send_whatsapp_message(app_obj.cell_number, body)
         from app.services.conversation_history import record_communication
@@ -1275,6 +1275,8 @@ def script_step(session_id):
     if session.lapsed_policy and telephone_blocked(session.lapsed_policy):
         flash("This client has opted out of telesales contact.", "warning")
         return redirect(url_for("recovery.queue"))
+    if _answer_value(session, "members_pending", False):
+        return redirect(url_for("recovery.script_members", session_id=session.id))
     step = _script_step(session.current_step, session)
     answers = _script_answers(session)
     while step and not step.get('enabled', True):
@@ -1332,6 +1334,7 @@ def script_step(session_id):
                 flash('Select who the client wants to cover.', 'warning')
                 return redirect(url_for('recovery.script_step', session_id=session.id))
             extra["coverage_choice"] = request.form.get("coverage_choice") or answer
+            extra["members_pending"] = extra["coverage_choice"] != "myself_only"
             extra["client_id_number"] = request.form.get("client_id_number") or _script_client_id_number(session)
             dob = dob_from_sa_id(extra["client_id_number"]) if extra.get("client_id_number") else None
             calculated_age = age_from_dob(dob) if dob else None
@@ -1364,6 +1367,8 @@ def script_step(session_id):
             extra["payment_method"] = request.form.get("payment_method") or answer
             answer = extra["payment_method"] or answer
         if step["id"] == 26:
+            extra["beneficiary_id_number"] = request.form.get("beneficiary_id_number", "").strip()
+            extra["beneficiary_date_of_birth"] = request.form.get("beneficiary_date_of_birth", "").strip()
             extra["beneficiary_name"] = request.form.get("beneficiary_name") or ""
             extra["beneficiary_contact"] = request.form.get("beneficiary_contact") or ""
             extra["beneficiary_relationship"] = request.form.get("beneficiary_relationship") or ""
@@ -1407,6 +1412,64 @@ def script_step(session_id):
     selected_product = _selected_script_product(session)
     spoken_text = _script_text_for_display(session, step)
     return render_template("recovery/script_step.html", session=session, step=step, total_steps=total_steps, progress=progress, products=products, selected_product=selected_product, spoken_text=spoken_text, client_age=_script_client_age(session), client_id_number=_script_client_id_number(session), selected_payment=_answer_value(session, "payment_method"), selected_delivery=_answer_value(session, "delivery_method"), selected_beneficiary=_selected_script_beneficiary(session), selected_bank=_selected_script_bank_details(session), existing_members=_existing_member_summary(session), script_payload=_script_answers_for_application(session))
+
+
+@recovery_bp.route("/script/<int:session_id>/members", methods=["GET", "POST"])
+@login_required
+@permission_required("recovery.call")
+def script_members(session_id):
+    call = TelesalesScriptSession.query.get_or_404(session_id)
+    ensure_branch_access(call, agent_attr="agent_id")
+    if call.agent_id != current_user.id and not _can_manage_scripts():
+        abort(403)
+    if call.status != "In Progress" or not _answer_value(call, "members_pending", False):
+        return redirect(url_for("recovery.script_step", session_id=call.id))
+    if call.lapsed_policy and telephone_blocked(call.lapsed_policy):
+        abort(403)
+    if request.method == "POST" and request.form.get("action") == "change_coverage":
+        answers = _script_answers(call)
+        answers["9"]["members_pending"] = False
+        call.answers_json = json.dumps(answers)
+        call.current_step = 9
+        db.session.commit()
+        return redirect(url_for("recovery.script_step", session_id=call.id))
+    choice = _answer_value(call, "coverage_choice", "")
+    groups = []
+    if choice in {"myself_spouse", "myself_spouse_children", "extended_family"}:
+        groups.append(("spouse", "Spouse", 1, choice != "extended_family"))
+    if choice in {"myself_spouse_children", "extended_family"}:
+        groups.append(("child", "Children", 6, choice == "myself_spouse_children"))
+    if choice == "extended_family":
+        groups.append(("extended", "Extended family", 4, True))
+    error = None
+    if request.method == "POST":
+        members = []
+        for kind, label, maximum, required in groups:
+            group_rows = []
+            for index in range(1, maximum + 1):
+                row = {key: request.form.get(f"{kind}_{index}_{key}", "").strip()[:200]
+                       for key in ("full_name", "relationship", "id_or_dob")}
+                if not any(row.values()):
+                    continue
+                if not row["full_name"] or not row["id_or_dob"]:
+                    error = "Enter a name and ID number or date of birth for each added member."
+                row["relationship"] = row["relationship"] or {"spouse":"Spouse", "child":"Child"}.get(kind, "")
+                if not row["relationship"]:
+                    error = "Enter the relationship for each extended family member."
+                row["kind"] = kind
+                group_rows.append(row)
+            if required and not group_rows:
+                error = f"Add at least one member under {label}, or go back and change who needs cover."
+            members.extend(group_rows)
+        if not error:
+            answers = _script_answers(call)
+            answers["9"]["members"] = members
+            answers["9"]["members_pending"] = False
+            answers["9"]["members_recorded_at"] = datetime.utcnow().isoformat()
+            call.answers_json = json.dumps(answers)
+            db.session.commit()
+            return redirect(url_for("recovery.script_step", session_id=call.id))
+    return render_template("recovery/script_members.html", session=call, groups=groups, error=error)
 
 
 def _save_script_pdf(session):
@@ -1561,6 +1624,9 @@ def start_application(policy_id):
         bank = script_payload.get("bank", {}) if script_payload else {}
         id_number = request.form.get("id_number") or script_payload.get("client_id_number") or ""
 
+        members = script_payload.get("members", [])
+        spouse = next((row for row in members if row.get("kind") == "spouse"), {})
+        spouse_names = spouse.get("full_name", "").rsplit(" ", 1)
         label = "Reinstatement" if app_type == "reinstatement" else "Lapsed New Policy"
         product_text = ((prod.product_name or "") + " " + (prod.plan_name or "")).lower()
         form_template = "member_product" if ("member +" in product_text or ("product" in product_text and ("+" in product_text or "member" in product_text))) else "single_family"
@@ -1594,15 +1660,23 @@ def start_application(policy_id):
             date_of_birth=dob_from_sa_id(id_number or ""),
             plan_choice="Member + Product" if form_template == "member_product" else "",
             total_payment=prod.monthly_premium,
-            beneficiary_full_names=beneficiary.get("name") or request.form.get("beneficiary_full_names") or "",
-            beneficiary_relationship=beneficiary.get("relationship") or request.form.get("beneficiary_relationship") or "",
+            beneficiary_full_names=request.form.get("beneficiary_full_names", beneficiary.get("name", "")).strip(),
+            beneficiary_relationship=request.form.get("beneficiary_relationship", beneficiary.get("relationship", "")).strip(),
+            beneficiary_id_number=request.form.get("beneficiary_id_number", beneficiary.get("id_number", "")).strip(),
+            beneficiary_date_of_birth=request.form.get("beneficiary_date_of_birth", beneficiary.get("date_of_birth", "")).strip(),
             account_holder=bank.get("account_holder") or request.form.get("account_holder") or "",
             bank_name=bank.get("bank_name") or request.form.get("bank_name") or "",
             account_number=bank.get("account_number") or request.form.get("account_number") or "",
             branch_code=bank.get("branch_code") or request.form.get("branch_code") or "",
             account_type=bank.get("account_type") or request.form.get("account_type") or "",
             debit_day=bank.get("debit_day") or request.form.get("debit_day") or "",
-            product_dependents_json=json.dumps(_existing_member_summary(script_session)) if script_session else "[]"
+            spouse_first_names=spouse_names[0] if spouse else "",
+            spouse_surname=spouse_names[1] if len(spouse_names) > 1 else "",
+            spouse_id_number=spouse.get("id_or_dob", "") if len(spouse.get("id_or_dob", "")) == 13 else "",
+            spouse_date_of_birth=spouse.get("id_or_dob", "") if len(spouse.get("id_or_dob", "")) != 13 else str(dob_from_sa_id(spouse["id_or_dob"]) or ""),
+            dependents_json=json.dumps([row for row in members if row.get("kind") == "child"]),
+            extended_family_json=json.dumps([row for row in members if row.get("kind") == "extended"]),
+            product_dependents_json=json.dumps(members)
         )
         if script_id:
             script_session = TelesalesScriptSession.query.get(script_id)
