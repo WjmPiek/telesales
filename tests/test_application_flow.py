@@ -141,7 +141,7 @@ class ApplicationFlowTests(unittest.TestCase):
         db.session.get(User,self.user_id).role=other.role;db.session.commit()
         self.assertEqual(self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'no_more_calls'}).status_code,403)
 
-    def test_home_unfinished_clients_and_two_minute_callback_alert(self):
+    def test_home_callbacks_and_two_minute_callback_alert(self):
         from datetime import datetime,timedelta
         sid=self._new_call_script(8,{'1':{'answer':'yes'}})
         pid=db.session.get(TelesalesScriptSession,sid).lapsed_policy_id
@@ -158,8 +158,8 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual(data['alerts'][0]['label'],'Resume script')
             self.assertTrue(data['alerts'][0]['url'].endswith(f'/{pid}/script/start'))
             html=self.client.get('/recovery/callbacks').get_data(as_text=True)
-            self.assertIn('Not finalised',html)
-            self.assertIn('17 Sep 2026 12:02',html)
+            self.assertNotIn('<h3>Not finalised</h3>',html)
+            self.assertIn('2026-09-17 12:02',html)
             self.assertIn('Test Callback',html.split('Upcoming callbacks')[1])
             policy=db.session.get(LapsedPolicy,pid);policy.callback_at=now+timedelta(minutes=3);db.session.commit()
             self.assertEqual(self.client.get('/recovery/callback-reminders').json['alerts'],[])

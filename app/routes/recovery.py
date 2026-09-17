@@ -264,7 +264,7 @@ def callbacks():
     due_today = [p for p in rows if p not in overdue and not p.callback_at and p.next_action_date == today]
     upcoming = [p for p in rows if p not in overdue and ((p.callback_at and p.callback_at > now) or (p.next_action_date and p.next_action_date > today))]
     unscheduled = [p for p in rows if not p.next_action_date]
-    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming, unscheduled=unscheduled, today=today, unfinished=_unfinished_clients())
+    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming, unscheduled=unscheduled, today=today)
 
 
 @recovery_bp.route('/callback-reminders')
