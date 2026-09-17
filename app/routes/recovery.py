@@ -9,7 +9,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from openpyxl import load_workbook
 from app import db
-from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument, AuditLog
+from app.models import LapsedPolicy, RecoveryCallLog, ClientApplication, PolicyProduct, TelesalesScriptSession, ApplicationSignature, ClientFicaDocument, AuditLog, SystemSetting
 from app.security import permission_required, is_admin_user
 from app.services.pdf_service import generate_telesales_script_pdf, generate_application_pdf, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.marketing_consent import telephone_blocked
@@ -1053,19 +1053,23 @@ def _default_script_steps():
 def _load_script_steps():
     """Load admin-edited wording while keeping the original flow/order/QA mapping."""
     steps = _default_script_steps()
+    saved = SystemSetting.query.filter_by(category="telesales_script", key="current").first()
     path = _script_config_path()
-    if not os.path.exists(path):
+    if not saved and not os.path.exists(path):
         return steps
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            edited = json.load(f)
+        if saved:
+            edited = json.loads(saved.value)
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                edited = json.load(f)
         edited_by_id = {int(item.get("id")): item for item in edited if item.get("id") is not None}
         for step in steps:
             edit = edited_by_id.get(int(step["id"]))
             if not edit:
                 continue
             # Admin may change wording/questions, but not the compliance flow id/order/QA section.
-            for field in ("title", "script", "question", "block_on_no"):
+            for field in ("title", "script", "question", "block_on_no", "enabled"):
                 if field in edit:
                     step[field] = edit[field]
         return steps
@@ -1080,18 +1084,44 @@ def _save_script_steps_from_form():
     for step in steps:
         sid = str(step["id"])
         edited.append({
-            "id": step["id"],
+            **step,
+            "enabled": request.form.get(f"enabled_{sid}") == "on",
             "title": request.form.get(f"title_{sid}", step["title"]).strip(),
             "script": request.form.get(f"script_{sid}", step["script"]).strip(),
             "question": request.form.get(f"question_{sid}", step["question"]).strip(),
             "block_on_no": request.form.get(f"block_on_no_{sid}") == "on",
         })
-    with open(_script_config_path(), "w", encoding="utf-8") as f:
-        json.dump(edited, f, ensure_ascii=False, indent=2)
+    _publish_script_steps(edited)
 
 
-def _current_script_steps():
-    return _load_script_steps()
+def _publish_script_steps(steps):
+    # Freeze every legacy call before changing the shared configuration.
+    previous = _load_script_steps()
+    for call in TelesalesScriptSession.query.filter(TelesalesScriptSession.script_snapshot_json.is_(None)).all():
+        _current_script_steps(call, previous)
+    setting = SystemSetting.query.filter_by(category="telesales_script", key="current").first()
+    if setting is None:
+        setting = SystemSetting(category="telesales_script", key="current")
+        db.session.add(setting)
+    setting.value = json.dumps(steps)
+    setting.updated_by_id = current_user.id
+    db.session.commit()
+
+
+def _current_script_steps(session=None, legacy_steps=None):
+    if session is None:
+        return _load_script_steps()
+    if session.script_snapshot_json:
+        return json.loads(session.script_snapshot_json)
+    steps = json.loads(json.dumps(legacy_steps if legacy_steps is not None else _load_script_steps()))
+    # Older calls already retain the exact answered question/title. Preserve them.
+    for step in steps:
+        recorded = _script_answers(session).get(str(step['id']), {})
+        for field in ('title', 'question', 'qa'):
+            if field in recorded:
+                step[field] = recorded[field]
+    session.script_snapshot_json = json.dumps(steps)
+    return steps
 
 
 def _role_name():
@@ -1103,13 +1133,11 @@ def _can_manage_scripts():
     return is_admin_user() or role in {"branch manager", "branch_manager", "manager"}
 
 
-def _script_step(step_id):
-    for step in _current_script_steps():
+def _script_step(step_id, session=None):
+    for step in _current_script_steps(session):
         if step["id"] == step_id:
             step = dict(step)
             step['employee_confirmation'] = step_id in {2, 4, 7, 14, 15, 18, 20, 21, 23, 25}
-            if step_id in {8, 13}:
-                step['question'] = 'Record the client\'s answer to the question above.'
             return step
     return None
 
@@ -1121,12 +1149,12 @@ def _script_answers(session):
         return {}
 
 
-def _script_score(answers):
+def _script_score(answers, session=None):
     # QA checklist cross-reference: each section passes if all linked required script answers are Yes/NA.
     section_ok = {name: True for name, _ in QA_SECTIONS}
-    for step in _current_script_steps():
+    for step in _current_script_steps(session):
         answer = (answers.get(str(step["id"]), {}) or {}).get("answer")
-        if answer == "no" and step.get("block_on_no", False):
+        if (answer == "no" and step.get("block_on_no", False)) or not step.get("enabled", True):
             section_ok[step["qa"]] = False
     total = sum(points for name, points in QA_SECTIONS if section_ok.get(name, True))
     return total, "PASS" if total >= 90 else "FAIL"
@@ -1161,6 +1189,7 @@ def start_script(policy_id):
         current_step=1,
         answers_json="{}",
     )
+    _current_script_steps(session)
     p.recovery_status = "Script In Progress"
     db.session.add(session)
     db.session.commit()
@@ -1180,14 +1209,26 @@ def script_step(session_id):
     if session.lapsed_policy and telephone_blocked(session.lapsed_policy):
         flash("This client has opted out of telesales contact.", "warning")
         return redirect(url_for("recovery.queue"))
-    step = _script_step(session.current_step)
+    step = _script_step(session.current_step, session)
+    answers = _script_answers(session)
+    while step and not step.get('enabled', True):
+        answers.setdefault(str(step['id']), {'answer': 'skipped', 'title': step['title'], 'qa': step['qa'], 'question': step['question'], 'note': 'Disabled by administrator for this script version; no client consent recorded.', 'recorded_at': datetime.utcnow().isoformat()})
+        session.current_step += 1
+        step = _script_step(session.current_step, session)
+    session.answers_json = json.dumps(answers)
+    db.session.commit()
     if not step:
+        session.status = 'Completed'
+        session.completed_at = datetime.utcnow()
+        session.qa_score, session.qa_result = _script_score(answers, session)
+        db.session.commit()
+        _save_script_pdf(session)
         return redirect(url_for("recovery.script_complete", session_id=session.id))
     # Do not ask cash/stop-order clients for bank details or debit consent.
     if request.method == "GET" and step['id'] in {27, 28} and _answer_value(session, 'payment_method') in {'Cash', 'Stop Order'}:
         answers = _script_answers(session)
         for skipped in (27, 28):
-            item = _script_step(skipped)
+            item = _script_step(skipped, session)
             answers[str(skipped)] = {'answer': 'na', 'title': item['title'], 'qa': item['qa'], 'question': item['question'], 'note': 'Not applicable to selected payment method', 'recorded_at': datetime.utcnow().isoformat()}
         session.answers_json = json.dumps(answers)
         session.current_step = 29
@@ -1241,7 +1282,7 @@ def script_step(session_id):
         if step["id"] == 16:
             extra["additional_benefits"] = request.form.get("additional_benefits") or ""
             answer = "yes"
-        if step["id"] == 12 and answer == "no":
+        if step["id"] == 12 and answer == "no" and _script_step(11, session).get("enabled", True):
             # Premium too high: return agent to policy selection instead of continuing.
             answers = _script_answers(session)
             answers[str(step["id"])] = {"answer": answer, "note": note, "title": step["title"], "qa": step["qa"], "question": step["question"], "recorded_at": datetime.utcnow().isoformat(), **extra}
@@ -1279,22 +1320,22 @@ def script_step(session_id):
             session.status = "Blocked"
             session.blocked_reason = f"Client answered No at step {step['id']}: {step['title']}"
             session.completed_at = datetime.utcnow()
-            session.qa_score, session.qa_result = _script_score(answers)
+            session.qa_score, session.qa_result = _script_score(answers, session)
             db.session.commit()
             _save_script_pdf(session)
             flash(session.blocked_reason, "danger")
             return redirect(url_for("recovery.script_complete", session_id=session.id))
         session.current_step += 1
-        if session.current_step > len(_current_script_steps()):
+        if session.current_step > len(_current_script_steps(session)):
             session.status = "Completed"
             session.completed_at = datetime.utcnow()
-            session.qa_score, session.qa_result = _script_score(answers)
+            session.qa_score, session.qa_result = _script_score(answers, session)
             db.session.commit()
             _save_script_pdf(session)
             return redirect(url_for("recovery.script_complete", session_id=session.id))
         db.session.commit()
         return redirect(url_for("recovery.script_step", session_id=session.id))
-    total_steps = len(_current_script_steps())
+    total_steps = len(_current_script_steps(session))
     progress = int(((session.current_step - 1) / total_steps) * 100)
     products = _eligible_products_for_script(session) if step["id"] == 11 else []
     selected_product = _selected_script_product(session)
@@ -1306,7 +1347,7 @@ def _save_script_pdf(session):
     folder = application_folder(session.application) if session.application else current_app.config["UPLOAD_FOLDER"]
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f"telesales_script_qa_{session.id}.pdf")
-    generate_telesales_script_pdf(session, _current_script_steps(), QA_SECTIONS, path)
+    generate_telesales_script_pdf(session, _current_script_steps(session), QA_SECTIONS, path)
     if session.application:
         store_document(session.application, path)
     session.pdf_path = path
@@ -1394,7 +1435,7 @@ def admin_script_questions():
         abort(403)
     if request.method == "POST":
         _save_script_steps_from_form()
-        flash("Telesales script wording updated. The compliance flow and QA sections were kept unchanged.", "success")
+        flash("Script settings saved for new calls. Existing calls keep their original script.", "success")
         return redirect(url_for("recovery.admin_script_questions"))
     return render_template("recovery/admin_script_questions.html", steps=_current_script_steps(), qa_sections=QA_SECTIONS)
 
@@ -1405,10 +1446,8 @@ def admin_script_questions():
 def reset_script_questions():
     if not is_admin_user():
         abort(403)
-    path = _script_config_path()
-    if os.path.exists(path):
-        os.remove(path)
-    flash("Telesales script wording reset to the default version.", "success")
+    _publish_script_steps(_default_script_steps())
+    flash("Default script saved for new calls. Existing calls are unchanged.", "success")
     return redirect(url_for("recovery.admin_script_questions"))
 
 @recovery_bp.route("/<int:policy_id>/start-application", methods=["GET", "POST"])
