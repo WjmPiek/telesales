@@ -29,10 +29,6 @@
         <td>{{ p.branch or p.franchise }}</td>
         <td><span class="badge bg-secondary">{{ p.recovery_status }}</span></td>
         <td>
-          <form method="post" action="{{ url_for('recovery.schedule_callback', policy_id=p.id) }}" class="d-flex gap-1 mb-2">
-            <input type="datetime-local" name="callback_at" aria-label="Callback date and time for {{ p.initials }} {{ p.surname }}" value="{{ p.callback_at.strftime('%Y-%m-%dT%H:%M') if p.callback_at else '' }}" required class="form-control form-control-sm">
-            <button class="btn btn-sm btn-outline-primary">Save time</button>
-          </form>
           <a class="btn btn-sm btn-primary" href="{{ url_for('recovery.log_call', policy_id=p.id) }}">Call Now</a>
           <a class="btn btn-sm btn-outline-primary" href="{{ url_for('recovery.start_script', policy_id=p.id) }}">Sales Script</a>
           <a class="btn btn-sm btn-outline-dark" href="{{ url_for('recovery.client_timeline', policy_id=p.id) }}">Timeline</a>

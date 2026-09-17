@@ -97,33 +97,49 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual({item['answer'] for item in answers.values()}, {'skipped'})
             self.assertEqual(call.qa_score, 0)
 
-    def test_callback_time_reminders_and_completion(self):
-        sid = self._new_call_script(1)
-        call = db.session.get(TelesalesScriptSession, sid)
-        pid = call.lapsed_policy_id
-        response = self.client.post(f'/recovery/{pid}/schedule-callback', data={'callback_at':'2020-01-01T14:30'})
+    def test_script_callback_preserves_answers_and_resumes_same_step(self):
+        sid=self._new_call_script(8,{'1':{'answer':'yes'}})
+        call=db.session.get(TelesalesScriptSession,sid);pid=call.lapsed_policy_id
+        before=call.answers_json
+        response=self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'callback','callback_at':'2099-01-01T14:30'})
         self.assertEqual(response.status_code,302)
-        p = db.session.get(LapsedPolicy,pid)
-        self.assertEqual(p.callback_at.hour,14)
-        self.assertEqual(p.callback_at.minute,30)
-        self.assertEqual(p.recovery_status,'Callback')
+        call=db.session.get(TelesalesScriptSession,sid)
+        self.assertEqual(call.answers_json,before)
+        self.assertEqual(call.current_step,8)
+        self.assertEqual(call.status,'In Progress')
+        policy=db.session.get(LapsedPolicy,pid)
+        self.assertEqual(policy.callback_at.hour,14)
+        self.assertEqual(policy.recovery_status,'Callback')
+        self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
+        from datetime import datetime
+        policy=db.session.get(LapsedPolicy,pid)
+        policy.callback_at=datetime(2020,1,1,14,30);db.session.commit()
         self.assertEqual(len(self.client.get('/recovery/callback-reminders').json['reminders']),1)
-        self.assertIn('2020-01-01 14:30', self.client.get('/recovery/callbacks').get_data(as_text=True))
-        self.client.post(f'/recovery/{pid}/schedule-callback', data={'callback_at':'2099-01-01T14:30'})
+        response=self.client.get(f'/recovery/{pid}/script/start')
+        self.assertTrue(response.location.endswith(f'/recovery/script/{sid}'))
         self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
-        p = db.session.get(LapsedPolicy,pid)
-        p.recovery_status='Closed'; db.session.commit()
-        self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
+        self.assertEqual(db.session.get(TelesalesScriptSession,sid).current_step,8)
 
-    def test_callback_schedule_rejects_other_agents_and_invalid_time(self):
-        sid = self._new_call_script(1)
-        pid = db.session.get(TelesalesScriptSession,sid).lapsed_policy_id
-        self.client.post(f'/recovery/{pid}/schedule-callback',data={'callback_at':'invalid'})
-        self.assertIsNone(db.session.get(LapsedPolicy,pid).callback_at)
-        user=db.session.get(User,self.user_id);user.role=Role(name='Agent')
-        db.session.get(LapsedPolicy,pid).assigned_agent_id=None;db.session.commit()
-        self.assertEqual(self.client.post(f'/recovery/{pid}/schedule-callback',data={'callback_at':'2020-01-01T10:00'}).status_code,403)
-        self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
+    def test_end_script_blocks_calls_and_rejects_bad_time(self):
+        sid=self._new_call_script(8)
+        pid=db.session.get(TelesalesScriptSession,sid).lapsed_policy_id
+        for value in ['invalid','2020-01-01T14:00']:
+            self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'callback','callback_at':value})
+            self.assertIsNone(db.session.get(LapsedPolicy,pid).callback_at)
+        self.assertIn('End or pause this call',self.client.get(f'/recovery/script/{sid}').get_data(as_text=True))
+        self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'no_more_calls'})
+        from app.services.marketing_consent import telephone_blocked
+        self.assertTrue(telephone_blocked(db.session.get(LapsedPolicy,pid)))
+        self.assertEqual(db.session.get(TelesalesScriptSession,sid).status,'Cancelled')
+        self.assertEqual(self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'callback','callback_at':'2099-01-01T10:00'}).status_code,400)
+
+    def test_end_script_is_scoped_to_employee(self):
+        sid=self._new_call_script(8)
+        other=User(name='Other',email='other-callback@example.test',password_hash='unused',role=Role(name='Agent'),branch='B')
+        db.session.add(other);db.session.flush()
+        call=db.session.get(TelesalesScriptSession,sid);call.agent_id=other.id;call.branch='B'
+        db.session.get(User,self.user_id).role=other.role;db.session.commit()
+        self.assertEqual(self.client.post(f'/recovery/script/{sid}/end-call',data={'end_action':'no_more_calls'}).status_code,403)
 
     def _new_call_script(self, step, answers=None):
         import json
