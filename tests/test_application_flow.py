@@ -389,14 +389,14 @@ class ApplicationFlowTests(unittest.TestCase):
 
     def test_email_priority_and_whatsapp_fallback(self):
         from app.routes.recovery import _send_script_selected_signing_link
-        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email',return_value=True) as mail, patch('app.routes.recovery.send_whatsapp_message',return_value=True) as wa:
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email',return_value=True) as mail, patch('app.services.whatsapp_service.send_application_link',return_value=__import__('types').SimpleNamespace(ok=True)) as wa:
             self.assertTrue(_send_script_selected_signing_link(self.record,'auto')[1])
             mail.assert_called_once();wa.assert_not_called()
-        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email',return_value=False) as mail, patch('app.routes.recovery.send_whatsapp_message',return_value=True) as wa:
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email',return_value=False) as mail, patch('app.services.whatsapp_service.send_application_link',return_value=__import__('types').SimpleNamespace(ok=True)) as wa:
             self.assertTrue(_send_script_selected_signing_link(self.record,'auto')[1])
             mail.assert_called_once();wa.assert_called_once()
         self.record.email='';db.session.commit()
-        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email') as mail, patch('app.routes.recovery.send_whatsapp_message',return_value=True) as wa:
+        with self.app.test_request_context('/'), patch('app.routes.recovery.ensure_screened',return_value=(True,[])), patch('app.routes.recovery.send_email') as mail, patch('app.services.whatsapp_service.send_application_link',return_value=__import__('types').SimpleNamespace(ok=True)) as wa:
             self.assertTrue(_send_script_selected_signing_link(self.record,'auto')[1])
             mail.assert_not_called();wa.assert_called_once()
 
@@ -619,12 +619,12 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual(len(pdf.pages), 3)
 
     def test_email_failure_is_not_reported_as_sent(self):
-        with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False), patch('app.routes.applications.send_whatsapp_text') as wa:
+        with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False), patch('app.services.whatsapp_service.send_application_link') as wa:
             wa.return_value.ok=False
             response = self.client.post(f'/applications/{self.record.id}/send-sign-link', follow_redirects=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.record.status, 'Signing Link Prepared')
-        self.assertIn(b'Email was not sent', response.data)
+        self.assertIn(b'Delivery did not succeed', response.data)
 
     def test_script_email_sign_upload_restore_and_search(self):
         from app.routes.recovery import _send_script_selected_signing_link

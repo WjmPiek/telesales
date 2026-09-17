@@ -1,4 +1,4 @@
-"""Individual signature locations; an image is never reused between locations."""
+"""Signature locations. Call applications sign separately; WhatsApp bundles require explicit consent to one signature."""
 from app.models import DocumentSignature
 from reportlab.lib.pagesizes import A4
 from app.services.application_layout import SIGNATURE_RECTS

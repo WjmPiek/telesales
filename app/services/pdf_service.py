@@ -838,13 +838,13 @@ def generate_telesales_script_pdf(session, script_steps, qa_sections, output_pat
         except Exception:
             return {}
 
-    def new_page(title="TELESALES FUNERAL COVER SALES SCRIPT"):
+    def new_page(title="Insurance Sales FUNERAL COVER SALES SCRIPT"):
         _brand_header(c, title)
         _footer(c)
         return height - 125
 
     ans = answers()
-    y = new_page("TELESALES FUNERAL COVER SALES SCRIPT")
+    y = new_page("Insurance Sales FUNERAL COVER SALES SCRIPT")
     x = 34
     c.setFont("Helvetica-Bold", 12)
     c.drawString(x, y, "Martin's Funerals - Sales Script and QA Call Monitoring Record")
@@ -874,7 +874,7 @@ def generate_telesales_script_pdf(session, script_steps, qa_sections, output_pat
     y = _section(c, "Script Answers and QA Cross-Reference", x, y, 530)
     for step in script_steps:
         if y < 92:
-            c.showPage(); y = new_page("TELESALES SCRIPT RECORD")
+            c.showPage(); y = new_page("Insurance Sales SCRIPT RECORD")
         rec = ans.get(str(step.get("id")), {})
         answer = _safe(rec.get("answer", "not answered")).upper()
         c.setFont("Helvetica-Bold", 9)

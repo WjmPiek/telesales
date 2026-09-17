@@ -68,7 +68,7 @@ def qa_dashboard():
 
     qa_statuses = ['Signed', 'QA Review', 'QA Pending', 'Application Started', 'Signing Link Sent', 'Signing Link Prepared', 'Submitted', 'FICA Review', 'FICA Outstanding', 'QA Approved']
     qa_apps = app_q.filter(ClientApplication.status.in_(qa_statuses)).order_by(ClientApplication.updated_at.desc()).limit(50).all()
-    signed_apps = app_q.filter(ClientApplication.signed_at.isnot(None), ClientApplication.status.notin_(['Compliance Approved', 'Compliance Rejected', 'QA Rejected'])).order_by(ClientApplication.signed_at.asc()).limit(50).all()
+    signed_apps = app_q.filter(ClientApplication.signed_at.isnot(None), ClientApplication.status.notin_(['Active', 'Compliance Approved', 'Compliance Rejected', 'QA Rejected'])).order_by(ClientApplication.signed_at.asc()).limit(50).all()
     fica_docs = scope_by_branch(ClientFicaDocument.query.join(ClientApplication, ClientFicaDocument.application_id == ClientApplication.id), ClientApplication, branch_col=ClientApplication.branch, agent_col=ClientApplication.agent_id, selected_branch=branch).filter(ClientFicaDocument.status.in_(['Received', 'Needs Review']))
     fica_docs = fica_docs.order_by(ClientFicaDocument.uploaded_at.asc()).limit(50).all()
     review_q = ComplianceReview.query.filter(ComplianceReview.application_id.in_(app_q.with_entities(ClientApplication.id)))
@@ -87,16 +87,20 @@ def qa_dashboard():
 @qa_bp.route('/application/<int:app_id>', methods=['GET', 'POST'])
 @login_required
 def review_application(app_id):
-    if not _is_qa_user():
-        flash('Only managers/compliance users can access QA.', 'danger')
-        return redirect(url_for('main.dashboard'))
     app = ClientApplication.query.get_or_404(app_id)
+    if not _is_qa_user() and not (app.whatsapp_journey and app.agent_id == current_user.id):
+        flash('Only authorised staff can verify this application.', 'danger')
+        return redirect(url_for('main.dashboard'))
     ensure_branch_access(app, agent_attr='agent_id')
     script = _latest_script(app)
     docs, received_count = _fica_summary(app)
     reviews = ComplianceReview.query.filter_by(application_id=app.id).order_by(ComplianceReview.created_at.desc()).all()
 
     if request.method == 'POST':
+        app = ClientApplication.query.filter_by(id=app.id).with_for_update().populate_existing().one()
+        if app.whatsapp_journey and app.whatsapp_journey.activated_at:
+            flash('This policy has already been verified and activated.', 'info')
+            return redirect(url_for('applications.view_application', app_id=app.id))
         decision = request.form.get('decision') or 'QA Approved'
         if decision not in {'QA Approved', 'QA Rejected', 'Compliance Approved', 'Compliance Rejected'}:
             flash('Invalid review decision.', 'danger')
@@ -115,6 +119,24 @@ def review_application(app_id):
                 flash('Approval blocked: complete and approve all required documents and the employee FIC check first. ' + '; '.join(errors), 'danger')
                 return redirect(url_for('qa.review_application', app_id=app.id))
 
+        if app.whatsapp_journey and decision in {'QA Approved', 'Compliance Approved'}:
+            from datetime import datetime
+            if not app.signed_at or not app.whatsapp_journey.signed_bundle_at:
+                flash('The client must finish and submit the signed application first.', 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            policy_number=request.form.get('policy_number','').strip()
+            try:
+                start_date=datetime.strptime(request.form.get('start_date',''),'%Y-%m-%d').date()
+                if start_date > date.today():raise ValueError()
+            except ValueError:
+                flash('Enter the actual policy start date (today or earlier) before marking it active.', 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            if not policy_number or len(policy_number)>80:
+                flash('Enter the issued policy number before completing verification.', 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            app.policy_number=policy_number;app.inception_date=start_date
+            app.whatsapp_journey.activated_at=datetime.utcnow()
+
         review = ComplianceReview(
             application_id=app.id,
             lapsed_policy_id=app.lapsed_policy_id,
@@ -125,11 +147,16 @@ def review_application(app_id):
             notes=notes,
         )
         db.session.add(review)
-        app.status = decision
+        app.status = "Active" if app.whatsapp_journey and app.whatsapp_journey.activated_at else decision
         if app.lapsed_policy:
             app.lapsed_policy.recovery_status = 'Approved' if decision in {'QA Approved', 'Compliance Approved'} else 'Rejected'
         db.session.add(AuditLog(user_id=current_user.id, action=decision, entity_type='ClientApplication', entity_id=str(app.id), details=f'QA score {score}%. {notes}'))
         db.session.commit()
+        if app.whatsapp_journey and app.whatsapp_journey.activated_at:
+            from app.services.online_application import notify_activation
+            sent=notify_activation(app)
+            flash('Verification completed. Policy is active. '+('Confirmation email sent.' if sent else 'Confirmation email failed; retry from the application.'), 'success' if sent else 'warning')
+            return redirect(url_for('applications.view_application', app_id=app.id))
         flash(f'{decision} saved with QA score {score}%.', 'success')
         return redirect(url_for('qa.qa_dashboard'))
 
@@ -146,19 +173,33 @@ def review_application(app_id):
 @qa_bp.route('/fica/<int:doc_id>/<decision>', methods=['POST'])
 @login_required
 def review_fica(doc_id, decision):
-    if not _is_qa_user():
-        flash('Only managers/compliance users can access FICA review.', 'danger')
+    doc = ClientFicaDocument.query.get_or_404(doc_id)
+    if not _is_qa_user() and not (doc.application.whatsapp_journey and doc.application.agent_id == current_user.id):
+        flash('Only authorised staff can review these documents.', 'danger')
         return redirect(url_for('main.dashboard'))
     if decision not in {'approve', 'reject'}:
         from flask import abort
         abort(400)
-    doc = ClientFicaDocument.query.get_or_404(doc_id)
     ensure_branch_access(doc.application, agent_attr='agent_id')
     doc.status = 'Reviewed' if decision == 'approve' else 'Rejected'
     db.session.flush()
-    if document_summary(doc.application)['complete'] and doc.application.status not in {'QA Approved', 'Compliance Approved'}:
+    if document_summary(doc.application)['complete'] and doc.application.status not in {'Active', 'QA Approved', 'Compliance Approved'}:
         doc.application.status = 'QA Pending'
     db.session.add(AuditLog(user_id=current_user.id, action=f'FICA {doc.status}', entity_type='ClientFicaDocument', entity_id=str(doc.id), details=doc.original_filename or doc.document_type))
     db.session.commit()
     flash(f'FICA document marked {doc.status}.', 'success')
     return redirect(request.referrer or url_for('qa.qa_dashboard'))
+
+
+@qa_bp.route('/application/<int:app_id>/retry-confirmation',methods=['POST'])
+@login_required
+def retry_confirmation(app_id):
+    from flask import abort
+    app=ClientApplication.query.get_or_404(app_id)
+    ensure_branch_access(app,agent_attr='agent_id')
+    if not _is_qa_user() and app.agent_id!=current_user.id:abort(403)
+    if not app.whatsapp_journey or app.whatsapp_journey.notice_status!='Failed':abort(409)
+    from app.services.online_application import notify_activation
+    sent=notify_activation(app)
+    flash('Confirmation email sent.' if sent else 'Email delivery failed. Check email settings and try again.','success' if sent else 'danger')
+    return redirect(url_for('applications.view_application',app_id=app.id))

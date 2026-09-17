@@ -8,6 +8,9 @@ from email.utils import parseaddr
 
 
 def send_email(to_email, subject, body, attachments=None, html_body=None, application_id=None, policy_id=None):
+    from app.services.branding import display_brand
+    subject, body = display_brand(subject), display_brand(body)
+    if html_body: html_body = display_brand(html_body)
     def outcome(ok):
         if application_id or policy_id:
             from app.services.conversation_history import record_communication
@@ -23,6 +26,13 @@ def send_email(to_email, subject, body, attachments=None, html_body=None, applic
         logging.getLogger(__name__).warning("Email not sent: SMTP credentials are not configured")
         return outcome(False)
 
+    if application_id and not html_body:
+        from app.models import ClientApplication
+        import re
+        application = ClientApplication.query.get(application_id)
+        links = re.findall(r'https://[^\s<>]+', body)
+        if application and links:
+            html_body = signing_email_html(application, links[0], body)
     msg = EmailMessage()
     msg["From"] = mail_from
     msg["To"] = to_email
@@ -90,6 +100,11 @@ CLIENT_EMAIL_DEFAULTS = {
         "subject": "Your Martin's Funerals secure signing link",
         "body": "Dear {client_name},\n\nPlease open this secure Martin's Funerals link to review your application documents, upload your required FICA documents and sign electronically:\n\n{link}\n\nYou will need your ID number to unlock the page.\n\nYour documents are available inside the secure signing link. After final submission, the link is locked.",
     },
+    "activation": {
+        "label": "Policy activation confirmation",
+        "subject": "Martin's Funerals - policy {policy_number} is active",
+        "body": "Dear {client_name},\n\nYour application has been verified and policy {policy_number} is now active from {start_date}.\n\nPlease refer to your policy documents for the benefits, waiting periods, exclusions and payment terms.\n\nThank you.\nMartin's Funerals - Insurance Sales",
+    },
     "receipt": {
         "label": "Signed documents receipt",
         "subject": "Martin's Funerals signed documents received",
@@ -114,7 +129,7 @@ def client_email_templates():
 
 def validate_client_email_templates(templates):
     from string import Formatter
-    allowed = {"client_name", "first_names", "surname", "application_ref", "link"}
+    allowed = {"client_name", "first_names", "surname", "application_ref", "link", "policy_number", "start_date"}
     for key in CLIENT_EMAIL_DEFAULTS:
         fields = set()
         for part in ("subject", "body"):
@@ -127,7 +142,7 @@ def validate_client_email_templates(templates):
                 if field is not None:
                     if field not in allowed or spec or conversion:
                         raise ValueError("Use only the placeholders shown below the editor.")
-                    if key == "receipt" and field == "link":
+                    if key in {"receipt", "activation"} and field == "link":
                         raise ValueError("The receipt cannot use the signing link because it is locked after submission.")
                     if part == "body":
                         fields.add(field)
@@ -144,5 +159,6 @@ def client_email_content(kind, application, link=""):
     item = templates[kind]
     values = {"client_name": " ".join(filter(None, [application.first_names, application.surname])) or "Client",
               "first_names": application.first_names or "", "surname": application.surname or "",
-              "application_ref": application.application_ref or "", "link": link}
+              "application_ref": application.application_ref or "", "link": link,
+              "policy_number": application.policy_number or "", "start_date": str(application.inception_date or "")}
     return item["subject"].format(**values), item["body"].format(**values)

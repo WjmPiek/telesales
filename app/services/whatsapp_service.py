@@ -215,7 +215,7 @@ def validate_public_image_url(image_url: str) -> tuple[bool, str | None]:
         return False, f"The campaign image URL could not be reached: {exc}"
 
 
-def send_whatsapp_text(to_number: str, message: str) -> SendResult:
+def send_whatsapp_text(to_number: str, message: str, *, link_url=None, link_label=None) -> SendResult:
     to_number = normalize_phone(to_number)
     from app.services.phone_deletion import phone_is_suppressed
     if phone_is_suppressed(to_number):
@@ -248,6 +248,14 @@ def send_whatsapp_text(to_number: str, message: str) -> SendResult:
         url = f"https://graph.facebook.com/{os.getenv('META_GRAPH_API_VERSION', 'v25.0')}/{phone_number_id}/messages"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         payload = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"preview_url": True, "body": message.strip()}}
+
+    if link_url:
+        if not str(link_url).startswith('https://'):
+            return SendResult(False, error='Application links require HTTPS.')
+        payload['type']='interactive'
+        payload.pop('text',None)
+        payload['interactive']={'type':'cta_url','body':{'text':message.strip()[:1024]},
+          'action':{'name':'cta_url','parameters':{'display_text':(link_label or 'Online application')[:20],'url':link_url}}}
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=25)
@@ -594,3 +602,12 @@ def create_whatsapp_image_template(
         return TemplateCreateResult(True, status=status, template_id=template_id, response_json=data)
     except requests.RequestException as exc:
         return TemplateCreateResult(False, error=f"Template submission failed: {exc}")
+
+
+def send_application_link(application, link, body):
+    name=' '.join(filter(None,[application.first_names,application.surname])) or 'Online application'
+    message=body.replace(link,'Open the named application button below.')
+    result=send_whatsapp_text(application.cell_number,message,link_url=link,link_label=name)
+    from app.services.conversation_history import record_communication
+    record_communication('WhatsApp',message,'Sent' if result.ok else 'Failed',application_id=application.id)
+    return result

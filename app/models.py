@@ -1042,3 +1042,16 @@ class ClientCommunication(db.Model):
     occurred_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     actor = db.relationship('User')
+
+
+class ApplicationJourney(db.Model):
+    """The separate WhatsApp self-service journey; historical call applications are unchanged."""
+    __tablename__ = "application_journeys"
+    application_id = db.Column(db.Integer, db.ForeignKey("client_applications.id"), primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("communication_campaigns.id", ondelete="SET NULL"), nullable=True)
+    ready = db.Column(db.Boolean, default=False, nullable=False)
+    signed_bundle_at = db.Column(db.DateTime)
+    activated_at = db.Column(db.DateTime)
+    notice_status = db.Column(db.String(20))
+    notice_sent_at = db.Column(db.DateTime)
+    application = db.relationship("ClientApplication", backref=db.backref("whatsapp_journey", uselist=False, cascade="all, delete-orphan"))

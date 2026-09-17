@@ -14,9 +14,10 @@
           <div class="col-md-6 mb-2"><div class="form-check"><input class="form-check-input" type="checkbox" id="{{ key }}" name="{{ key }}" {% if checklist_defaults.get(key) %}checked{% endif %}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div></div>
         {% endfor %}
         </div>
+        {% if app.whatsapp_journey %}<div class="alert alert-info">Completing verification activates this policy and emails the client. Confirm the issued policy details below.</div><label>Issued policy number</label><input class="form-control" name="policy_number" value="{{app.policy_number or ''}}"><label>Policy start date</label><input class="form-control" type="date" name="start_date" value="{{app.inception_date or ''}}">{% endif %}
         <label class="form-label mt-3">QA / Compliance notes</label><textarea name="notes" class="form-control" rows="4" placeholder="Add approval notes, rejection reason, missing documents, or agent feedback"></textarea>
         <div class="mt-3 d-flex gap-2 flex-wrap">
-          <button name="decision" value="QA Approved" class="btn btn-success">QA Approve</button>
+          <button name="decision" value="QA Approved" class="btn btn-success">{{'Complete verification and activate' if app.whatsapp_journey else 'QA Approve'}}</button>
           <button name="decision" value="QA Rejected" class="btn btn-danger">QA Reject</button>
           <button name="decision" value="Compliance Approved" class="btn btn-primary">Compliance Final Approve</button>
           <button name="decision" value="Compliance Rejected" class="btn btn-outline-danger">Compliance Reject</button>
@@ -29,7 +30,7 @@
   </div>
   <div class="col-lg-4">
     <div class="card mb-3"><div class="card-header"><strong>Application summary</strong></div><div class="card-body"><p><strong>Product:</strong> {{ app.product.product_name if app.product else '-' }} {{ app.product.plan_name if app.product else '' }}</p><p><strong>Premium:</strong> R {{ app.monthly_premium or 0 }}</p><p><strong>Cell:</strong> {{ app.cell_number or '-' }}</p><p><strong>Email:</strong> {{ app.email or '-' }}</p><p><strong>Signed:</strong> {{ app.signed_at or 'No' }}</p></div></div>
-    <div class="card mb-3"><div class="card-header"><strong>Script QA</strong></div><div class="card-body">{% if script %}<p><strong>Status:</strong> {{ script.status }}</p><p><strong>Score:</strong> {{ script.qa_score }}%</p><p><strong>Result:</strong> {{ script.qa_result or '-' }}</p>{% if script.pdf_path %}<p><small>PDF generated: {{ script.pdf_path }}</small></p>{% endif %}{% else %}<p class="text-muted">No script session linked.</p>{% endif %}</div></div>
+    <div class="card mb-3"><div class="card-header"><strong>Script QA</strong></div><div class="card-body">{% if script %}<p><strong>Status:</strong> {{ script.status }}</p><p><strong>Score:</strong> {{ script.qa_score }}%</p><p><strong>Result:</strong> {{ script.qa_result or '-' }}</p>{% if script.pdf_path %}<p><a target="_blank" rel="noopener" href="{{url_for('recovery.download_script_pdf',session_id=script.id)}}">Insurance Sales script PDF</a></p>{% endif %}{% else %}<p class="text-muted">No script session linked.</p>{% endif %}</div></div>
     <div class="card"><div class="card-header"><strong>FICA documents</strong></div><ul class="list-group list-group-flush">{% for doc in docs %}<li class="list-group-item"><strong>{{ doc.document_type|replace('_',' ')|title }}</strong><br><small>{{ doc.status }} - {{ doc.original_filename }}</small><div class="mt-2 d-flex gap-2"><form method="post" action="{{ url_for('qa.review_fica', doc_id=doc.id, decision='approve') }}"><button class="btn btn-sm btn-outline-success">Approve</button></form><form method="post" action="{{ url_for('qa.review_fica', doc_id=doc.id, decision='reject') }}"><button class="btn btn-sm btn-outline-danger">Reject</button></form></div></li>{% else %}<li class="list-group-item text-muted">No FICA documents uploaded.</li>{% endfor %}</ul></div>
   </div>
 </div>
