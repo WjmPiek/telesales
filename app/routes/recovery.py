@@ -272,32 +272,58 @@ def callbacks():
 @permission_required('recovery.view')
 def callback_reminders():
     now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
-    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').filter(db.or_(LapsedPolicy.callback_at <= now, db.and_(LapsedPolicy.callback_at.is_(None), db.or_(LapsedPolicy.next_action_date <= now.date(), LapsedPolicy.next_action_date.is_(None))))).all()
+    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').filter(LapsedPolicy.callback_at <= now).all()
     return jsonify(reminders=[dict(name=((p.initials or '')+' '+(p.surname or '')).strip(), time=p.callback_at.strftime('%d %b %H:%M') if p.callback_at else 'Time not set', url=url_for('recovery.log_call', policy_id=p.id)) for p in rows])
 
 
-@recovery_bp.route('/<int:policy_id>/schedule-callback', methods=['POST'])
+@recovery_bp.route('/script/<int:session_id>/end-call', methods=['POST'])
 @login_required
 @permission_required('recovery.call')
-def schedule_callback(policy_id):
-    p = LapsedPolicy.query.get_or_404(policy_id)
-    ensure_branch_access(p, agent_attr='assigned_agent_id')
-    if telephone_blocked(p):
+def end_script_call(session_id):
+    session = TelesalesScriptSession.query.get_or_404(session_id)
+    ensure_branch_access(session, agent_attr='agent_id')
+    if session.agent_id != current_user.id and not _can_manage_scripts():
+        abort(403)
+    if session.status != 'In Progress' or not session.lapsed_policy:
         abort(400)
-    try:
-        when = datetime.strptime(request.form.get('callback_at', ''), '%Y-%m-%dT%H:%M')
-    except ValueError:
-        flash('Choose a valid callback date and time.', 'warning')
-        return redirect(url_for('recovery.callbacks'))
-    if not p.assigned_agent_id:
-        p.assigned_agent_id = current_user.id
+    p = session.lapsed_policy
+    action = request.form.get('end_action')
+    if action not in {'callback', 'no_more_calls'}:
+        abort(400)
+    when = None
+    if action == 'callback':
+        if telephone_blocked(p):
+            abort(400)
+        try:
+            when = datetime.strptime(request.form.get('callback_at',''), '%Y-%m-%dT%H:%M')
+            if when <= datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None):
+                raise ValueError()
+        except ValueError:
+            flash('Choose a future callback date and time.', 'warning')
+            return redirect(url_for('recovery.script_step',session_id=session.id))
+    _current_script_steps(session)
+    p.assigned_agent_id = session.agent_id
     p.callback_at = when
-    p.next_action_date = when.date()
-    p.recovery_status = 'Callback'
-    db.session.add(AuditLog(user_id=current_user.id, action='Callback scheduled', entity_type='LapsedPolicy', entity_id=str(p.id), details=f'Callback scheduled for {when:%Y-%m-%d %H:%M} SAST; assigned user {p.assigned_agent_id}'))
+    p.next_action_date = when.date() if when else None
+    if when:
+        p.recovery_status = 'Callback'
+        outcome = 'Callback Requested'
+        detail = f'Call paused at question {session.current_step}; callback {when:%Y-%m-%d %H:%M} SAST. Saved answers retained.'
+    else:
+        from app.services.communication_service import preference_for
+        preference_for(p).telephone_allowed = False
+        p.recovery_status = 'Closed'
+        session.status = 'Cancelled'
+        session.completed_at = datetime.utcnow()
+        outcome = 'Do not call again'
+        detail = f'Client requested no further calls at question {session.current_step}.'
+    note = request.form.get('end_note','').strip()
+    detail += (' Notes: '+note) if note else ''
+    db.session.add(RecoveryCallLog(lapsed_policy_id=p.id,agent_id=current_user.id,outcome=outcome,notes=detail,follow_up_date=when.date() if when else None,next_action_date=p.next_action_date))
+    db.session.add(AuditLog(user_id=current_user.id,action='Script call ended',entity_type='LapsedPolicy',entity_id=str(p.id),details=detail))
     db.session.commit()
-    flash('Callback date and time saved. A reminder will appear on the home page.', 'success')
-    return redirect(url_for('recovery.callbacks'))
+    flash('Call paused and callback reminder scheduled.' if when else 'Call ended. Further telephone calls are blocked for this client.', 'success')
+    return redirect(url_for('main.home'))
 
 
 @recovery_bp.route("/<int:policy_id>/timeline")
@@ -470,16 +496,7 @@ def log_call(policy_id):
         outcome = request.form["outcome"]
         follow = request.form.get("follow_up_date") or None
         notes = (request.form.get("notes") or "").strip()
-        callback_time = request.form.get('callback_time', '').strip()
-        scheduled = None
-        if outcome in CALLBACK_OUTCOMES and callback_time:
-            try:
-                scheduled = datetime.strptime(f'{follow}T{callback_time}', '%Y-%m-%dT%H:%M')
-            except ValueError:
-                flash('Choose a callback date and valid time.', 'warning')
-                return redirect(url_for('recovery.log_call', policy_id=p.id))
-            notes += f'\nCallback scheduled: {scheduled:%Y-%m-%d %H:%M} SAST'
-        p.callback_at = scheduled
+
 
         if outcome in CALLBACK_OUTCOMES and not follow:
             follow = (date.today() + timedelta(days=1)).isoformat()
@@ -1212,6 +1229,8 @@ def start_script(policy_id):
     existing = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).filter_by(lapsed_policy_id=p.id, status='In Progress').order_by(TelesalesScriptSession.created_at.desc()).first()
     if existing and (existing.agent_id == current_user.id or _can_manage_scripts()):
         existing_id = existing.id
+        p.recovery_status = "Script In Progress"
+        p.callback_at = None
         db.session.commit()
         return redirect(url_for('recovery.script_step', session_id=existing_id))
     client_name = f"{p.initials or ''} {p.surname or ''}".strip()

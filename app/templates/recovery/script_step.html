@@ -233,4 +233,30 @@
     </div>
   </div>
 </div>
+<section class="card mt-3"><div class="card-body">
+  <h4>End or pause this call</h4>
+  <p>If the client cannot continue, choose what happens next. Previously saved answers stay with this script.</p>
+  <form method="post" action="{{ url_for('recovery.end_script_call', session_id=session.id) }}">
+    <label for="end-action">Client's request</label>
+    <select id="end-action" name="end_action" required class="form-select mb-2">
+      <option value="">Choose an option</option>
+      <option value="callback">Call me back later</option>
+      <option value="no_more_calls">Don't call again</option>
+    </select>
+    <div id="callback-date-wrap" hidden>
+      <label for="callback-date">Callback date and time (South Africa)</label>
+      <input id="callback-date" type="datetime-local" name="callback_at" class="form-control mb-2">
+    </div>
+    <label for="end-note">Call notes</label>
+    <textarea id="end-note" name="end_note" class="form-control mb-2" placeholder="Record what was discussed before ending the call"></textarea>
+    <button class="btn btn-outline-danger">Save and end call</button>
+  </form>
+</div></section>
+<script>
+document.getElementById('end-action').addEventListener('change', function () {
+  const callback = this.value === 'callback';
+  document.getElementById('callback-date-wrap').hidden = !callback;
+  document.getElementById('callback-date').required = callback;
+});
+</script>
 {% endblock %}
