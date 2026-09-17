@@ -330,7 +330,8 @@ def end_script_call(session_id):
     db.session.add(RecoveryCallLog(lapsed_policy_id=p.id,agent_id=current_user.id,outcome=outcome,notes=detail,follow_up_date=when.date() if when else None,next_action_date=p.next_action_date))
     db.session.add(AuditLog(user_id=current_user.id,action='Script call ended',entity_type='LapsedPolicy',entity_id=str(p.id),details=detail))
     db.session.commit()
-    flash('Call paused and callback reminder scheduled.' if when else 'Call ended. Further telephone calls are blocked for this client.', 'success')
+    if not when:
+        flash('Call ended. Further telephone calls are blocked for this client.', 'success')
     return redirect(url_for('main.home'))
 
 
