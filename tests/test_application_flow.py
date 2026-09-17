@@ -46,6 +46,95 @@ class ApplicationFlowTests(unittest.TestCase):
     def record(self):
         return db.session.get(ClientApplication, self.record_id)
 
+    def test_login_and_home_open_callbacks_for_admin_and_employee(self):
+        user = db.session.get(User, self.user_id)
+        user.set_password('local-test-password')
+        db.session.commit()
+        for role_name in ['Super Admin', 'Agent']:
+            user = db.session.get(User, self.user_id)
+            user.role.name = role_name
+            db.session.commit()
+            response = self.client.post('/auth/login', data={'email': 'admin@example.test', 'password': 'local-test-password'})
+            self.assertTrue(response.location.endswith('/recovery/callbacks'), response.location)
+            self.assertTrue(self.client.get('/').location.endswith('/recovery/callbacks'))
+            self.assertTrue(self.client.get('/home').location.endswith('/recovery/callbacks'))
+            self.assertEqual(self.client.get('/recovery/callbacks').status_code, 200)
+
+    def _new_call_script(self, step, answers=None):
+        import json
+        policy = LapsedPolicy(initials='Test', surname='Callback', cell_number='0821234567',
+                              branch='A', assigned_agent_id=self.user_id, recovery_status='Callback')
+        session = TelesalesScriptSession(lapsed_policy=policy, agent_id=self.user_id, branch='A',
+                                        client_name='Test Callback', current_step=step, status='In Progress',
+                                        answers_json=json.dumps(answers or {}))
+        db.session.add_all([policy, session]); db.session.commit()
+        return session.id
+
+    def test_script_separates_employee_confirmations_from_client_answers(self):
+        import json
+        sid = self._new_call_script(2)
+        path = f'/recovery/script/{sid}'
+        page = self.client.get(path).get_data(as_text=True)
+        self.assertIn('Explained / completed', page)
+        self.client.post(path, data={'step_id': '2', 'answer': 'no'})
+        self.assertEqual(db.session.get(TelesalesScriptSession, sid).current_step, 2)
+        self.client.post(path, data={'step_id': '2', 'answer': 'yes'})
+        self.assertEqual(db.session.get(TelesalesScriptSession, sid).current_step, 3)
+        self.client.post(path, data={'step_id': '2', 'answer': 'yes'})
+        self.assertEqual(db.session.get(TelesalesScriptSession, sid).current_step, 3)
+        sid = self._new_call_script(8)
+        self.client.post(f'/recovery/script/{sid}', data={'step_id':'8', 'answer':'no'})
+        session = db.session.get(TelesalesScriptSession, sid)
+        self.assertEqual(session.current_step, 9)
+        self.assertEqual(json.loads(session.answers_json)['8']['answer'], 'no')
+
+    def test_script_counts_lives_and_skips_non_debit_questions(self):
+        import json
+        sid = self._new_call_script(10)
+        path = f'/recovery/script/{sid}'
+        self.client.post(path, data={'step_id':'10', 'answer':'yes'})
+        self.assertEqual(db.session.get(TelesalesScriptSession, sid).current_step, 10)
+        self.client.post(path, data={'step_id':'10', 'number_of_lives':'4'})
+        session = db.session.get(TelesalesScriptSession, sid)
+        self.assertEqual(json.loads(session.answers_json)['10']['number_of_lives'], 4)
+        for method in ['Cash', 'Stop Order']:
+            sid = self._new_call_script(27, {'19': {'payment_method': method}})
+            self.client.get(f'/recovery/script/{sid}')
+            session = db.session.get(TelesalesScriptSession, sid)
+            self.assertEqual(session.current_step, 29)
+            self.assertEqual(json.loads(session.answers_json)['28']['answer'], 'na')
+
+    def test_debit_consent_no_blocks_application(self):
+        sid = self._new_call_script(28, {'19': {'payment_method': 'Debit Order'}})
+        with patch('app.routes.recovery._save_script_pdf'):
+            self.client.post(f'/recovery/script/{sid}', data={'step_id':'28', 'answer':'no'})
+        self.assertEqual(db.session.get(TelesalesScriptSession, sid).status, 'Blocked')
+
+    def test_complete_call_script_saves_answers_without_sending(self):
+        import json
+        sid = self._new_call_script(1)
+        path = f'/recovery/script/{sid}'
+        product_id = self.record.product_id
+        fields = {
+            9: {'coverage_choice':'myself_spouse_children', 'client_id_number':'8001015009087'},
+            10: {'number_of_lives':'4'}, 11: {'product_id':str(product_id)},
+            19: {'payment_method':'Cash'},
+            26: {'beneficiary_name':'Test Person', 'beneficiary_contact':'0821234567', 'beneficiary_relationship':'Spouse'},
+            31: {'delivery_method':'auto'},
+        }
+        with patch('app.routes.recovery._save_script_pdf'), patch('app.services.email_service.send_email') as email:
+            for expected in [*range(1,27),29,30,31]:
+                page = self.client.get(path, follow_redirects=True)
+                self.assertEqual(page.status_code, 200, expected)
+                self.assertEqual(db.session.get(TelesalesScriptSession, sid).current_step, expected)
+                data = {'step_id':str(expected), 'answer':'yes', **fields.get(expected,{})}
+                response = self.client.post(path, data=data)
+                self.assertEqual(response.status_code, 302, expected)
+            email.assert_not_called()
+        session = db.session.get(TelesalesScriptSession, sid)
+        self.assertEqual(session.status,'Completed')
+        self.assertEqual(json.loads(session.answers_json)['10']['number_of_lives'],4)
+
     def tearDown(self):
         db.session.remove(); db.drop_all(); self.ctx.pop(); self.tmp.cleanup()
 

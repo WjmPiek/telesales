@@ -9,6 +9,12 @@ main_bp = Blueprint("main", __name__)
 
 @main_bp.route("/")
 @login_required
+def home():
+    return redirect(url_for("recovery.callbacks"))
+
+
+@main_bp.route("/dashboard")
+@login_required
 def dashboard():
     today = date.today()
     open_statuses = ["New", "Imported", "Called", "No Answer", "Callback", "Interested", "Application Started", "Signature Sent", "FICA Outstanding", "QA Review"]

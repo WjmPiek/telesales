@@ -30,7 +30,7 @@
     <div class="card shadow-sm">
       <div class="card-header bg-dark text-white"><b>{{step.id}}. {{step.title}}</b></div>
       <div class="card-body">
-        <h5 class="mb-3">Agent must say:</h5>
+        <h5 class="mb-3">1. Employee: read this to the client</h5>
         <div class="mb-4">
           {% for block in spoken_text.split('\n\n') %}
             {% if block.strip() %}
@@ -92,9 +92,10 @@
           </div>
         </div>
         {% endif %}
-        <h5>Question / Confirmation</h5>
-        <div class="alert alert-info">{{step.question}}</div>
+        <h5>2. {% if step.employee_confirmation %}Employee: confirm what you completed{% else %}Record the client's answer{% endif %}</h5>
+        <div class="alert alert-info"><small class="d-block fw-bold">Employee guidance — do not read this line aloud</small>{{step.question}}</div>
         <form method="post">
+          <input type="hidden" name="step_id" value="{{step.id}}">
           {% if step.id == 9 %}
             <div class="alert alert-light border">
               <b>Product filtering:</b> the system uses the client's SA ID number to calculate age and only list products in the correct age range.
@@ -118,6 +119,11 @@
             </div>
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
             <input type="hidden" name="answer" value="yes">
+          {% elif step.id == 10 %}
+            <label class="form-label" for="numberOfLives">How many people does the client want to cover?</label>
+            <input id="numberOfLives" class="form-control mb-3" type="number" name="number_of_lives" min="1" required>
+            <textarea class="form-control mb-3" name="note" rows="2" placeholder="Record any details the client gives"></textarea>
+            <button class="btn btn-success btn-lg" name="answer" value="yes">Save answer and continue</button>
           {% elif step.id == 11 %}
             <div class="alert alert-secondary">Available policies are filtered by the selected cover type and client age where available.</div>
             <div class="list-group mb-3">
@@ -209,11 +215,16 @@
             <input type="hidden" name="answer" value="yes">
           {% else %}
             <textarea class="form-control mb-3" name="note" rows="2" placeholder="Optional notes / client comments"></textarea>
-            <button class="btn btn-success btn-lg" name="answer" value="yes">Yes - Continue</button>
-            {% if step.block_on_no %}
-            <button class="btn btn-danger btn-lg" name="answer" value="no">No - Stop Call</button>
+            {% if step.employee_confirmation %}
+            <button class="btn btn-success btn-lg" name="answer" value="yes">Explained / completed — continue</button>
+            <button class="btn btn-outline-secondary btn-lg" name="answer" value="no">Not yet — stay on this step</button>
             {% else %}
-            <button class="btn btn-warning btn-lg" name="answer" value="no">No / Not Applicable</button>
+            <button class="btn btn-success btn-lg" name="answer" value="yes">Client says Yes — continue</button>
+            {% if step.block_on_no or step.id == 28 %}
+            <button class="btn btn-danger btn-lg" name="answer" value="no">Client says No — stop application</button>
+            {% else %}
+            <button class="btn btn-outline-primary btn-lg" name="answer" value="no">Client says No — continue</button>
+            {% endif %}
             {% endif %}
           {% endif %}
         </form>

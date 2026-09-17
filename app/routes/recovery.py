@@ -569,8 +569,8 @@ SCRIPT_STEPS = [{'id': 1,
   'title': 'Affordability',
   'qa': 'SECTION 2: NEEDS ANALYSIS',
   'block_on_no': False,
-  'script': 'Are affordability and monthly premium important considerations for you?',
-  'question': 'Affordability was discussed?'},
+  'script': 'Is the monthly premium for this selected plan affordable for you?',
+  'question': 'Record whether the client can afford the selected monthly premium.'},
  {'id': 13,
   'title': 'Recent Cover Elsewhere',
   'qa': 'SECTION 2: NEEDS ANALYSIS',
@@ -1106,6 +1106,10 @@ def _can_manage_scripts():
 def _script_step(step_id):
     for step in _current_script_steps():
         if step["id"] == step_id:
+            step = dict(step)
+            step['employee_confirmation'] = step_id in {2, 4, 7, 14, 15, 18, 20, 21, 23, 25}
+            if step_id in {8, 13}:
+                step['question'] = 'Record the client\'s answer to the question above.'
             return step
     return None
 
@@ -1172,12 +1176,20 @@ def script_step(session_id):
     step = _script_step(session.current_step)
     if not step:
         return redirect(url_for("recovery.script_complete", session_id=session.id))
-    # Only ask number of lives when extended cover was selected. Otherwise skip this step automatically.
-    if request.method == "GET" and step.get("id") == 10 and (_answer_value(session, "coverage_choice") != "extended_family"):
-        session.current_step = 11
+    # Do not ask cash/stop-order clients for bank details or debit consent.
+    if request.method == "GET" and step['id'] in {27, 28} and _answer_value(session, 'payment_method') in {'Cash', 'Stop Order'}:
+        answers = _script_answers(session)
+        for skipped in (27, 28):
+            item = _script_step(skipped)
+            answers[str(skipped)] = {'answer': 'na', 'title': item['title'], 'qa': item['qa'], 'question': item['question'], 'note': 'Not applicable to selected payment method', 'recorded_at': datetime.utcnow().isoformat()}
+        session.answers_json = json.dumps(answers)
+        session.current_step = 29
         db.session.commit()
         return redirect(url_for("recovery.script_step", session_id=session.id))
     if request.method == "POST":
+        if request.form.get('step_id') and request.form.get('step_id') != str(step['id']):
+            flash('This step was already saved. Please continue with the current question.', 'info')
+            return redirect(url_for('recovery.script_step', session_id=session.id))
         if request.form.get("go_to_step"):
             try:
                 session.current_step = int(request.form.get("go_to_step"))
@@ -1188,7 +1200,23 @@ def script_step(session_id):
         answer = request.form.get("answer")
         note = request.form.get("note", "")
         extra = {}
+        if step.get('employee_confirmation') and answer == 'no':
+            flash('Complete this explanation with the client, then select Explained / completed.', 'warning')
+            return redirect(url_for('recovery.script_step', session_id=session.id))
+        if step['id'] not in {9, 10, 11, 16, 19, 26, 27, 31} and answer not in {'yes', 'no'}:
+            flash('Select an answer before continuing.', 'warning')
+            return redirect(url_for('recovery.script_step', session_id=session.id))
+        if step['id'] == 10:
+            count = request.form.get('number_of_lives', type=int)
+            if count is None or count < 1:
+                flash('Enter the number of people the client wants to cover.', 'warning')
+                return redirect(url_for('recovery.script_step', session_id=session.id))
+            extra['number_of_lives'] = count
+            answer = str(count)
         if step["id"] == 9:
+            if request.form.get('coverage_choice') not in {'myself_only', 'myself_spouse', 'myself_spouse_children', 'extended_family'}:
+                flash('Select who the client wants to cover.', 'warning')
+                return redirect(url_for('recovery.script_step', session_id=session.id))
             extra["coverage_choice"] = request.form.get("coverage_choice") or answer
             extra["client_id_number"] = request.form.get("client_id_number") or _script_client_id_number(session)
             dob = dob_from_sa_id(extra["client_id_number"]) if extra.get("client_id_number") else None
@@ -1196,6 +1224,10 @@ def script_step(session_id):
             extra["client_age"] = calculated_age or request.form.get("client_age") or _script_client_age(session)
             answer = extra["coverage_choice"] or answer
         if step["id"] == 11:
+            eligible_ids = {str(p.id) for p in _eligible_products_for_script(session)}
+            if request.form.get('product_id') not in eligible_ids:
+                flash('Select an available policy before continuing.', 'warning')
+                return redirect(url_for('recovery.script_step', session_id=session.id))
             if request.form.get("product_id"):
                 extra["product_id"] = request.form.get("product_id")
                 answer = "yes"
@@ -1212,6 +1244,9 @@ def script_step(session_id):
             flash("Premium declined. Please select a different product in the client's age range.", "warning")
             return redirect(url_for("recovery.script_step", session_id=session.id))
         if step["id"] == 19:
+            if request.form.get('payment_method') not in {'Cash', 'Debit Order', 'Stop Order'}:
+                flash('Select the client\'s payment method.', 'warning')
+                return redirect(url_for('recovery.script_step', session_id=session.id))
             extra["payment_method"] = request.form.get("payment_method") or answer
             answer = extra["payment_method"] or answer
         if step["id"] == 26:
@@ -1233,7 +1268,7 @@ def script_step(session_id):
         answers = _script_answers(session)
         answers[str(step["id"])] = {"answer": answer, "note": note, "title": step["title"], "qa": step["qa"], "question": step["question"], "recorded_at": datetime.utcnow().isoformat(), **extra}
         session.answers_json = json.dumps(answers)
-        if answer == "no" and step.get("block_on_no"):
+        if answer == "no" and (step.get("block_on_no") or step['id'] == 28):
             session.status = "Blocked"
             session.blocked_reason = f"Client answered No at step {step['id']}: {step['title']}"
             session.completed_at = datetime.utcnow()
