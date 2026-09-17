@@ -1,0 +1,12 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Not finalised</h2>
+<p>Continue an unfinished call or application. Completed and stopped calls remain in <a href="{{ url_for('recovery.script_records') }}">Call scripts</a>.</p>
+<form method="get" class="d-flex gap-2 mb-3"><input class="form-control" name="q" value="{{ q }}" aria-label="Search unfinished clients" placeholder="Name, phone, policy number or ID"><button class="btn btn-primary">Search</button><a class="btn btn-outline-secondary" href="{{ url_for('recovery.not_finalised') }}">Clear</a></form>
+<div class="table-responsive"><table class="table table-striped"><thead><tr><th>Client</th><th>Phone</th><th>Policy / application</th><th>Progress</th><th>Actions</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.name }}</td><td>{{ row.phone or '-' }}</td><td>{{ row.reference or '-' }}</td><td>{{ row.status }}{% if row.script and row.script.status == 'In Progress' %}<br>Next: step {{ row.script.current_step }}{% endif %}</td><td>
+{% if row.script %}<a class="btn btn-sm btn-primary" href="{{ url_for('recovery.script_step' if row.script.status == 'In Progress' else 'recovery.script_complete', session_id=row.script.id) }}">{{ 'Resume script' if row.script.status == 'In Progress' else 'Review script' }}</a>{% endif %}
+{% if row.application %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('applications.view_application', app_id=row.application.id) }}">Continue application</a>{% elif row.script and row.script.status == 'Completed' and row.policy_id %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('recovery.start_application', policy_id=row.policy_id, script_id=row.script.id, app_type=row.script.script_type) }}">Continue to application</a>{% endif %}
+{% if row.policy_id %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('client_files.index', policy_id=row.policy_id) }}">Client file</a>{% elif row.application %}<a href="{{ url_for('client_files.index', application_id=row.application.id) }}">Client file</a>{% endif %}
+</td></tr>{% else %}<tr><td colspan="5">No unfinished clients match this search.</td></tr>{% endfor %}</tbody></table></div>
+<p class="text-muted">Showing up to 500 scripts and applications you can access. Search to narrow the list. Answers are saved when you continue to the next script step.</p>
+{% endblock %}
