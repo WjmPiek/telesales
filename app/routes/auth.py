@@ -2,11 +2,13 @@ from datetime import datetime, timedelta
 from io import BytesIO
 import base64
 import hashlib
+import os
 import secrets
 
 import qrcode
 from flask import Blueprint, current_app, jsonify, render_template, request, redirect, url_for, flash, make_response
 from flask_login import login_user, logout_user, login_required, current_user
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from app import db
 from app.models import AuditLog, QRLoginToken, QRTrustedDevice, User
 
@@ -152,6 +154,63 @@ def login():
         _record_bad_login()
         flash("Invalid login details", "danger")
     return render_template("auth/login.html")
+
+
+@auth_bp.route("/launch")
+def martins_launch():
+    """Consume a short-lived launch issued by the Martins main system."""
+    secret = os.getenv("INSURANCE_LAUNCH_SECRET", "").strip()
+    token = request.args.get("token", "").strip()
+    if not secret:
+        current_app.logger.error("INSURANCE_LAUNCH_SECRET is not configured")
+        return "Insurance application launch is not configured.", 503
+    if not token:
+        return "Missing launch token.", 400
+
+    try:
+        payload = URLSafeTimedSerializer(
+            secret, salt="martins-insurance-launch-v1"
+        ).loads(token, max_age=120)
+    except SignatureExpired:
+        return "Launch link expired. Open Insurance Applications again.", 401
+    except BadSignature:
+        return "Invalid launch token.", 401
+
+    if payload.get("module") != "insurance":
+        return "Invalid launch module.", 401
+
+    email = str(payload.get("email") or "").strip().lower()
+    name = str(payload.get("name") or email).strip()
+    if not email:
+        return "Launch token does not contain an email address.", 400
+
+    admin_launch = bool(payload.get("is_admin")) or email == SUPER_ADMIN_EMAIL
+    role = _ensure_role("Admin" if admin_launch else "Agent")
+    franchises = [str(item).strip() for item in payload.get("franchises", []) if str(item).strip()]
+    branch = franchises[0] if franchises else "Head Office"
+
+    user = User.query.filter(db.func.lower(User.email) == email).first()
+    if user is None:
+        user = User(
+            name=name,
+            email=email,
+            role=role,
+            branch=branch,
+            active=True,
+        )
+        user.set_password(secrets.token_urlsafe(32))
+        db.session.add(user)
+    else:
+        user.name = name or user.name
+        user.branch = branch or user.branch
+        user.active = True
+        if admin_launch:
+            user.role = role
+    db.session.commit()
+
+    login_user(user)
+    _audit(user.id, "MARTINS_SSO_LOGIN", "Signed in from the Martins main system")
+    return redirect(url_for("role_portals.home"))
 
 
 
