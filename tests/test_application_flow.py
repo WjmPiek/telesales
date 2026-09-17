@@ -97,6 +97,34 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual({item['answer'] for item in answers.values()}, {'skipped'})
             self.assertEqual(call.qa_score, 0)
 
+    def test_callback_time_reminders_and_completion(self):
+        sid = self._new_call_script(1)
+        call = db.session.get(TelesalesScriptSession, sid)
+        pid = call.lapsed_policy_id
+        response = self.client.post(f'/recovery/{pid}/schedule-callback', data={'callback_at':'2020-01-01T14:30'})
+        self.assertEqual(response.status_code,302)
+        p = db.session.get(LapsedPolicy,pid)
+        self.assertEqual(p.callback_at.hour,14)
+        self.assertEqual(p.callback_at.minute,30)
+        self.assertEqual(p.recovery_status,'Callback')
+        self.assertEqual(len(self.client.get('/recovery/callback-reminders').json['reminders']),1)
+        self.assertIn('2020-01-01 14:30', self.client.get('/recovery/callbacks').get_data(as_text=True))
+        self.client.post(f'/recovery/{pid}/schedule-callback', data={'callback_at':'2099-01-01T14:30'})
+        self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
+        p = db.session.get(LapsedPolicy,pid)
+        p.recovery_status='Closed'; db.session.commit()
+        self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
+
+    def test_callback_schedule_rejects_other_agents_and_invalid_time(self):
+        sid = self._new_call_script(1)
+        pid = db.session.get(TelesalesScriptSession,sid).lapsed_policy_id
+        self.client.post(f'/recovery/{pid}/schedule-callback',data={'callback_at':'invalid'})
+        self.assertIsNone(db.session.get(LapsedPolicy,pid).callback_at)
+        user=db.session.get(User,self.user_id);user.role=Role(name='Agent')
+        db.session.get(LapsedPolicy,pid).assigned_agent_id=None;db.session.commit()
+        self.assertEqual(self.client.post(f'/recovery/{pid}/schedule-callback',data={'callback_at':'2020-01-01T10:00'}).status_code,403)
+        self.assertEqual(self.client.get('/recovery/callback-reminders').json['reminders'],[])
+
     def _new_call_script(self, step, answers=None):
         import json
         policy = LapsedPolicy(initials='Test', surname='Callback', cell_number='0821234567',

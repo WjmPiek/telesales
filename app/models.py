@@ -370,6 +370,7 @@ class LapsedPolicy(db.Model):
     comments = db.Column(db.Text)
     assigned_agent_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     recovery_status = db.Column(db.String(80), default="Imported")
+    callback_at = db.Column(db.DateTime)  # South Africa local time (Africa/Johannesburg)
     next_action_date = db.Column(db.Date, default=date.today)
     imported_at = db.Column(db.DateTime, default=datetime.utcnow)
 
