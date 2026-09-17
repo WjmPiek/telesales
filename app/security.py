@@ -67,7 +67,7 @@ def is_agent_user(user=None):
 def role_home_endpoint(user=None):
     role = normalized_role_name(user)
     if role in {"admin", "super admin", "super_admin", "branch manager", "branchmanager", "manager", "supervisor", "agent", "user", "staff", "sales agent"}:
-        return "role_portals.workspace"
+        return "recovery.callbacks"
     return "main.dashboard"
 
 def require_admin():

@@ -3,7 +3,7 @@
 <a href="{{ url_for(target) }}"{% if endpoint == target %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
 {%- endmacro %}
 <div class="sidebar-section">
-  <a class="side-link{% if endpoint in ['role_portals.home', 'role_portals.workspace'] %} active{% endif %}" href="{{ url_for('role_portals.workspace') }}"><span>Home</span></a>
+  <a class="side-link{% if endpoint == 'recovery.callbacks' %} active{% endif %}" href="{{ url_for('recovery.callbacks') }}"><span>Home</span></a>
   <details class="side-group"{% if request.blueprint in ['recovery', 'allocation', 'client_files'] %} open{% endif %}>
     <summary class="side-toggle"><span>Clients</span></summary>
     <div class="side-submenu">

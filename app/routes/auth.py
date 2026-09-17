@@ -148,7 +148,7 @@ def login():
         if user and user.check_password(request.form.get("password", "")) and user.active:
             _clear_bad_logins()
             login_user(user)
-            return redirect(url_for("main.dashboard"))
+            return redirect(url_for("recovery.callbacks"))
         _record_bad_login()
         flash("Invalid login details", "danger")
     return render_template("auth/login.html")
@@ -654,7 +654,7 @@ def qr_status(token):
         qr_token.used_at = datetime.utcnow()
         db.session.commit()
         _audit(user.id, "QR_LOGIN_USED", f"Desktop QR login completed from IP {_client_ip()}")
-        return jsonify({"status": "approved", "redirect": url_for("main.dashboard")})
+        return jsonify({"status": "approved", "redirect": url_for("recovery.callbacks")})
 
     return jsonify({"status": qr_token.status})
 
