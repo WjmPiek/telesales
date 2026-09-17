@@ -1,0 +1,40 @@
+<aside id="callback-popup" role="alert" aria-live="assertive" aria-label="Callback reminder" hidden style="position:fixed;bottom:20px;right:20px;width:min(390px,calc(100vw - 40px));z-index:1090;background:white;color:#202030;border:3px solid #7044a0;border-radius:14px;padding:20px;box-shadow:0 8px 30px #0004">
+  <h4>Client callback reminder</h4>
+  <div id="callback-popup-items"></div>
+  <button id="callback-popup-dismiss" type="button" class="btn btn-outline-secondary mt-3">Dismiss</button>
+</aside>
+<script>
+(function () {
+  const popup = document.getElementById('callback-popup');
+  const items = document.getElementById('callback-popup-items');
+  const dismissed = new Set();
+  let visibleKeys = [];
+  document.getElementById('callback-popup-dismiss').onclick = function () {
+    visibleKeys.forEach(key => { dismissed.add(key); try { sessionStorage.setItem('callback-seen:'+key,'1'); } catch (_) {} });
+    popup.hidden = true;
+  };
+  async function checkCallbacks() {
+    if (document.hidden) return;
+    try {
+      const response = await fetch({{ url_for('recovery.callback_reminders')|tojson }}, {cache:'no-store'});
+      if (!response.ok) return;
+      const data = await response.json();
+      const active = (data.alerts || []).filter(item => {
+        if (dismissed.has(item.key)) return false;
+        try { return !sessionStorage.getItem('callback-seen:'+item.key); } catch (_) { return true; }
+      });
+      items.replaceChildren(); visibleKeys = active.map(item => item.key);
+      active.forEach(item => {
+        const text = document.createElement('p');
+        text.textContent = item.name+' — '+item.time+' SAST — '+(item.due ? 'Call is due' : 'Due within 2 minutes');
+        const button = document.createElement('a');
+        button.className = 'btn btn-primary mb-2'; button.href = item.url; button.textContent = item.label;
+        items.append(text,button);
+      });
+      popup.hidden = active.length === 0;
+    } catch (_) { /* Keep the current reminder visible during a network interruption. */ }
+  }
+  checkCallbacks(); setInterval(checkCallbacks,15000);
+  document.addEventListener('visibilitychange',checkCallbacks);
+})();
+</script>
