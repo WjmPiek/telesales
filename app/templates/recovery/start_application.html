@@ -94,6 +94,8 @@
     <label>Beneficiary Relationship</label>
     <input class="form-control" name="beneficiary_relationship" value="{{script_payload.beneficiary.relationship if script_payload.beneficiary else ''}}">
   </div>
+  <div class="col-md-6"><label>Beneficiary ID number</label><input class="form-control" name="beneficiary_id_number" value="{{script_payload.beneficiary.id_number if script_payload.beneficiary else ''}}"></div>
+  <div class="col-md-6"><label>Beneficiary date of birth</label><input class="form-control" type="date" name="beneficiary_date_of_birth" value="{{script_payload.beneficiary.date_of_birth if script_payload.beneficiary else ''}}"></div>
   <div class="col-12">
     <label>Address</label>
     <textarea class="form-control" name="address">{{p.address}}</textarea>

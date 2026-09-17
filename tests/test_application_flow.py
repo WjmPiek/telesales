@@ -43,6 +43,83 @@ class ApplicationFlowTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session['_user_id'] = str(self.user_id); session['_fresh'] = True
 
+    def test_editable_client_email_templates(self):
+        from app.services.email_service import CLIENT_EMAIL_DEFAULTS, client_email_content
+        data = {key + '_' + part: item[part] for key,item in CLIENT_EMAIL_DEFAULTS.items() for part in ('subject','body')}
+        data['invitation_body'] = 'Hello {client_name}, application {application_ref}\n\n{link}'
+        response = self.client.post('/settings/email-templates', data=data)
+        self.assertEqual(response.status_code, 302)
+        subject, body = client_email_content('invitation', self.record, 'https://example.test/sign/test')
+        self.assertIn('Hello Fictional Test', body)
+        self.assertIn('https://example.test/sign/test', body)
+        data['invitation_body'] = 'Missing link'
+        self.assertIn(b'must contain', self.client.post('/settings/email-templates', data=data).data)
+        self.assertIn('Hello Fictional Test', client_email_content('invitation', self.record, 'url')[1])
+        data['invitation_body'] = '{client_name.__class__} {link}'
+        self.assertIn(b'only the placeholders', self.client.post('/settings/email-templates', data=data).data)
+        user = db.session.get(User, self.user_id)
+        user.role.name = 'Agent'; db.session.commit()
+        self.assertEqual(self.client.post('/settings/email-templates', data=data).status_code, 403)
+
+    def test_member_capture_and_beneficiary_transfer(self):
+        import json
+        from app.models import TelesalesScriptSession
+        call_id = self._new_call_script(9, {})
+        policy_id = db.session.get(TelesalesScriptSession, call_id).lapsed_policy_id
+        self.client.post(f'/recovery/script/{call_id}', data={'step_id':'9','coverage_choice':'myself_spouse_children'})
+        response = self.client.get(f'/recovery/script/{call_id}')
+        self.assertTrue(response.location.endswith('/members'))
+        self.assertIn(b'Add at least one', self.client.post(response.location, data={}).data)
+        response = self.client.post(f'/recovery/script/{call_id}/members', data={
+            'spouse_1_full_name':'Sample Partner', 'spouse_1_id_or_dob':'1985-03-04',
+            'child_1_full_name':'Sample Child', 'child_1_id_or_dob':'2015-01-02'})
+        self.assertEqual(response.status_code, 302)
+        call = db.session.get(TelesalesScriptSession, call_id)
+        self.assertEqual(call.current_step, 10)
+        answers = json.loads(call.answers_json)
+        self.assertEqual(len(answers['9']['members']),2)
+        answers['26'] = {'beneficiary_name':'Old Name', 'beneficiary_relationship':'Spouse'}
+        call.answers_json=json.dumps(answers);call.status='Completed';db.session.commit()
+        response = self.client.post(f'/recovery/{policy_id}/start-application?script_id={call_id}', data={
+            'product_id':str(self.record.product_id), 'id_number':'8001015009087',
+            'beneficiary_full_names':'Confirmed Beneficiary', 'beneficiary_relationship':'Child',
+            'beneficiary_id_number':'', 'beneficiary_date_of_birth':'2000-01-01'})
+        self.assertEqual(response.status_code,302)
+        application=ClientApplication.query.filter_by(lapsed_policy_id=policy_id).first()
+        self.assertIsNotNone(application)
+        self.assertEqual(application.beneficiary_full_names,'Confirmed Beneficiary')
+        self.assertEqual(application.spouse_first_names,'Sample')
+        self.assertEqual(json.loads(application.dependents_json)[0]['full_name'],'Sample Child')
+        from app.services.pdf_service import generate_application_pdf
+        from app.services.client_storage import application_folder
+        from pypdf import PdfReader
+        path = os.path.join(application_folder(application),'beneficiary-check.pdf')
+        generate_application_pdf(application,path)
+        self.assertIn('Confirmed Beneficiary', PdfReader(path).pages[0].extract_text())
+        self.assertIn(b'Back to call scripts', self.client.get(f'/recovery/script/{call_id}/complete').data)
+        self.assertNotEqual(self.client.post(f'/recovery/script/{call_id}/members',data={}).status_code,200)
+
+    def test_photo_optimization_and_duplicate_retry(self):
+        from app.services.upload_guard import reject_duplicate
+        from app.services.client_storage import application_folder, store_document
+        from werkzeug.datastructures import FileStorage
+        from PIL import Image
+        import random
+        image=Image.frombytes('RGB',(2400,1800),random.Random(5).randbytes(2400*1800*3))
+        raw=io.BytesIO();image.save(raw,format='PNG');original=raw.getvalue()
+        upload=FileStorage(stream=io.BytesIO(original),filename='test-id.png')
+        reject_duplicate(self.record,upload,'id_copy')
+        content=upload.stream.read()
+        self.assertLess(len(content),len(original)//3)
+        self.assertLessEqual(max(Image.open(io.BytesIO(content)).size),2000)
+        path=os.path.join(application_folder(self.record),upload.filename)
+        Path(path).write_bytes(content);store_document(self.record,path);db.session.commit()
+        retry=FileStorage(stream=io.BytesIO(original),filename='renamed.png')
+        with self.assertRaisesRegex(ValueError,'Duplicate upload rejected'):
+            reject_duplicate(self.record,retry,'id_copy')
+        with self.assertRaisesRegex(ValueError,'8 MB'):
+            reject_duplicate(self.record,FileStorage(stream=io.BytesIO(b'x'*(8*1024*1024+1)),filename='large.pdf'),'proof_of_address')
+
     @property
     def record(self):
         return db.session.get(ClientApplication, self.record_id)
@@ -232,6 +309,8 @@ class ApplicationFlowTests(unittest.TestCase):
         }
         with patch('app.routes.recovery._save_script_pdf'), patch('app.services.email_service.send_email') as email:
             for expected in [*range(1,27),29,30,31]:
+                if expected == 10:
+                    self.client.post(f'/recovery/script/{sid}/members', data={'spouse_1_full_name':'Test Spouse','spouse_1_id_or_dob':'1985-01-01','child_1_full_name':'Test Child','child_1_id_or_dob':'2010-01-01'})
                 page = self.client.get(path, follow_redirects=True)
                 self.assertEqual(page.status_code, 200, expected)
                 self.assertEqual(db.session.get(TelesalesScriptSession, sid).current_step, expected)
@@ -600,7 +679,9 @@ class ApplicationFlowTests(unittest.TestCase):
                         nonce=session[f'document_review_{self.record_id}_{kind}']
                 response = public.post(f'/sign/{token}',data={'action':'sign_document','document_type':kind,'signature_field':key,'typed_name':'Fictional Test','signature_data':signature,'review_nonce':nonce})
                 self.assertEqual(response.status_code,302)
-                self.assertTrue(response.location.endswith(f'/sign/{token}') if index==len(keys)-1 else '/review/application' in response.location)
+                next_kind = {'application':'popia','popia':'disclosure','disclosure':'welcome','welcome':'cdd'}.get(kind)
+                expected = f'/review/{next_kind}' if index == len(keys)-1 and next_kind else (f'/sign/{token}' if index == len(keys)-1 else '/review/application')
+                self.assertTrue(response.location.endswith(expected), response.location)
             from pypdf import PdfReader
             with public.get(f'/sign/{token}/document/{kind}') as saved:
                 pdf = PdfReader(io.BytesIO(saved.data))

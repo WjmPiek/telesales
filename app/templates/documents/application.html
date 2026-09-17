@@ -79,7 +79,7 @@
       <div class="col-md-5"><input class="form-control" type="file" name="file" required></div>
       <div class="col-md-3"><button class="btn btn-primary w-100">Upload</button></div>
     </form>
-    <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP. Uploads are marked Needs Review until staff approves them. Images and scanned PDFs need manual verification unless OCR is configured.</div>
+    <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP. Photos are resized automatically. PDFs must be 8 MB or smaller. Uploads are marked Needs Review until staff approves them. Images and scanned PDFs need manual verification unless OCR is configured.</div>
   </div>
 </div>
 <details class="card card-body mt-3"><summary>Upload audit history</summary>{% for event in upload_audit %}<p>{{event.created_at}} | {{event.action}} | {{event.details}}</p>{% else %}<p>No upload attempts recorded.</p>{% endfor %}</details>

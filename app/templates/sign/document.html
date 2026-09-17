@@ -67,13 +67,13 @@
 
 {% endif %}
 
-<p class="hint">Read the document, then tap the highlighted client signature space on the page. Sign each highlighted space separately. After the last signature is saved, you will return to your document list automatically.</p><p id="loading" role="status">Loading document…</p><p id="load-error" class="error" hidden>The document could not be loaded. Please reload this page to try again. <a href="{{url_for('signing.view_sign_document',token=token,doc_type=doc_type)}}">Download PDF for review</a></p><div id="pages"></div><noscript>JavaScript is required to sign this document.</noscript></main>
+<p class="hint">Read the document, then tap the highlighted client signature space on the page. Sign each highlighted space separately. After saving, the next signature opens automatically. When this document is complete, the next document opens. You can review each document before signing.</p><p id="loading" role="status">Loading document…</p><p id="load-error" class="error" hidden>The document could not be loaded. Please reload this page to try again. <a href="{{url_for('signing.view_sign_document',token=token,doc_type=doc_type)}}">Download PDF for review</a></p><div id="pages"></div><noscript>JavaScript is required to sign this document.</noscript></main>
 
 <dialog id="signature-dialog" aria-labelledby="signature-title"><form method="post" action="{{url_for('signing.sign_application',token=token)}}" id="signature-form">
 
 <h2 id="signature-title">Sign {{label}}</h2><input type="hidden" name="action" value="sign_document"><input type="hidden" name="document_type" value="{{doc_type}}"><input type="hidden" name="review_nonce" value="{{review_nonce}}"><input type="hidden" name="signature_field" id="signature-field"><input type="hidden" name="signature_data" id="signature-data">
 
-<label for="full-name">Full name</label><input name="typed_name" id="full-name" value="{{app.first_names}} {{app.surname}}" required maxlength="200"><label for="pad">Draw your signature</label><canvas id="pad" aria-label="Draw signature with your finger, mouse or stylus"></canvas><p>Saving places your signature in this document's client signature space.</p><p id="signature-error" role="alert" class="error" hidden>Please draw your signature first.</p><div class="actions"><button type="button" id="cancel">Cancel</button><button type="button" id="clear">Clear</button><button class="primary" id="save">Save signature</button></div></form></dialog>
+<label for="full-name">Full name</label><input name="typed_name" id="full-name" value="{{app.first_names}} {{app.surname}}" required maxlength="200"><label for="pad">Draw your signature</label><canvas id="pad" tabindex="0" autofocus aria-label="Draw signature with your finger, mouse or stylus"></canvas><p>Saving places your signature in this document's client signature space.</p><p id="signature-error" role="alert" class="error" hidden>Please draw your signature first.</p><div class="actions"><button type="button" id="cancel">Review document</button><button type="button" id="clear">Clear</button><button class="primary" id="save">Save signature</button></div></form></dialog>
 
 <script type="module">
 
@@ -83,11 +83,11 @@ const dialog=document.getElementById('signature-dialog'),pad=document.getElement
 
 function clear(){ctx.clearRect(0,0,pad.width,pad.height);hasInk=false;document.getElementById('signature-error').hidden=true;}
 
-function openPad(target){document.getElementById("signature-field").value=target.key;document.getElementById("signature-title").textContent=target.label;dialog.showModal();pad.width=Math.round(pad.clientWidth*2);pad.height=360;ctx.lineWidth=4;ctx.lineCap='round';ctx.strokeStyle='#152030';clear();document.getElementById('full-name').focus();}
+function openPad(target){document.getElementById("signature-field").value=target.key;document.getElementById("signature-title").textContent=target.label;document.activeElement?.blur();dialog.showModal();pad.width=Math.round(pad.clientWidth*2);pad.height=360;ctx.lineWidth=4;ctx.lineCap='round';ctx.strokeStyle='#152030';clear();pad.focus({preventScroll:true});}
 
 function point(e){const r=pad.getBoundingClientRect();return [(e.clientX-r.left)*pad.width/r.width,(e.clientY-r.top)*pad.height/r.height];}
 
-pad.addEventListener('pointerdown',e=>{e.preventDefault();drawing=true;pad.setPointerCapture(e.pointerId);const [x,y]=point(e);ctx.beginPath();ctx.moveTo(x,y);});
+pad.addEventListener('pointerdown',e=>{e.preventDefault();document.activeElement?.blur();pad.focus({preventScroll:true});drawing=true;pad.setPointerCapture(e.pointerId);const [x,y]=point(e);ctx.beginPath();ctx.moveTo(x,y);});
 
 pad.addEventListener('pointermove',e=>{if(!drawing)return;e.preventDefault();ctx.lineTo(...point(e));ctx.stroke();hasInk=true;});
 
@@ -148,6 +148,7 @@ try{
  if(!canSign)document.getElementById('loading').textContent='Complete and save the choices above, then sign the document.';
 
  if(!canSign)document.getElementById('loading').hidden=false;
+ if(canSign && remaining.length){remaining[0].button.scrollIntoView({block:'center'});openPad(remaining[0].target);}
 
 }catch(error){document.getElementById('loading').hidden=true;document.getElementById('load-error').hidden=false;}
 

@@ -465,6 +465,10 @@ def sign_application(token):
                 session.pop(f"document_review_{app_obj.id}_{doc_type}", None)
                 # Completion badges provide persistent feedback without stacking flashes.
                 if doc_type in _signed_doc_types(app_obj):
+                    completed = _signed_doc_types(app_obj)
+                    next_doc = next((key for key, label in REQUIRED_SIGNATURE_DOCS if key not in completed), None)
+                    if next_doc:
+                        return redirect(url_for("signing.edit_document", token=token, doc_type=next_doc))
                     return redirect(url_for("signing.sign_application", token=token))
                 return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
 
@@ -528,12 +532,9 @@ def sign_application(token):
                 db.session.commit()
                 session.pop(_unlocked_key(app_obj.id), None)
                 if recipient:
-                    body = (
-                        f"Dear {_signing_salutation(app_obj)},\n\n"
-                        "Your signed documents have been received and submitted to Martin's Funerals.\n\n"
-                        "Your signed documents are attached for your records. Please keep them in a safe place. Copies are also stored securely with your application."
-                    )
-                    send_email(recipient, "Martin's Funerals signed documents received", body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
+                    from app.services.email_service import client_email_content
+                    subject, body = client_email_content("receipt", app_obj)
+                    send_email(recipient, subject, body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
                 office_email = os.getenv("MAIL_DOCUMENTS_TO")
                 from email.utils import parseaddr
                 if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():

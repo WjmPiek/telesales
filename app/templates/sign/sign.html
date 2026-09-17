@@ -84,7 +84,7 @@
               <b>{{fica_labels.get(key, key)}}</b>
               {% if key in received_docs %}<span class="badge text-bg-success">Received</span>{% else %}<span class="badge text-bg-warning">Outstanding</span>{% endif %}
             </div>
-            <div class="small text-muted mb-3">Accepted: PDF, JPG, PNG, WEBP. Files are checked and then sent to staff for approval.</div>
+            <div class="small text-muted mb-3">Accepted: PDF, JPG, PNG, WEBP. Photos are resized automatically. PDFs must be 8 MB or smaller. Files are checked and then sent to staff for approval.</div>
             <form method="post" action="{{url_for('signing.upload_fica_document', token=token)}}" enctype="multipart/form-data">
               <input type="hidden" name="action" value="upload_fica">
               <input type="hidden" name="document_type" value="{{key}}">
