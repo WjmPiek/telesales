@@ -3,9 +3,9 @@
 <a href="{{ url_for(target) }}"{% if endpoint == target %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
 {%- endmacro %}
 <div class="sidebar-section">
-  <a class="side-link{% if endpoint == 'recovery.callbacks' %} active{% endif %}" href="{{ url_for('recovery.callbacks') }}"><span>Home</span></a>
+  <a class="side-link{% if endpoint == 'recovery.callbacks' %} active{% endif %}" href="{{ url_for('recovery.callbacks') }}"><span class="ms-nav-icon" aria-hidden="true">H</span><span>Home</span></a>
   <details class="side-group"{% if request.blueprint in ['recovery', 'allocation', 'client_files'] %} open{% endif %}>
-    <summary class="side-toggle"><span>Clients<small>Client files, calls and follow-ups</small></span></summary>
+    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">C</span><span>Clients<small>Client files, calls and follow-ups</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Find client / client file', 'client_files.index') }}
       {{ nav_link('Client list & import', 'recovery.queue') }}
@@ -19,7 +19,7 @@
   </details>
   {% if admin_role or manager_role %}
   <details class="side-group"{% if request.blueprint in ['communications', 'whatsapp'] and endpoint != 'communications.notifications' %} open{% endif %}>
-    <summary class="side-toggle"><span>WhatsApp<small>Campaigns and conversations</small></span></summary>
+    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp<small>Campaigns and conversations</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Overview', 'communications.whatsapp_dashboard') }}
       {{ nav_link('Conversations', 'whatsapp.inbox') }}
@@ -29,9 +29,9 @@
       {{ nav_link('WhatsApp settings', 'communications.whatsapp_settings') }}
     </div>
   </details>
-  {% else %}<a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span>WhatsApp</span></a>{% endif %}
+  {% else %}<a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp</span></a>{% endif %}
   <details class="side-group"{% if request.blueprint in ['applications', 'documents', 'qa', 'signing'] %} open{% endif %}>
-    <summary class="side-toggle"><span>Applications<small>Documents, signatures and review</small></span></summary>
+    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Applications<small>Documents, signatures and review</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Application list', 'applications.list_applications') }}
       {{ nav_link('Documents & signatures', 'documents.document_dashboard') }}
@@ -40,14 +40,14 @@
   </details>
   {% if admin_role or manager_role %}
   <details class="side-group"{% if request.blueprint in ['reports', 'wallboard', 'targets'] %} open{% endif %}>
-    <summary class="side-toggle"><span>Reports<small>Performance and sales results</small></span></summary>
+    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">R</span><span>Reports<small>Performance and sales results</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Reports', 'reports.index') }}
       {% if admin_role %}{{ nav_link('Live team performance', 'wallboard.index') }}{{ nav_link('Sales targets', 'targets.index') }}{% endif %}
     </div>
   </details>
   <details class="side-group"{% if request.blueprint in ['auth', 'policies', 'settings', 'security_center'] or endpoint in ['main.franchise_details', 'main.franchise_employees'] %} open{% endif %}>
-    <summary class="side-toggle"><span>Administration<small>People, policies and settings</small></span></summary>
+    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Administration<small>People, policies and settings</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Company details', 'main.franchise_details') }}
       {% if admin_role %}
@@ -63,5 +63,5 @@
     </div>
   </details>
   {% endif %}
-  <a class="side-link{% if endpoint == 'communications.notifications' %} active{% endif %}" href="{{ url_for('communications.notifications') }}"><span>Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</span></a>
+  <a class="side-link{% if endpoint == 'communications.notifications' %} active{% endif %}" href="{{ url_for('communications.notifications') }}"><span class="ms-nav-icon" aria-hidden="true">N</span><span>Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</span></a>
 </div>
