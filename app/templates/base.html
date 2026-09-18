@@ -15,20 +15,21 @@
 <link rel="icon" type="image/x-icon" href="/static/brand/favicon.ico?v=20260918-brand" sizes="any">
 <link rel="icon" type="image/png" href="/static/brand/icon-192.png?v=20260918-brand" sizes="192x192">
 <link rel="apple-touch-icon" href="/static/brand/icon-180.png?v=20260918-brand" sizes="180x180">
+<link rel="stylesheet" href="/static/css/module-shell.css?v=20260918-shell">
 </head>
 <body>
 {% if current_user.is_authenticated %}
 {% set role=(current_user.role.name|lower if current_user.role else '') %}{% set admin_role = role in ['admin','super admin','super_admin'] %}{% set manager_role = role in ['branch manager','branch_manager','manager','supervisor'] %}
-<div class="app-shell">
+<div class="app-shell ms-shell">
   <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
-  <aside class="app-sidebar" id="appSidebar">
-    <a class="sidebar-brand" href="{{ url_for('role_portals.home') }}"><img class="sidebar-logo" src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins"><span class="sidebar-brand-text"><span>Martin's Funerals</span><span class="sidebar-brand-module">Insurance Sales</span></span></a>
+  <aside class="app-sidebar ms-sidebar" id="appSidebar">
+    <a class="sidebar-brand ms-brand" href="{{ url_for('role_portals.home') }}"><img class="sidebar-logo" src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins"><span class="sidebar-brand-text ms-brand-copy"><span class="ms-brand-title">Martin's Funerals</span><span class="sidebar-brand-module ms-brand-module">Insurance Sales</span></span></a>
     {% include "_sidebar.html" %}
     <div class="sidebar-footer"><button class="btn btn-outline-light btn-sm w-100 mb-2" type="button" onclick="toggleDarkMode()">Dark mode</button><div class="small mb-2">{{ current_user.name }}<br><span style="opacity:.8">{{ current_user.email }}</span></div><a class="btn btn-light btn-sm w-100" href="{{ url_for('auth.logout') }}">Logout</a></div>
   </aside>
-  <main class="app-main">
-    <div class="app-topbar">
-      <a class="topbar-brand" href="https://martinssystem.co.za/"><img src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins"><span>Martin's Funerals</span></a>
+  <main class="app-main ms-main">
+    <div class="app-topbar ms-topbar">
+      <a class="topbar-brand ms-topbar-brand" href="https://martinssystem.co.za/"><img src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins"><span>Martin's Funerals System</span></a>
       <div class="topbar-account"><span>Logged in as</span><strong>{{ current_user.name }}</strong><span class="topbar-role">{{ current_user.role.name if current_user.role else 'User' }}</span><a href="{{ url_for('auth.logout') }}">Logout</a></div>
       <button class="btn btn-light btn-sm mobile-menu-button" onclick="toggleSidebar(true)">Menu</button>
     </div>
