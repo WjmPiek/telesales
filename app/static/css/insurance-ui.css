@@ -43,6 +43,8 @@
 .topbar-account { min-height: 48px; padding: 7px 10px 7px 14px; font-size: 12px; border-radius: 14px; }
 .topbar-account a { font-size: 13px; min-height: 36px; padding: 7px 13px; border: 1px solid #ece4f3; }
 .content-wrap { padding: 26px 28px; }
+.content-wrap > .d-flex { flex-wrap: wrap; gap: 16px; }
+.content-wrap > .d-flex > div { min-width: 0; max-width: 100%; }
 .app-shell .card,.app-shell .stat-card,.app-shell .portal-stat-card,.app-shell .action-card { border-radius: 17px; border: 1px solid #e1e6ef; box-shadow: 0 14px 36px rgba(25,31,47,.065); }
 .app-shell .card-body { padding: 22px; }
 .app-shell .card-header { padding: 13px 18px; background: #fff; font-size: 14px; }
