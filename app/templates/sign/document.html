@@ -1,7 +1,7 @@
 <!doctype html>
 
 <html lang="en"><head>
-<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}?v=2"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
 
 <title>{{label}} | Martin's Funerals</title>
 
@@ -9,7 +9,10 @@
 
 *{box-sizing:border-box}body{margin:0;background:#eef0f5;color:#19202b;font:16px Arial,sans-serif}header{position:sticky;top:0;z-index:3;background:white;border-bottom:1px solid #ddd;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}h1{font-size:20px;margin:0;flex:1}a{color:#69459c}button,.link-button{border:1px solid #69459c;border-radius:8px;background:white;color:#69459c;padding:12px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.5;cursor:wait}.primary{background:#69459c;color:white}.status{font-weight:bold;color:#246d46}main{padding:16px;max-width:960px;margin:auto}.hint{margin:0 0 16px;line-height:1.5}.page{position:relative;margin:0 auto 20px;background:white;box-shadow:0 3px 18px #0002;width:100%}.page canvas{display:block;width:100%;height:auto}.signature-space{position:absolute;border:2px dashed #69459c;background:#f5efffec;color:#523278;padding:2px;font-size:clamp(7px,1.2vw,14px);font-weight:bold;min-height:0;line-height:1;overflow:hidden}.signature-space.saved{background:transparent;border:2px solid #208753;color:transparent}.signature-space.saved:hover,.signature-space.saved:focus{background:#f5efffcc;color:#523278}.page-label{text-align:center;color:#667;margin:10px}dialog{border:0;border-radius:16px;padding:24px;width:min(580px,calc(100% - 24px));max-height:95dvh;overflow:auto;box-shadow:0 10px 50px #0005}dialog::backdrop{background:#17202b99}dialog h2{margin-top:0;font-size:22px}label{display:block;margin:12px 0 6px}input{width:100%;padding:12px;font:inherit;border:1px solid #bbc;border-radius:6px}#pad{width:100%;height:180px;border:1px solid #bbc;border-radius:8px;touch-action:none;background:white}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.error{color:#a12525;background:#fff1f1;padding:12px;border-radius:8px}[hidden]{display:none!important}@media(max-width:500px){header{padding:10px;gap:8px}h1{flex-basis:100%;font-size:18px}main{padding:10px}button,.link-button{padding:10px;font-size:14px}}
 
-</style></head><body>
+</style><link rel="icon" type="image/x-icon" href="/static/brand/favicon.ico?v=20260918-brand" sizes="any">
+<link rel="icon" type="image/png" href="/static/brand/icon-192.png?v=20260918-brand" sizes="192x192">
+<link rel="apple-touch-icon" href="/static/brand/icon-180.png?v=20260918-brand" sizes="180x180">
+</head><body>
 
 <header><a href="{{url_for('signing.sign_application',token=token)}}">Back to documents</a><h1>{{label}}</h1><span class="status" role="status">{{'Document signed' if signed else 'Not signed'}}</span><button id="jump" disabled>Find signature space</button></header>
 
