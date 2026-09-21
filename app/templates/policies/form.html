@@ -1,1 +1,40 @@
-{% extends 'base.html' %}{% block content %}<h3>{{'Edit' if product else 'New'}} Policy Product</h3><form method="post" class="row g-2"><div class="col-md-6"><label>Product Name</label><input class="form-control" name="product_name" value="{{product.product_name if product else ''}}"></div><div class="col-md-6"><label>Plan Name</label><input class="form-control" name="plan_name" value="{{product.plan_name if product else ''}}"></div><div class="col-md-3"><label>Cover Amount</label><input class="form-control" name="cover_amount" value="{{product.cover_amount if product else ''}}"></div><div class="col-md-3"><label>Monthly Premium</label><input class="form-control" name="monthly_premium" value="{{product.monthly_premium if product else ''}}"></div><div class="col-md-3"><label>Waiting Months</label><input class="form-control" name="waiting_period_months" value="{{product.waiting_period_months if product else ''}}"></div><div class="col-md-3"><label>Reason</label><input class="form-control" name="reason"></div><div class="col-md-2"><label>Min Age</label><input class="form-control" name="min_age" value="{{product.min_age if product else ''}}"></div><div class="col-md-2"><label>Max Age</label><input class="form-control" name="max_age" value="{{product.max_age if product else ''}}"></div><div class="col-md-2 form-check mt-4"><input class="form-check-input" type="checkbox" name="active" checked> Active</div><div class="col-12"><button class="btn btn-success">Save</button></div></form>{% endblock %}
+{% extends 'base.html' %}{% block content %}
+{% set plan_type = (rules.plan_type if rules and rules.plan_type else ('member_product' if product and ('member +' in ((product.product_name or '') ~ ' ' ~ (product.plan_name or ''))|lower) else 'family')) %}
+<h3>{{'Edit' if product else 'New'}} Policy Product</h3>
+<form method="post" class="row g-3" id="product-form">
+  <div class="col-md-6"><label>Product Name</label><input class="form-control" name="product_name" required value="{{product.product_name if product else ''}}"></div>
+  <div class="col-md-6"><label>Plan Name</label><input class="form-control" name="plan_name" required value="{{product.plan_name if product else ''}}"></div>
+  <div class="col-md-3"><label>Cover Amount</label><input class="form-control" name="cover_amount" type="number" min="0" step="0.01" value="{{product.cover_amount if product else ''}}"></div>
+  <div class="col-md-3"><label>Monthly Premium</label><input class="form-control" name="monthly_premium" type="number" min="0" step="0.01" value="{{product.monthly_premium if product else ''}}"></div>
+  <div class="col-md-3"><label>Waiting Months</label><input class="form-control" name="waiting_period_months" type="number" min="0" value="{{product.waiting_period_months if product else ''}}"></div>
+  <div class="col-md-3"><label>Reason</label><input class="form-control" name="reason"></div>
+  <div class="col-md-2"><label>Min Age</label><input class="form-control" name="min_age" type="number" min="0" value="{{product.min_age if product else ''}}"></div>
+  <div class="col-md-2"><label>Max Age</label><input class="form-control" name="max_age" type="number" min="0" value="{{product.max_age if product else ''}}"></div>
+  <div class="col-md-2 form-check mt-5"><input class="form-check-input" type="checkbox" name="active" {% if not product or product.active %}checked{% endif %}> <label class="form-check-label">Active</label></div>
+
+  <div class="col-12 mt-4"><h4>Application member setup</h4><p class="text-muted">Choose which people may be added when this product is selected on a new or WhatsApp application.</p></div>
+  <div class="col-md-4"><label>Plan Type</label><select class="form-control" name="plan_type" id="plan_type" onchange="toggleMemberSetup()"><option value="single" {% if plan_type=='single' %}selected{% endif %}>Single member</option><option value="family" {% if plan_type=='family' %}selected{% endif %}>Family plan</option><option value="member_product" {% if plan_type=='member_product' %}selected{% endif %}>Member + product</option></select></div>
+  <div class="col-12 row g-3" id="family-setup">
+    <div class="col-md-3"><label>Spouse fields</label><input class="form-control" name="spouse_slots" type="number" min="0" max="1" value="{{rules.spouse_slots if rules and rules.spouse_slots is not none else 1}}"></div>
+    <div class="col-md-3"><label>Children fields</label><input class="form-control" name="child_slots" type="number" min="0" max="30" value="{{rules.child_slots if rules and rules.child_slots is not none else 6}}"></div>
+    <div class="col-md-3"><label>Extended-member fields</label><input class="form-control" name="extended_slots" type="number" min="0" max="30" value="{{rules.extended_slots if rules and rules.extended_slots is not none else 6}}"></div>
+  </div>
+  <div class="col-md-4" id="member-product-setup"><label>Extra member fields</label><input class="form-control" name="extra_member_slots" type="number" min="0" max="30" value="{{rules.extra_member_slots if rules and rules.extra_member_slots is not none else 13}}"><small class="text-muted">For example, enter 13 for a 1 + 13 product.</small></div>
+
+  <div class="col-12 mt-4"><h4>Cover for each member type</h4><p class="text-muted">These amounts automatically appear next to each member on the application. The waiting period uses Waiting Months above.</p></div>
+  {% for name,label in [('main_member_cover','Principal insured cover'),('spouse_cover','Spouse cover'),('family_0_11','Child 0–11 months cover'),('family_1_5','Child 1–5 years cover'),('family_6_13','Child 6–13 years cover'),('family_14_21','Child 14–21 years cover'),('stillborn_cover','Stillborn cover'),('extended_cover','Extended member cover'),('member_0_5_product_only','Member + age 0–5 cover'),('member_6_70_product_only','Member + age 6–70 cover')] %}<div class="col-md-4 benefit-field" data-field="{{name}}"><label>{{label}}</label><input class="form-control" name="{{name}}" type="number" min="0" step="0.01" value="{{rules|attr(name) if rules else 0}}"></div>{% endfor %}
+
+  <div class="col-12"><button class="btn btn-success">Save product and member setup</button></div>
+</form>
+<script>
+function toggleMemberSetup(){
+  const type=document.getElementById('plan_type').value;
+  document.getElementById('family-setup').style.display=type==='family'?'flex':'none';
+  document.getElementById('member-product-setup').style.display=type==='member_product'?'block':'none';
+  const familyFields=['spouse_cover','family_0_11','family_1_5','family_6_13','family_14_21','stillborn_cover','extended_cover'];
+  const memberFields=['member_0_5_product_only','member_6_70_product_only'];
+  document.querySelectorAll('.benefit-field').forEach(el=>{const f=el.dataset.field;el.style.display=(f==='main_member_cover'||(type==='family'&&familyFields.includes(f))||(type==='member_product'&&memberFields.includes(f)))?'block':'none'});
+}
+toggleMemberSetup();
+</script>
+{% endblock %}
