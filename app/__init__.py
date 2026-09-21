@@ -172,6 +172,34 @@ def _ensure_join_now_columns(app):
             app.logger.exception("Could not ensure Join Now application columns")
 
 
+def _ensure_policy_product_rule_columns(app):
+    """Add editable product member configuration to existing live databases."""
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS plan_type VARCHAR(40)",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS spouse_slots INTEGER DEFAULT 1",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS child_slots INTEGER DEFAULT 6",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extended_slots INTEGER DEFAULT 6",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extra_member_slots INTEGER DEFAULT 13",
+                "UPDATE policy_product_rules r SET plan_type = 'member_product' FROM policy_products p WHERE r.product_id = p.id AND (r.plan_type IS NULL OR TRIM(r.plan_type) = '') AND (LOWER(p.product_name) LIKE '%member +%' OR LOWER(p.product_name) LIKE '%member+%' OR LOWER(p.plan_name) LIKE '%member +%' OR LOWER(p.plan_name) LIKE '%member+%')",
+                "UPDATE policy_product_rules SET plan_type = 'family' WHERE plan_type IS NULL OR TRIM(plan_type) = ''",
+                "ALTER TABLE policy_product_rules ALTER COLUMN plan_type SET DEFAULT 'family'",
+                "UPDATE policy_product_rules SET spouse_slots = 1 WHERE spouse_slots IS NULL",
+                "UPDATE policy_product_rules SET child_slots = 6 WHERE child_slots IS NULL",
+                "UPDATE policy_product_rules SET extended_slots = 6 WHERE extended_slots IS NULL",
+                "UPDATE policy_product_rules SET extra_member_slots = 13 WHERE extra_member_slots IS NULL",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure policy product member configuration columns")
+
+
 def create_app():
     app = Flask(__name__)
     from app.services.branding import display_brand
@@ -233,6 +261,10 @@ def create_app():
                 pass
             try:
                 _ensure_join_now_columns(app)
+            except Exception:
+                pass
+            try:
+                _ensure_policy_product_rule_columns(app)
             except Exception:
                 pass
             try:

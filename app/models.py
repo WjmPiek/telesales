@@ -200,6 +200,11 @@ class PolicyProductRule(db.Model):
     require_otp = db.Column(db.Boolean, default=True)
     document_storage = db.Column(db.String(255))
     source_file = db.Column(db.String(255))
+    plan_type = db.Column(db.String(40), default="family")
+    spouse_slots = db.Column(db.Integer, default=1)
+    child_slots = db.Column(db.Integer, default=6)
+    extended_slots = db.Column(db.Integer, default=6)
+    extra_member_slots = db.Column(db.Integer, default=13)
     imported_at = db.Column(db.DateTime, default=datetime.utcnow)
     product = db.relationship("PolicyProduct", backref=db.backref("rules", uselist=False))
 
