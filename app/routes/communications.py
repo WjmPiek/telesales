@@ -19,7 +19,7 @@ from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
     record_not_interested, record_opt_out
 )
-from app.services.whatsapp_service import normalize_phone, send_whatsapp_text, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status
+from app.services.whatsapp_service import normalize_phone, send_whatsapp_text, send_whatsapp_template_image, get_whatsapp_template_status, create_whatsapp_image_template, validate_public_image_url, list_whatsapp_templates, get_meta_connection_status, order_whatsapp_template_buttons
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
@@ -148,14 +148,14 @@ def _send_to_recipient(campaign, recipient, channel):
             buttons = json.loads(campaign.template_buttons_json or "[]")
         except (ValueError, TypeError):
             return False, "Invalid template button configuration"
-        if buttons and (len(buttons) != 2 or any(b.get("type") != "QUICK_REPLY" for b in buttons)):
-            return False, "Select a template with exactly two quick replies: callback first, delete second."
         if campaign.whatsapp_template_name and campaign.image_url:
             result = send_whatsapp_template_image(
                 policy.cell_number, campaign.whatsapp_template_name,
                 campaign.whatsapp_template_language or "en_US", campaign.image_url,
                 f"callback:{recipient.secure_token}", f"optout:{recipient.secure_token}",
                 f"{policy.initials or ''} {policy.surname or ''}".strip() or "Customer",
+                buttons=buttons,
+                join_token=recipient.secure_token,
             )
             ok = result.ok
             error = result.error
@@ -425,9 +425,11 @@ def create_campaign():
             template_buttons.append(item)
         if not template_buttons:
             template_buttons = [
-                {"type": "QUICK_REPLY", "text": "Call me back"},
-                {"type": "QUICK_REPLY", "text": "Delete my number"},
+                {"type": "URL", "text": "APPLY NOW", "url": f"{current_app.config.get('BASE_URL', '').rstrip('/')}/join/{{{{1}}}}"},
+                {"type": "QUICK_REPLY", "text": "CALL ME BACK"},
+                {"type": "QUICK_REPLY", "text": "DELETE MY NUMBER"},
             ]
+        template_buttons = order_whatsapp_template_buttons(template_buttons)
         campaign = CommunicationCampaign(
             name=campaign_name,
             subject=(request.form.get("subject") or "Funeral policy callback").strip(),
