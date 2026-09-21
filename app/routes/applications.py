@@ -77,6 +77,11 @@ def new_application():
                     rows.append(row)
             return json.dumps(rows)
 
+        def benefit_rows(prefix, count, kind, extra_fields=None):
+            from app.services.member_benefits import enrich_rows
+            raw = json.loads(build_rows(prefix, count, ["full_name", "relationship", "id_or_dob"] + list(extra_fields or [])))
+            return enrich_rows(prod, kind, raw)
+
         form_template = classify_product_template(prod)
         is_member_product = form_template == "member_product"
         product_text = f"{prod.product_name} {prod.plan_name}" if prod else ""
@@ -89,6 +94,14 @@ def new_application():
         principal_dob = format_dob(val("date_of_birth") or dob_from_sa_id(val("id_number")))
         spouse_dob = format_dob(val("spouse_date_of_birth") or dob_from_sa_id(val("spouse_id_number")))
         beneficiary_dob = format_dob(val("beneficiary_date_of_birth") or dob_from_sa_id(val("beneficiary_id_number")))
+        from app.services.member_benefits import enrich_rows
+        spouse_rows = []
+        spouse_name = ' '.join(filter(None, [val('spouse_first_names').strip(), val('spouse_surname').strip()]))
+        if spouse_name or val('spouse_id_number').strip() or spouse_dob:
+            spouse_rows = enrich_rows(prod, 'spouse', [{
+                'full_name': spouse_name, 'relationship': 'Spouse',
+                'id_or_dob': val('spouse_id_number').strip() or spouse_dob,
+            }])
 
         errors = []
         if val("id_number") and not is_valid_sa_id(val("id_number")):
@@ -164,9 +177,12 @@ def new_application():
             total_payment=total_payment_value,
             waiting_period=f"{prod.waiting_period_months} months" if prod else val("waiting_period"),
 
-            dependents_json="[]" if is_member_product else build_rows("child", 6, ["full_name", "relationship", "id_or_dob"]),
-            extended_family_json="[]" if is_member_product else build_rows("extended", 6, ["full_name", "relationship", "id_or_dob", "cover", "premium"]),
-            product_dependents_json=build_rows("productdep", 13, ["full_name", "relationship", "id_or_dob"]) if is_member_product else "[]",
+            dependents_json="[]" if is_member_product else json.dumps(benefit_rows("child", 6, "child")),
+            extended_family_json="[]" if is_member_product else json.dumps(benefit_rows("extended", 6, "extended", ["premium"])),
+            product_dependents_json=json.dumps(
+                benefit_rows("productdep", 13, "productdep") if is_member_product else
+                spouse_rows + benefit_rows("child", 6, "child") + benefit_rows("extended", 6, "extended", ["premium"])
+            ),
 
             beneficiary_full_names=val("beneficiary_full_names"),
             beneficiary_title=val("beneficiary_title"),
@@ -222,7 +238,12 @@ def new_application():
 def view_application(app_id):
     a = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(a, agent_attr="agent_id")
-    return render_template("applications/view.html", app=a, document_summary=document_summary(a), screening=latest_screening(a))
+    try:
+        member_benefits = json.loads(a.product_dependents_json or '[]')
+    except (TypeError, ValueError):
+        member_benefits = []
+    return render_template("applications/view.html", app=a, member_benefits=member_benefits,
+                           document_summary=document_summary(a), screening=latest_screening(a))
 
 
 def _client_salutation(app_obj):

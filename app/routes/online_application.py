@@ -1,7 +1,7 @@
 import json
 import secrets
 from datetime import datetime
-from flask import Blueprint, request, render_template, redirect, url_for, session, abort, flash, send_file
+from flask import Blueprint, request, render_template, redirect, url_for, session, abort, flash, send_file, current_app
 from flask_login import login_required, current_user
 from werkzeug.exceptions import HTTPException
 from app import db
@@ -100,7 +100,6 @@ def form(token):
                 if request.form.get('consent_bundle')!='yes':raise ValueError('Confirm that you agree to apply your signature to all listed documents.')
                 reviewed=set(session.get(f'questionnaire_review_{a.id}',[]))
                 if reviewed != {key for key,label in REQUIRED_SIGNATURE_DOCS}:raise ValueError('Open and review every document before signing.')
-                if _fica_status(a)[2]:raise ValueError('Upload your ID and proof of address before submitting.')
                 from app.services.compliance_service import assert_application_rules
                 ok,errors=assert_application_rules(a)
                 if not ok:raise ValueError('; '.join(errors))
@@ -122,7 +121,6 @@ def form(token):
             db.session.rollback();error=str(exc)
         except Exception:
             db.session.rollback()
-            from flask import current_app
             current_app.logger.exception('Online application action failed')
             error='We could not save your application. Please try again or contact staff.'
     from app.routes.signing import REQUIRED_SIGNATURE_DOCS, _fica_status
@@ -135,10 +133,17 @@ def form(token):
     if a.spouse_first_names or a.spouse_surname:
         member_values.update(spouse_1_full_name=' '.join(filter(None,[a.spouse_first_names,a.spouse_surname])),
           spouse_1_relationship='Spouse',spouse_1_id_or_dob=a.spouse_id_number or a.spouse_date_of_birth)
+    from app.services.member_benefits import member_benefit
+    for kind,count in [('spouse',1),('child',6),('extended',4)]:
+        for i in range(1,count+1):
+            benefit=member_benefit(a.product,kind,member_values.get(f'{kind}_{i}_id_or_dob',''))
+            member_values.setdefault(f'{kind}_{i}_cover',benefit['cover'])
+            member_values.setdefault(f'{kind}_{i}_waiting_period',benefit['waiting_period'])
     return render_template('online/form.html',member_values=member_values,app=a,token=token,fields=FIELDS,banks=BANKS,
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,
-      received=_fica_status(a)[1],nonce=session[nonce_key],error=error)
+      received=_fica_status(a)[1],nonce=session[nonce_key],error=error,
+      google_maps_api_key=current_app.config.get('GOOGLE_MAPS_API_KEY') or __import__('os').getenv('GOOGLE_MAPS_API_KEY',''))
 
 
 @online_bp.route('/<token>/document/<kind>')

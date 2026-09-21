@@ -1624,7 +1624,12 @@ def start_application(policy_id):
         bank = script_payload.get("bank", {}) if script_payload else {}
         id_number = request.form.get("id_number") or script_payload.get("client_id_number") or ""
 
-        members = script_payload.get("members", [])
+        from app.services.member_benefits import member_benefit
+        members = []
+        for source in script_payload.get("members", []):
+            row = dict(source)
+            row.update(member_benefit(prod, row.get("kind"), row.get("id_or_dob")))
+            members.append(row)
         spouse = next((row for row in members if row.get("kind") == "spouse"), {})
         spouse_names = spouse.get("full_name", "").rsplit(" ", 1)
         label = "Reinstatement" if app_type == "reinstatement" else "Lapsed New Policy"

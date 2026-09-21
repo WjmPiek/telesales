@@ -586,9 +586,6 @@ def finish_application(app_obj, token):
     required, received, outstanding, docs = _fica_status(app_obj)
     if missing_sigs:
         raise ValueError("Please sign these documents first: " + ", ".join(missing_sigs))
-    if outstanding:
-        raise ValueError("Please upload outstanding FICA documents: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding))
-
     signed_records = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=app_obj.id).all()}
     sig = signed_records.get("application:principal")
     sig_path = sig.signature_image_path if sig else None
@@ -643,7 +640,12 @@ def finish_application(app_obj, token):
     if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
         app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
         from app.services.email_service import signing_email_html
-        office_body = "The client has submitted the signed application and supporting documents.\n\nOpen the client file (staff login required):\n\n" + app_link
+        office_body = "The client has submitted the signed application."
+        if outstanding:
+            office_body += "\n\nThe following supporting documents will be emailed separately: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding) + "."
+        else:
+            office_body += " Supporting documents were uploaded with the application."
+        office_body += "\n\nOpen the client file (staff login required):\n\n" + app_link
         send_email(office_email, "Signed documents received: " + app_obj.application_ref,
                    office_body, html_body=signing_email_html(app_obj,app_link,office_body), application_id=app_obj.id)
     db.session.commit()
