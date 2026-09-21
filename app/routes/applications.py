@@ -84,6 +84,8 @@ def new_application():
 
         form_template = classify_product_template(prod)
         is_member_product = form_template == "member_product"
+        from app.services.member_benefits import member_limits
+        limits = member_limits(prod)
         product_text = f"{prod.product_name} {prod.plan_name}" if prod else ""
         locked_monthly_premium = prod.monthly_premium if prod else money("monthly_premium")
         locked_cover_amount = prod.cover_amount if prod else money("cover_amount")
@@ -122,10 +124,10 @@ def new_application():
 
         rows_to_check = []
         if is_member_product:
-            rows_to_check.extend(json.loads(build_rows("productdep", 13, ["full_name", "relationship", "id_or_dob"])))
+            rows_to_check.extend(json.loads(build_rows("productdep", limits["productdep"], ["full_name", "relationship", "id_or_dob"])))
         else:
-            rows_to_check.extend(json.loads(build_rows("child", 6, ["full_name", "relationship", "id_or_dob"])))
-            rows_to_check.extend(json.loads(build_rows("extended", 6, ["full_name", "relationship", "id_or_dob", "cover", "premium"])))
+            rows_to_check.extend(json.loads(build_rows("child", limits["child"], ["full_name", "relationship", "id_or_dob"])))
+            rows_to_check.extend(json.loads(build_rows("extended", limits["extended"], ["full_name", "relationship", "id_or_dob", "cover", "premium"])))
         for idx, row in enumerate(rows_to_check, start=1):
             id_or_dob = row.get("id_or_dob")
             if only_digits(id_or_dob) and len(only_digits(id_or_dob)) == 13 and not is_valid_sa_id(id_or_dob):
@@ -177,11 +179,11 @@ def new_application():
             total_payment=total_payment_value,
             waiting_period=f"{prod.waiting_period_months} months" if prod else val("waiting_period"),
 
-            dependents_json="[]" if is_member_product else json.dumps(benefit_rows("child", 6, "child")),
-            extended_family_json="[]" if is_member_product else json.dumps(benefit_rows("extended", 6, "extended", ["premium"])),
+            dependents_json="[]" if is_member_product else json.dumps(benefit_rows("child", limits["child"], "child")),
+            extended_family_json="[]" if is_member_product else json.dumps(benefit_rows("extended", limits["extended"], "extended", ["premium"])),
             product_dependents_json=json.dumps(
-                benefit_rows("productdep", 13, "productdep") if is_member_product else
-                spouse_rows + benefit_rows("child", 6, "child") + benefit_rows("extended", 6, "extended", ["premium"])
+                benefit_rows("productdep", limits["productdep"], "productdep") if is_member_product else
+                (spouse_rows if limits["spouse"] else []) + benefit_rows("child", limits["child"], "child") + benefit_rows("extended", limits["extended"], "extended", ["premium"])
             ),
 
             beneficiary_full_names=val("beneficiary_full_names"),

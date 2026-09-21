@@ -50,6 +50,33 @@ def is_yes(value):
     return str(value or "").strip().lower() in {"yes", "y", "true", "1", "x"}
 
 
+def _slot_count(value, default=0, maximum=30):
+    try:
+        return max(0, min(int(value), maximum))
+    except (TypeError, ValueError):
+        return default
+
+
+def _save_product_rules(product):
+    rules = PolicyProductRule.query.filter_by(product_id=product.id).first()
+    if not rules:
+        rules = PolicyProductRule(product_id=product.id)
+        db.session.add(rules)
+    plan_type = (request.form.get("plan_type") or "family").strip().lower()
+    rules.plan_type = plan_type if plan_type in {"single", "family", "member_product"} else "family"
+    rules.spouse_slots = _slot_count(request.form.get("spouse_slots"), 1, 1)
+    rules.child_slots = _slot_count(request.form.get("child_slots"), 6)
+    rules.extended_slots = _slot_count(request.form.get("extended_slots"), 6)
+    rules.extra_member_slots = _slot_count(request.form.get("extra_member_slots"), 13)
+    for field in [
+        "main_member_cover", "spouse_cover", "extended_cover", "stillborn_cover",
+        "family_0_11", "family_1_5", "family_6_13", "family_14_21",
+        "member_0_5_product_only", "member_6_70_product_only",
+    ]:
+        setattr(rules, field, money(request.form.get(field)))
+    return rules
+
+
 @policies_bp.route("/")
 @login_required
 @permission_required("policies.view")
@@ -208,10 +235,12 @@ def new_product():
             min_age=request.form.get("min_age") or None, max_age=request.form.get("max_age") or None,
             active=bool(request.form.get("active"))
         )
-        db.session.add(p); db.session.commit()
+        db.session.add(p); db.session.flush()
+        _save_product_rules(p)
+        db.session.commit()
         flash("Policy product added", "success")
         return redirect(url_for("policies.list_products"))
-    return render_template("policies/form.html", product=None)
+    return render_template("policies/form.html", product=None, rules=None)
 
 
 @policies_bp.route("/<int:product_id>/edit", methods=["GET", "POST"])
@@ -219,6 +248,7 @@ def new_product():
 @permission_required("policies.edit")
 def edit_product(product_id):
     p = PolicyProduct.query.get_or_404(product_id)
+    rules = PolicyProductRule.query.filter_by(product_id=p.id).first()
     if request.method == "POST":
         fields = ["product_name", "plan_name", "cover_amount", "monthly_premium", "waiting_period_months", "min_age", "max_age"]
         reason = request.form.get("reason", "Policy admin update")
@@ -229,10 +259,11 @@ def edit_product(product_id):
                 db.session.add(PolicyChangeLog(product_id=p.id, changed_by_id=current_user.id, field_name=f, old_value=old, new_value=str(new), reason=reason))
                 setattr(p, f, new)
         p.active = bool(request.form.get("active"))
+        _save_product_rules(p)
         db.session.commit()
         flash("Policy updated and change log saved", "success")
         return redirect(url_for("policies.list_products"))
-    return render_template("policies/form.html", product=p)
+    return render_template("policies/form.html", product=p, rules=rules)
 
 
 @policies_bp.route("/<int:product_id>/delete", methods=["POST"])

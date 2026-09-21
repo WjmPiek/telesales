@@ -126,20 +126,25 @@ def form(token):
     from app.routes.signing import REQUIRED_SIGNATURE_DOCS, _fica_status
     if a.whatsapp_journey.signed_bundle_at:
         return render_template('online/replacements.html',app=a,nonce=session[nonce_key],error=error)
+    from app.services.member_benefits import member_benefit, member_limits
+    limits=member_limits(a.product)
     member_values={}
-    for kind,raw in [('child',a.dependents_json),('extended',a.extended_family_json)]:
+    stored_groups = ([('productdep',a.product_dependents_json)] if limits['plan_type']=='member_product'
+                     else [('child',a.dependents_json),('extended',a.extended_family_json)])
+    for kind,raw in stored_groups:
         for i,row in enumerate(json.loads(raw or '[]'),1):
             for key,value in row.items():member_values[f'{kind}_{i}_{key}']=value
     if a.spouse_first_names or a.spouse_surname:
         member_values.update(spouse_1_full_name=' '.join(filter(None,[a.spouse_first_names,a.spouse_surname])),
           spouse_1_relationship='Spouse',spouse_1_id_or_dob=a.spouse_id_number or a.spouse_date_of_birth)
-    from app.services.member_benefits import member_benefit
-    for kind,count in [('spouse',1),('child',6),('extended',4)]:
+    benefit_groups = ([('productdep',limits['productdep'])] if limits['plan_type']=='member_product'
+                      else [('spouse',limits['spouse']),('child',limits['child']),('extended',limits['extended'])])
+    for kind,count in benefit_groups:
         for i in range(1,count+1):
             benefit=member_benefit(a.product,kind,member_values.get(f'{kind}_{i}_id_or_dob',''))
             member_values.setdefault(f'{kind}_{i}_cover',benefit['cover'])
             member_values.setdefault(f'{kind}_{i}_waiting_period',benefit['waiting_period'])
-    return render_template('online/form.html',member_values=member_values,app=a,token=token,fields=FIELDS,banks=BANKS,
+    return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,
       received=_fica_status(a)[1],nonce=session[nonce_key],error=error,
