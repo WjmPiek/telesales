@@ -72,18 +72,24 @@ class CampaignDeletionTests(unittest.TestCase):
         db.drop_all()
         self.context.pop()
 
-    def test_delete_campaign_removes_provider_logs_and_media_versions(self):
+    def test_delete_campaign_retires_protected_configuration(self):
         response = self.client.post(
             f"/communications/{self.campaign_id}/delete",
             data={"confirm_name": "Template: obsolete"},
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(CommunicationCampaign.query.count(), 0)
-        self.assertEqual(WhatsAppTemplate.query.count(), 0)
-        self.assertEqual(WhatsAppMediaAsset.query.count(), 0)
-        self.assertEqual(WhatsAppMediaVersion.query.count(), 0)
+        campaign = db.session.get(CommunicationCampaign, self.campaign_id)
+        self.assertEqual(campaign.status, "Archived")
+        self.assertIsNotNone(campaign.deleted_at)
+        self.assertEqual(WhatsAppTemplate.query.one().status, "Deleted")
+        self.assertEqual(WhatsAppMediaAsset.query.one().status, "deleted")
+        self.assertEqual(WhatsAppMediaVersion.query.count(), 1)
         self.assertEqual(WhatsAppProviderLog.query.count(), 0)
+        self.assertEqual(
+            WhatsAppTemplate.query.filter(WhatsAppTemplate.status != "Deleted").count(),
+            0,
+        )
 
 
 if __name__ == "__main__":
