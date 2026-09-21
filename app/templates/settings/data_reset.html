@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Clear operational data</h2>
+<p class="text-muted">Start a clean client import without removing products, member rules, users, settings, WhatsApp template definitions or opt-out suppression records.</p>
+
+<div class="row g-3 mb-4">
+  {% for label, value in counts.items() %}
+  <div class="col-sm-6 col-lg-3"><div class="card h-100"><div class="card-body">
+    <div class="text-muted">{{ label.replace('_', ' ').title() }}</div><h3>{{ value }}</h3>
+  </div></div></div>
+  {% endfor %}
+</div>
+
+<div class="alert alert-danger">
+  <h4 class="alert-heading">Permanent reset</h4>
+  <p>This deletes applications and signed documents, imported clients and call/script history, campaign recipients and delivery history, plus WhatsApp messages and conversations.</p>
+  <p class="mb-0"><strong>This cannot be undone.</strong></p>
+</div>
+
+<form method="post" class="card border-danger">
+  <div class="card-body">
+    <label class="form-label" for="confirmation">Type <strong>CLEAR ALL TEST DATA</strong> to confirm</label>
+    <input class="form-control" id="confirmation" name="confirmation" autocomplete="off" required>
+    <button class="btn btn-danger mt-3" type="submit">Permanently clear operational data</button>
+  </div>
+</form>
+{% endblock %}
