@@ -5,6 +5,7 @@
 </head><body>
 <header><div><strong>Martin's Funerals · Insurance Sales</strong><h1>{{app.first_names}} {{app.surname}} — Online Application</h1></div></header><main>
 {% if error %}<p class="error" role="alert">{{error}}</p>{% endif %}
+{% if app.total_members or app.requested_cover %}<section><strong>Your selected requirements</strong><p>{{ app.total_members or '-' }} members · R{{ "{:,.2f}".format(app.requested_cover or 0) }} cover</p></section>{% endif %}
 <section><h2>Your selected policy</h2><p>{{app.product.product_name}} {{app.product.plan_name}}<br>Monthly premium: R{{app.monthly_premium}} · Cover: R{{app.cover_amount}}<br>Waiting period: {{app.waiting_period}}</p><p class="muted">ID verified. Complete your details, review the documents and sign once. Your application will then go to staff for verification.</p></section>
 {% if not app.whatsapp_journey.ready or request.args.get('edit') %}
 <form method="post" enctype="multipart/form-data"><input type="hidden" name="nonce" value="{{nonce}}"><input type="hidden" name="action" value="save">
