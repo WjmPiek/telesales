@@ -251,6 +251,9 @@ class ClientApplication(db.Model):
     plan_choice = db.Column(db.String(50))
     extended_premium = db.Column(db.Numeric(12,2), default=0)
     total_payment = db.Column(db.Numeric(12,2), default=0)
+    total_members = db.Column(db.Integer)
+    requested_cover = db.Column(db.Numeric(12,2))
+    source_campaign_recipient_id = db.Column(db.Integer, db.ForeignKey("campaign_recipients.id"), index=True)
 
     dependents_json = db.Column(db.Text)       # children/family dependents as JSON
     extended_family_json = db.Column(db.Text)  # extended family rows as JSON

@@ -152,6 +152,26 @@ def _ensure_client_fica_document_columns(app):
             app.logger.exception("Could not ensure client FICA document columns")
 
 
+def _ensure_join_now_columns(app):
+    """Add the self-service qualification fields without replacing live data."""
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS total_members INTEGER",
+                "ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS requested_cover NUMERIC(12,2)",
+                "ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS source_campaign_recipient_id INTEGER",
+                "CREATE INDEX IF NOT EXISTS ix_client_applications_source_campaign_recipient_id ON client_applications (source_campaign_recipient_id)",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure Join Now application columns")
+
+
 def create_app():
     app = Flask(__name__)
     from app.services.branding import display_brand
@@ -212,6 +232,10 @@ def create_app():
             except Exception:
                 pass
             try:
+                _ensure_join_now_columns(app)
+            except Exception:
+                pass
+            try:
                 _ensure_communication_campaign_columns(app)
                 _ensure_whatsapp_template_columns(app)
                 _ensure_whatsapp_message_columns(app)
@@ -240,6 +264,10 @@ def create_app():
         pass
     try:
         _ensure_client_fica_document_columns(app)
+    except Exception:
+        pass
+    try:
+        _ensure_join_now_columns(app)
     except Exception:
         pass
     try:
@@ -318,6 +346,8 @@ def create_app():
     app.register_blueprint(signing_bp)
     from app.routes.online_application import online_bp
     app.register_blueprint(online_bp)
+    from app.routes.join import join_bp
+    app.register_blueprint(join_bp)
     app.register_blueprint(policies_bp)
     app.register_blueprint(recovery_bp)
     app.register_blueprint(qa_bp)
