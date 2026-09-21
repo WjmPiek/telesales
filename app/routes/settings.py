@@ -8,6 +8,10 @@ def is_admin():
     role=(current_user.role.name if current_user.is_authenticated and current_user.role else '').lower().replace('_',' ')
     return role in {'admin','super admin','superadmin'}
 
+def is_super_admin():
+    role=(current_user.role.name if current_user.is_authenticated and current_user.role else '').lower().replace('_',' ')
+    return role in {'super admin','superadmin'}
+
 @settings_bp.route('/', methods=['GET','POST'])
 @login_required
 def index():
@@ -69,3 +73,31 @@ def email_templates():
             flash('Email templates saved. Future emails will use this wording.', 'success')
             return redirect(url_for('settings.email_templates'))
     return render_template('settings/email_templates.html', templates=templates, error=error)
+
+
+@settings_bp.route('/data-reset', methods=['GET', 'POST'])
+@login_required
+def data_reset():
+    from flask import abort
+    from app.services.data_reset import reset_operational_data, reset_preview
+    if not is_super_admin():
+        abort(403)
+    if request.method == 'POST':
+        if request.form.get('confirmation', '').strip() != 'CLEAR ALL TEST DATA':
+            flash('Reset cancelled. Enter the exact confirmation phrase.', 'danger')
+            return redirect(url_for('settings.data_reset'))
+        try:
+            counts = reset_operational_data()
+        except Exception:
+            db.session.rollback()
+            flash('The reset failed and no partial database changes were saved.', 'danger')
+            raise
+        flash(
+            'Operational data cleared: '
+            f"{counts['applications']} applications, {counts['imported_clients']} imported clients, "
+            f"{counts['whatsapp_messages']} WhatsApp messages and "
+            f"{counts['campaign_recipients']} campaign recipients removed. "
+            f"{counts['suppression_records_kept']} opt-out suppression records were preserved.",
+            'success')
+        return redirect(url_for('settings.data_reset'))
+    return render_template('settings/data_reset.html', counts=reset_preview())
