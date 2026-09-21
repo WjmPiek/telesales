@@ -236,13 +236,14 @@ def index():
 @login_required
 def whatsapp_dashboard():
     if not _is_manager(): abort(403)
-    templates = WhatsAppTemplate.query.order_by(WhatsAppTemplate.created_at.desc()).limit(100).all()
+    active_templates = WhatsAppTemplate.query.filter(WhatsAppTemplate.status != "Deleted")
+    templates = active_templates.order_by(WhatsAppTemplate.created_at.desc()).limit(100).all()
     jobs = WhatsAppProviderJob.query.order_by(WhatsAppProviderJob.created_at.desc()).limit(25).all()
     stats = {
-        "templates": WhatsAppTemplate.query.count(),
-        "pending": WhatsAppTemplate.query.filter(WhatsAppTemplate.status.in_(["Pending", "Submitting"])).count(),
-        "approved": WhatsAppTemplate.query.filter_by(status="Approved").count(),
-        "rejected": WhatsAppTemplate.query.filter_by(status="Rejected").count(),
+        "templates": active_templates.count(),
+        "pending": active_templates.filter(WhatsAppTemplate.status.in_(["Pending", "Submitting"])).count(),
+        "approved": active_templates.filter_by(status="Approved").count(),
+        "rejected": active_templates.filter_by(status="Rejected").count(),
         "queued_jobs": WhatsAppProviderJob.query.filter_by(status="pending").count(),
         "sent_messages": WhatsAppMessage.query.filter_by(direction="outbound").count(),
         "delivered_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="delivered").count(),
@@ -263,7 +264,7 @@ def whatsapp_dashboard():
 @login_required
 def template_library():
     if not _is_manager(): abort(403)
-    query = WhatsAppTemplate.query
+    query = WhatsAppTemplate.query.filter(WhatsAppTemplate.status != "Deleted")
     status = (request.args.get("status") or "").strip()
     category = (request.args.get("category") or "").strip()
     search = (request.args.get("q") or "").strip()
@@ -807,21 +808,21 @@ def delete_campaign(campaign_id):
         ).delete(synchronize_session=False)
         WhatsAppProviderJob.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
         WhatsAppProviderLog.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
-        if media_asset_ids:
-            WhatsAppMediaVersion.query.filter(
-                WhatsAppMediaVersion.media_asset_id.in_(media_asset_ids)
-            ).delete(synchronize_session=False)
-        WhatsAppMediaAsset.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
-        WhatsAppTemplate.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
-
-        # Clear any relationship state that may have been populated by an earlier
-        # request hook or template helper before deleting the parent row.
-        if "recipients" in campaign.__dict__:
-            db.session.expire(campaign, ["recipients"])
-        if "enterprise_template" in campaign.__dict__:
-            db.session.expire(campaign, ["enterprise_template"])
-
-        db.session.delete(campaign)
+        # Production protects configuration tables from DELETE/TRUNCATE at the
+        # database level. Retire their rows instead, while removing operational
+        # delivery data above. This hides the campaign/template from active UI
+        # without defeating the protection trigger or losing audit evidence.
+        WhatsAppMediaAsset.query.filter_by(campaign_id=campaign.id).update(
+            {WhatsAppMediaAsset.status: "deleted"}, synchronize_session=False
+        )
+        WhatsAppTemplate.query.filter_by(campaign_id=campaign.id).update(
+            {WhatsAppTemplate.status: "Deleted", WhatsAppTemplate.next_check_at: None},
+            synchronize_session=False,
+        )
+        campaign.status = "Archived"
+        campaign.archived_at = datetime.utcnow()
+        campaign.deleted_at = datetime.utcnow()
+        campaign.queue_status = "idle"
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -834,7 +835,7 @@ def delete_campaign(campaign_id):
             os.remove(image_path)
         except OSError:
             current_app.logger.warning("Could not remove campaign image %s", image_path)
-    flash("Campaign permanently deleted. Opt-out and suppression history was retained.", "success")
+    flash("Campaign deleted from the active system. Protected audit and suppression history was retained.", "success")
     return redirect(url_for("communications.index"))
 
 
