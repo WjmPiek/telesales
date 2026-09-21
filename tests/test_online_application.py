@@ -6,7 +6,7 @@ from datetime import date
 from unittest.mock import patch
 import test_application_flow as fixtures
 from app import db
-from app.models import CommunicationCampaign, ApplicationJourney, ClientFicaDocument, DocumentSignature
+from app.models import CommunicationCampaign, ApplicationJourney, ClientFicaDocument, DocumentSignature, PolicyProductRule
 from app.services.client_storage import application_folder, store_document
 from app.services.cdd_service import FIELDS as CDD_FIELDS
 
@@ -28,14 +28,15 @@ class OnlineApplicationTests(unittest.TestCase):
         with client.session_transaction() as s:nonce=s[f'questionnaire_nonce_{self.record_id}']
         return client,nonce
 
-    def save(self,client,nonce):
+    def save(self,client,nonce,include_supporting_documents=True):
         from PIL import Image
-        for kind in ['id_copy','proof_of_address']:
-            path=Path(application_folder(self.record))/(kind+'.png')
-            Image.new('RGB',(100,100),'white').save(path)
-            store_document(self.record,str(path))
-            db.session.add(ClientFicaDocument(application_id=self.record_id,document_type=kind,original_filename=path.name,file_path=str(path),status='Approved'))
-        db.session.commit()
+        if include_supporting_documents:
+            for kind in ['id_copy','proof_of_address']:
+                path=Path(application_folder(self.record))/(kind+'.png')
+                Image.new('RGB',(100,100),'white').save(path)
+                store_document(self.record,str(path))
+                db.session.add(ClientFicaDocument(application_id=self.record_id,document_type=kind,original_filename=path.name,file_path=str(path),status='Approved'))
+            db.session.commit()
         data={'nonce':nonce,'action':'save','first_names':'Fictional','surname':'Test','cell_number':'0821234567',
               'email':'client@example.test','residential_address':'1 Example Road','residential_postal_code':'1234',
               'postal_address':'1 Example Road','postal_code':'1234','beneficiary_full_names':'Example Beneficiary',
@@ -45,6 +46,67 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(response.status_code,302,response.data[:400])
         self.assertTrue(self.record.whatsapp_journey.ready)
         return data
+
+    def test_postal_address_and_supporting_uploads_are_optional(self):
+        client,nonce=self.prepare()
+        page=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'Supporting documents (optional upload)',page.data)
+        self.assertIn(b'you may save and submit the application now',page.data)
+        data=self.save(client,nonce,include_supporting_documents=False)
+        data.update(postal_address='',postal_code='',cdd_funds='Salary',cdd_funds_details='')
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+        self.assertEqual(self.record.postal_address,'')
+        self.assertFalse(ClientFicaDocument.query.filter_by(application_id=self.record_id).count())
+
+        data['cdd_funds']='Other'
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertIn(b'Complete Explain the source of funds',response.data)
+
+    def test_street_code_and_member_benefits_are_captured_per_person(self):
+        self.record.product.waiting_period_months=6
+        db.session.add(PolicyProductRule(product_id=self.record.product_id,spouse_cover=50000,
+          extended_cover=30000,family_0_11=10000,family_1_5=10000,family_6_13=25000,family_14_21=50000))
+        db.session.commit()
+        client,nonce=self.prepare()
+        page=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'Street code',page.data)
+        self.assertIn(b'Waiting period',page.data)
+        self.assertIn(b'id="child_1_cover"',page.data)
+        data=self.save(client,nonce)
+        data.update(spouse_1_full_name='Example Spouse',spouse_1_relationship='Spouse',spouse_1_id_or_dob='1985-01-01',
+          child_1_full_name='Example Child',child_1_relationship='Child',child_1_id_or_dob='2018-01-01',
+          extended_1_full_name='Example Parent',extended_1_relationship='Parent',extended_1_id_or_dob='1960-01-01')
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+        child=__import__('json').loads(self.record.dependents_json)[0]
+        extended=__import__('json').loads(self.record.extended_family_json)[0]
+        all_members=__import__('json').loads(self.record.product_dependents_json)
+        self.assertEqual(child['cover'],'25000.00')
+        self.assertEqual(child['waiting_period'],'6 months')
+        self.assertEqual(extended['cover'],'30000.00')
+        self.assertEqual({row['kind'] for row in all_members},{'spouse','child','extended'})
+        self.assertEqual(next(row for row in all_members if row['kind']=='spouse')['cover'],'50000.00')
+
+    def test_staff_new_policy_form_has_street_code_and_member_benefit_fields(self):
+        page=self.client.get('/applications/new')
+        self.assertIn(b'Residential Street Code',page.data)
+        self.assertIn(b'name="spouse_1_waiting_period"',page.data)
+        self.assertIn(b'name="child_1_cover"',page.data)
+        self.assertIn(b'name="extended_1_waiting_period"',page.data)
+
+    def test_client_can_sign_when_supporting_documents_will_be_emailed(self):
+        client,nonce=self.prepare();self.save(client,nonce,include_supporting_documents=False)
+        for kind in ['application','popia','disclosure','welcome','cdd']:
+            self.assertEqual(client.get('/online-application/fictional-online-test/document/'+kind).status_code,200)
+        from PIL import Image
+        out=io.BytesIO();Image.new('RGB',(80,30),'black').save(out,format='PNG')
+        data={'nonce':nonce,'action':'sign','consent_bundle':'yes','signature_data':'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()}
+        with patch('app.routes.signing.send_email',return_value=True):
+            response=client.post('/online-application/fictional-online-test',data=data)
+        self.assertEqual(response.status_code,200)
+        self.assertIn(b'Documents Submitted',response.data)
+        self.assertEqual(self.record.status,'Signed')
 
     def test_full_whatsapp_questionnaire_signature_and_activation(self):
         client,nonce=self.prepare();self.save(client,nonce)
