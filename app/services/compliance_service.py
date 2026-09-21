@@ -79,6 +79,11 @@ def product_text(product):
 
 
 def classify_product_template(product):
+    configured = str(getattr(getattr(product, 'rules', None), 'plan_type', '') or '').strip().lower()
+    if configured == 'member_product':
+        return 'member_product'
+    if configured in {'single', 'family'}:
+        return 'single_family'
     text = product_text(product)
     if 'member +' in text or 'member+' in text or ('product' in text and ('+' in text or 'member' in text)):
         return 'member_product'

@@ -5,7 +5,7 @@ from app.services.cdd_service import FIELDS as CDD_FIELDS, save_answers
 from app.services.compliance_service import assert_application_rules, dob_from_sa_id
 from app.services.delivery_preferences import valid_email
 from app.services.marketing_consent import apply_consent
-from app.services.member_benefits import enrich_rows
+from app.services.member_benefits import enrich_rows, member_limits
 
 FIELDS = [
  ('Your details', [
@@ -48,8 +48,13 @@ def save_questionnaire(a, form):
     a.address=a.residential_address
     a.date_of_birth=dob_from_sa_id(a.id_number)
     a.spouse_first_names=a.spouse_surname=a.spouse_id_number=a.spouse_date_of_birth=''
+    limits=member_limits(a.product)
     all_members=[]
-    for kind,limit,attribute in [('child',6,'dependents_json'),('extended',4,'extended_family_json'),('spouse',1,None)]:
+    groups = ([('productdep',limits['productdep'],'product_dependents_json')] if limits['plan_type']=='member_product'
+              else [('child',limits['child'],'dependents_json'),('extended',limits['extended'],'extended_family_json'),('spouse',limits['spouse'],None)])
+    if limits['plan_type']=='member_product':
+        a.dependents_json=a.extended_family_json='[]'
+    for kind,limit,attribute in groups:
         rows=[]
         for i in range(1,limit+1):
             row={key:form.get(f'{kind}_{i}_{key}','').strip()[:150] for key in ('full_name','relationship','id_or_dob')}

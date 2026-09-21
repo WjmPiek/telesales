@@ -4,6 +4,29 @@ from decimal import Decimal
 from app.services.compliance_service import age_from_dob, dob_from_sa_id
 
 
+def member_limits(product):
+    """Return safe per-product member row limits for application forms."""
+    rules = getattr(product, 'rules', None)
+    configured = str(getattr(rules, 'plan_type', '') or '').strip().lower()
+    if not configured:
+        text = f"{getattr(product, 'product_name', '')} {getattr(product, 'plan_name', '')}".lower()
+        configured = 'member_product' if 'member +' in text or 'member+' in text else 'family'
+
+    def limit(field, default, maximum=30):
+        try:
+            return max(0, min(int(getattr(rules, field, default) if rules else default), maximum))
+        except (TypeError, ValueError):
+            return default
+
+    if configured == 'member_product':
+        return {'plan_type': configured, 'spouse': 0, 'child': 0, 'extended': 0,
+                'productdep': limit('extra_member_slots', 13)}
+    if configured == 'single':
+        return {'plan_type': configured, 'spouse': 0, 'child': 0, 'extended': 0, 'productdep': 0}
+    return {'plan_type': 'family', 'spouse': limit('spouse_slots', 1, 2),
+            'child': limit('child_slots', 6), 'extended': limit('extended_slots', 6), 'productdep': 0}
+
+
 def _positive(value, fallback=0):
     try:
         number = Decimal(str(value or 0))
