@@ -19,6 +19,11 @@
         data-family-14-21="{{(p.rules.family_14_21 if p.rules else 0) or p.cover_amount or 0}}"
         data-member-0-5="{{(p.rules.member_0_5_product_only if p.rules else 0) or p.cover_amount or 0}}"
         data-member-6-70="{{(p.rules.member_6_70_product_only if p.rules else 0) or p.cover_amount or 0}}"
+        data-plan-type="{{p.rules.plan_type if p.rules and p.rules.plan_type else ''}}"
+        data-spouse-slots="{{p.rules.spouse_slots if p.rules and p.rules.spouse_slots is not none else 1}}"
+        data-child-slots="{{p.rules.child_slots if p.rules and p.rules.child_slots is not none else 6}}"
+        data-extended-slots="{{p.rules.extended_slots if p.rules and p.rules.extended_slots is not none else 6}}"
+        data-extra-member-slots="{{p.rules.extra_member_slots if p.rules and p.rules.extra_member_slots is not none else 13}}"
         data-min-age="{{p.min_age if p.min_age is not none else ''}}"
         data-max-age="{{p.max_age if p.max_age is not none else ''}}">
         {{p.product_name}} - {{p.plan_name}} / R{{p.monthly_premium}}
@@ -47,14 +52,14 @@
   <div class="col-md-6"><label>Postal Address</label><textarea class="form-control" name="postal_address"></textarea></div>
   <div class="col-md-2"><label>Postal Code</label><input class="form-control" name="postal_code"></div>
 
-  <h5 class="mt-3">Spouse</h5>
+  <div id="spouse_fields"><h5 class="mt-3">Spouse</h5>
   <div class="col-md-2"><label>Title</label><input class="form-control" name="spouse_title"></div>
   <div class="col-md-4"><label>Spouse First Names</label><input class="form-control" name="spouse_first_names"></div>
   <div class="col-md-4"><label>Spouse Surname</label><input class="form-control" name="spouse_surname"></div>
   <div class="col-md-3"><label>Spouse ID Number</label><input class="form-control" name="spouse_id_number" id="spouse_id_number" maxlength="13" oninput="validateSaIdField(this); fillDobFromId('spouse_id_number','spouse_date_of_birth')"></div>
   <div class="col-md-3"><label>Spouse Date of Birth</label><input class="form-control" name="spouse_date_of_birth" id="spouse_date_of_birth" placeholder="DD/MM/YYYY" oninput="formatDateInput(this)"></div>
   <div class="col-md-3"><label>Spouse Cover</label><input class="form-control member-cover" data-kind="spouse" data-index="1" name="spouse_1_cover" readonly></div>
-  <div class="col-md-3"><label>Spouse Waiting Period</label><input class="form-control member-waiting" data-kind="spouse" data-index="1" name="spouse_1_waiting_period" readonly></div>
+  <div class="col-md-3"><label>Spouse Waiting Period</label><input class="form-control member-waiting" data-kind="spouse" data-index="1" name="spouse_1_waiting_period" readonly></div></div>
 
   <h5 class="mt-3">Premiums</h5>
   <div class="col-md-3"><label>Extended Premium B</label><input class="form-control premium-lock" name="extended_premium" id="extended_premium" type="number" step="0.01" {% if not (current_user.role and current_user.role.name|lower == 'admin') %}readonly{% endif %}></div>
@@ -62,31 +67,31 @@
   <div class="col-md-3"><label>First Deduction Date</label><input class="form-control" name="first_deduction_date" id="first_deduction_date" placeholder="DD/MM/YYYY" oninput="formatDateInput(this)"></div>
 
   <div id="family_fields"><h5 class="mt-3">Children / Dependents (Single and Family Form)</h5>
-  {% for i in range(1,7) %}
-    <div class="col-md-3"><input class="form-control" name="child_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
+  {% for i in range(1,31) %}
+    <div class="member-row child-row" data-index="{{i}}" style="display:contents"><div class="col-md-3"><input class="form-control" name="child_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
     <div class="col-md-2"><input class="form-control" name="child_{{i}}_relationship" placeholder="Relationship"></div>
     <div class="col-md-3"><input class="form-control dependent-id-dob" name="child_{{i}}_id_or_dob" placeholder="ID number or DOB" oninput="formatIdOrDobInput(this); refreshMemberBenefits()"></div>
     <div class="col-md-2"><input class="form-control member-cover" data-kind="child" data-index="{{i}}" name="child_{{i}}_cover" placeholder="Cover" readonly></div>
-    <div class="col-md-2"><input class="form-control member-waiting" data-kind="child" data-index="{{i}}" name="child_{{i}}_waiting_period" placeholder="Waiting period" readonly></div>
+    <div class="col-md-2"><input class="form-control member-waiting" data-kind="child" data-index="{{i}}" name="child_{{i}}_waiting_period" placeholder="Waiting period" readonly></div></div>
   {% endfor %}
 
   </div><div id="member_product_fields"><h5 class="mt-3">Member + Product Dependents</h5>
-  {% for i in range(1,14) %}
-    <div class="col-md-3"><input class="form-control" name="productdep_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
+  {% for i in range(1,31) %}
+    <div class="member-row productdep-row" data-index="{{i}}" style="display:contents"><div class="col-md-3"><input class="form-control" name="productdep_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
     <div class="col-md-2"><input class="form-control" name="productdep_{{i}}_relationship" placeholder="Relationship"></div>
     <div class="col-md-3"><input class="form-control dependent-id-dob" name="productdep_{{i}}_id_or_dob" placeholder="ID number or DOB" oninput="formatIdOrDobInput(this); refreshMemberBenefits()"></div>
     <div class="col-md-2"><input class="form-control member-cover" data-kind="productdep" data-index="{{i}}" name="productdep_{{i}}_cover" placeholder="Cover" readonly></div>
-    <div class="col-md-2"><input class="form-control member-waiting" data-kind="productdep" data-index="{{i}}" name="productdep_{{i}}_waiting_period" placeholder="Waiting period" readonly></div>
+    <div class="col-md-2"><input class="form-control member-waiting" data-kind="productdep" data-index="{{i}}" name="productdep_{{i}}_waiting_period" placeholder="Waiting period" readonly></div></div>
   {% endfor %}
 
   </div><div id="extended_family_fields"><h5 class="mt-3">Extended Family</h5>
-  {% for i in range(1,7) %}
-    <div class="col-md-3"><input class="form-control" name="extended_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
+  {% for i in range(1,31) %}
+    <div class="member-row extended-row" data-index="{{i}}" style="display:contents"><div class="col-md-3"><input class="form-control" name="extended_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
     <div class="col-md-2"><input class="form-control" name="extended_{{i}}_relationship" placeholder="Relationship"></div>
     <div class="col-md-2"><input class="form-control dependent-id-dob" name="extended_{{i}}_id_or_dob" placeholder="ID/DOB" oninput="formatIdOrDobInput(this); refreshMemberBenefits()"></div>
     <div class="col-md-2"><input class="form-control member-cover" data-kind="extended" data-index="{{i}}" name="extended_{{i}}_cover" placeholder="Cover" readonly></div>
     <div class="col-md-2"><input class="form-control member-waiting" data-kind="extended" data-index="{{i}}" name="extended_{{i}}_waiting_period" placeholder="Waiting period" readonly></div>
-    <div class="col-md-2"><input class="form-control" name="extended_{{i}}_premium" placeholder="Premium"></div>
+    <div class="col-md-2"><input class="form-control" name="extended_{{i}}_premium" placeholder="Premium"></div></div>
   {% endfor %}
 
   </div><h5 class="mt-3">Nominated Beneficiary</h5>
@@ -265,7 +270,7 @@ function policyChanged(){
   const sel = document.getElementById('product_id');
   const opt = sel.options[sel.selectedIndex];
   const name = (opt.dataset.name || opt.textContent || '').trim();
-  const type = classifyPolicy(name);
+  const type = opt.dataset.planType || classifyPolicy(name);
   const premium = opt.dataset.premium || '';
   const cover = opt.dataset.cover || '';
   document.getElementById('display_premium').value = premium;
@@ -288,9 +293,18 @@ function policyChanged(){
     planChoice.value = isMemberProduct ? name : '';
   }
 
-  setSectionEnabled(document.getElementById('family_fields'), !isMemberProduct && type === 'family');
-  setSectionEnabled(document.getElementById('extended_family_fields'), !isMemberProduct && type === 'family');
+  const isFamily = !isMemberProduct && type !== 'single';
+  setSectionEnabled(document.getElementById('spouse_fields'), isFamily && parseInt(opt.dataset.spouseSlots||'0',10)>0);
+  setSectionEnabled(document.getElementById('family_fields'), isFamily && parseInt(opt.dataset.childSlots||'0',10)>0);
+  setSectionEnabled(document.getElementById('extended_family_fields'), isFamily && parseInt(opt.dataset.extendedSlots||'0',10)>0);
   setSectionEnabled(document.getElementById('member_product_fields'), isMemberProduct);
+  [['child',opt.dataset.childSlots],['extended',opt.dataset.extendedSlots],['productdep',opt.dataset.extraMemberSlots]].forEach(([kind,count])=>{
+    document.querySelectorAll('.'+kind+'-row').forEach(row=>{
+      const enabled=parseInt(row.dataset.index,10)<=parseInt(count||'0',10);
+      row.style.display=enabled?'contents':'none';
+      row.querySelectorAll('input').forEach(input=>input.disabled=!enabled);
+    });
+  });
   checkAgeLimits();
   refreshMemberBenefits();
 }
