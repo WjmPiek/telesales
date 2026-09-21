@@ -13,10 +13,12 @@ os.environ["WHATSAPP_VERIFY_TOKEN"] = "test-verify-token"
 from app import create_app, db
 from app.models import (
     CampaignRecipient,
+    ClientApplication,
     CommunicationCampaign,
     ContactCommunicationPreference,
     ContactSuppression,
     LapsedPolicy,
+    PolicyProduct,
     Role,
     User,
     WhatsAppContact,
@@ -196,6 +198,42 @@ class WhatsAppProcessTests(unittest.TestCase):
         self.assertEqual(CampaignRecipient.query.one().policy.recovery_status, "Callback")
         from app.models import AgentNotification
         self.assertEqual(AgentNotification.query.count(), 1)
+
+    def test_join_now_qualifies_selects_product_and_opens_application(self):
+        recipient = self._campaign_recipient()
+        recipient.policy.id_number = "8001015009087"
+        recipient.policy.email_address = "client@example.test"
+        product = PolicyProduct(product_name="Test Family", plan_name="R10k", monthly_premium=99, cover_amount=10000, active=True)
+        db.session.add(product)
+        db.session.commit()
+        product_id = product.id
+        self.assertEqual(self.client.get("/join/recipient-token").status_code, 200)
+        response = self.client.post("/join/recipient-token", data={"id_number": "8001015009087", "total_members": "4", "cover_amount": "10000"})
+        self.assertTrue(response.location.endswith("/join/recipient-token/products"))
+        self.assertIn(b"Test Family", self.client.get(response.location).data)
+        response = self.client.get(f"/join/recipient-token/application/{product_id}")
+        self.assertIn("/online-application/", response.location)
+        application = ClientApplication.query.filter_by(source_campaign_recipient_id=recipient.id).one()
+        self.assertEqual(application.total_members, 4)
+        self.assertEqual(int(application.requested_cover), 10000)
+        self.assertEqual(application.product_id, product_id)
+        self.assertEqual(self.client.get(response.location).status_code, 200)
+
+    def test_template_send_keeps_apply_callback_delete_order(self):
+        from app.services.whatsapp_service import send_whatsapp_template_image
+        response = Mock(status_code=200, content=b"json")
+        response.json.return_value = {"messages": [{"id": "template-message"}]}
+        buttons = [
+            {"type": "QUICK_REPLY", "text": "DELETE MY NUMBER"},
+            {"type": "URL", "text": "APPLY NOW", "url": "https://example.test/join/{{1}}"},
+            {"type": "QUICK_REPLY", "text": "CALL ME BACK"},
+        ]
+        with patch.dict(os.environ, {"WHATSAPP_ENABLED": "true", "WHATSAPP_PROVIDER": "360dialog", "D360_API_KEY": "test-key"}), patch("requests.post", return_value=response) as post:
+            result = send_whatsapp_template_image("0676200748", "test_template", "en", "https://example.test/image.jpg", "callback:abc", "optout:abc", buttons=buttons, join_token="abc")
+        self.assertTrue(result.ok)
+        components = post.call_args.kwargs["json"]["template"]["components"][2:]
+        self.assertEqual([(row["sub_type"], row["index"]) for row in components], [("url", "0"), ("quick_reply", "1"), ("quick_reply", "2")])
+        self.assertEqual(components[0]["parameters"][0]["text"], "abc")
 
     def _campaign_recipient(self, phone="0676200748"):
         role = Role(name="Agent")
