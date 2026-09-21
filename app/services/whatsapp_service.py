@@ -273,8 +273,25 @@ def send_whatsapp_message(to_number: str, message: str) -> bool:
     return send_whatsapp_text(to_number, message).ok
 
 
-def send_whatsapp_template_image(to_number: str, template_name: str, language_code: str, image_url: str, callback_payload: str, optout_payload: str, customer_name: str = "Customer") -> SendResult:
-    """Send an approved WhatsApp marketing template with image header and two quick-reply buttons."""
+def order_whatsapp_template_buttons(buttons: list[dict] | None) -> list[dict]:
+    """Keep action buttons first and the quick-reply group contiguous."""
+    valid = [dict(item) for item in (buttons or []) if isinstance(item, dict)]
+    quick = [item for item in valid if str(item.get("type") or "QUICK_REPLY").upper() == "QUICK_REPLY"]
+    other = [item for item in valid if str(item.get("type") or "QUICK_REPLY").upper() != "QUICK_REPLY"]
+
+    def quick_rank(item):
+        text = str(item.get("text") or "").casefold()
+        if "call" in text or "callback" in text:
+            return 0
+        if any(word in text for word in ("delete", "opt out", "opt-out", "no thanks", "stop")):
+            return 1
+        return 2
+
+    return other + sorted(quick, key=quick_rank)
+
+
+def send_whatsapp_template_image(to_number: str, template_name: str, language_code: str, image_url: str, callback_payload: str, optout_payload: str, customer_name: str = "Customer", buttons: list[dict] | None = None, join_token: str | None = None) -> SendResult:
+    """Send an approved image template with a recipient-specific application URL."""
     to_number = normalize_phone(to_number)
     from app.services.phone_deletion import phone_is_suppressed
     if phone_is_suppressed(to_number):
@@ -283,6 +300,22 @@ def send_whatsapp_template_image(to_number: str, template_name: str, language_co
         return SendResult(False, error="Number, approved template name and public image URL are required.")
     if os.getenv("WHATSAPP_ENABLED", "false").lower() not in {"true", "1", "yes", "y"}:
         return SendResult(False, error="WhatsApp is disabled. Set WHATSAPP_ENABLED=true.")
+
+    ordered_buttons = order_whatsapp_template_buttons(buttons or [
+        {"type": "QUICK_REPLY", "text": "CALL ME BACK"},
+        {"type": "QUICK_REPLY", "text": "DELETE MY NUMBER"},
+    ])
+    button_components = []
+    quick_payloads = [callback_payload, optout_payload]
+    quick_index = 0
+    for index, item in enumerate(ordered_buttons):
+        button_type = str(item.get("type") or "QUICK_REPLY").upper()
+        if button_type == "URL" and "{{1}}" in str(item.get("url") or "") and join_token:
+            button_components.append({"type": "button", "sub_type": "url", "index": str(index), "parameters": [{"type": "text", "text": join_token}]})
+        elif button_type == "QUICK_REPLY":
+            reply = quick_payloads[quick_index] if quick_index < len(quick_payloads) else f"reply:{join_token or ''}:{index}"
+            quick_index += 1
+            button_components.append({"type": "button", "sub_type": "quick_reply", "index": str(index), "parameters": [{"type": "payload", "payload": reply}]})
 
     payload = {
         "messaging_product": "whatsapp",
@@ -294,8 +327,7 @@ def send_whatsapp_template_image(to_number: str, template_name: str, language_co
             "components": [
                 {"type": "header", "parameters": [{"type": "image", "image": {"link": image_url}}]},
                 {"type": "body", "parameters": [{"type": "text", "text": customer_name or "Customer"}]},
-                {"type": "button", "sub_type": "quick_reply", "index": "0", "parameters": [{"type": "payload", "payload": callback_payload}]},
-                {"type": "button", "sub_type": "quick_reply", "index": "1", "parameters": [{"type": "payload", "payload": optout_payload}]},
+                *button_components,
             ],
         },
     }
@@ -543,7 +575,7 @@ def create_whatsapp_image_template(
         components.append({"type": "FOOTER", "text": footer})
 
     normalized_buttons = []
-    for item in (buttons or []):
+    for item in order_whatsapp_template_buttons(buttons):
         if not isinstance(item, dict):
             continue
         btype = str(item.get("type") or "QUICK_REPLY").upper()
@@ -551,7 +583,11 @@ def create_whatsapp_image_template(
         if not text:
             continue
         if btype == "URL" and item.get("url"):
-            normalized_buttons.append({"type": "URL", "text": text, "url": str(item["url"]).strip()})
+            button_url = str(item["url"]).strip()
+            button = {"type": "URL", "text": text, "url": button_url}
+            if "{{1}}" in button_url:
+                button["example"] = [button_url.replace("{{1}}", "example-token")]
+            normalized_buttons.append(button)
         elif btype == "PHONE_NUMBER" and item.get("phone_number"):
             normalized_buttons.append({"type": "PHONE_NUMBER", "text": text, "phone_number": str(item["phone_number"]).strip()})
         else:
@@ -561,8 +597,6 @@ def create_whatsapp_image_template(
             {"type": "QUICK_REPLY", "text": "Call me back"},
             {"type": "QUICK_REPLY", "text": "Delete my number"},
         ]
-    if len(normalized_buttons) != 2 or any(b["type"] != "QUICK_REPLY" for b in normalized_buttons):
-        return TemplateCreateResult(False, error="This module requires two quick replies: Call me back first, Delete my number second.")
     components.append({"type": "BUTTONS", "buttons": normalized_buttons[:10]})
 
     payload = {

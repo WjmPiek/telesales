@@ -28,6 +28,7 @@ from app.models import (
 from app.services.whatsapp_service import (
     create_whatsapp_image_template,
     get_whatsapp_template_status,
+    order_whatsapp_template_buttons,
 )
 
 
@@ -206,6 +207,12 @@ def submit_campaign_template(campaign: CommunicationCampaign, force: bool = Fals
         buttons = json.loads(campaign.template_buttons_json or "[]")
     except (TypeError, ValueError):
         buttons = []
+    buttons = order_whatsapp_template_buttons(buttons)
+    campaign.template_buttons_json = json.dumps(buttons)
+    template.buttons_json = campaign.template_buttons_json
+    quick_replies = [item for item in buttons if str(item.get("type") or "").upper() == "QUICK_REPLY"]
+    template.button_one_text = quick_replies[0].get("text") if quick_replies else "CALL ME BACK"
+    template.button_two_text = quick_replies[1].get("text") if len(quick_replies) > 1 else "DELETE MY NUMBER"
     result = create_whatsapp_image_template(
         campaign.whatsapp_template_name,
         campaign.whatsapp_template_language or "en",

@@ -361,10 +361,78 @@ def _add_terms_page(writer, app_obj, sig_path=None):
     writer.add_page(page)
 
 
+def _generate_gold_family_fillable(app_obj, out_path, sig_path):
+    """Fill the supplied two-page Gold Family application and add its signature."""
+    template = os.path.join(TEMPLATE_DIR, "gold_family_plan_fillable_application.pdf")
+    if not os.path.exists(template):
+        raise FileNotFoundError("Gold Family Plan application template is missing")
+    children = _rows(app_obj.dependents_json)[:6]
+    extended = _rows(app_obj.extended_family_json)[:4]
+    payment = str(app_obj.payment_method or "").lower()
+    debit_day = str(app_obj.debit_day or "").strip()
+    values = {
+        "agent_name": _safe(app_obj.agent_name), "agent_code": _safe(app_obj.agent_code),
+        "policy_no": _safe(app_obj.policy_number or app_obj.application_ref),
+        "surname": _safe(app_obj.surname), "first_names": _safe(app_obj.first_names),
+        "title": _safe(app_obj.title), "id_number": _safe(app_obj.id_number),
+        "dob": _safe(app_obj.date_of_birth), "contact": _safe(app_obj.cell_number),
+        "email": _safe(app_obj.email), "res_address": _safe(app_obj.residential_address or app_obj.address),
+        "postal_address": _safe(app_obj.postal_address), "postal_code": _safe(app_obj.postal_code),
+        "spouse_surname": _safe(app_obj.spouse_surname), "spouse_first": _safe(app_obj.spouse_first_names),
+        "spouse_title": _safe(app_obj.spouse_title), "spouse_id": _safe(app_obj.spouse_id_number),
+        "spouse_dob": _safe(app_obj.spouse_date_of_birth),
+        "beneficiary_name": _safe(app_obj.beneficiary_full_names), "beneficiary_rel": _safe(app_obj.beneficiary_relationship),
+        "beneficiary_id": _safe(app_obj.beneficiary_id_number), "beneficiary_dob": _safe(app_obj.beneficiary_date_of_birth),
+        "first_deduction": _safe(app_obj.first_deduction_date),
+        "bank_name": _safe(app_obj.bank_name), "branch_name": _safe(app_obj.branch_name),
+        "account_no": _safe(app_obj.account_number), "branch_code": _safe(app_obj.branch_code),
+        "account_holder": _safe(app_obj.account_holder), "account_type": _safe(app_obj.account_type),
+        "monthly_premium_a": _money(app_obj.monthly_premium), "premium_b": _money(app_obj.extended_premium),
+        "total_premium": _money(app_obj.total_payment or app_obj.monthly_premium),
+        "employer": _safe(app_obj.employer), "persal_no": _safe(app_obj.persal_no),
+        "signature_date": datetime.now().strftime("%d/%m/%Y"),
+        "pay_cash": "/Yes" if "cash" in payment else "/Off",
+        "pay_debit": "/Yes" if "debit" in payment else "/Off",
+        "pay_persal": "/Yes" if "persal" in payment else "/Off",
+    }
+    for day, suffix in (("1", "1st"), ("5", "5th"), ("15", "15th"), ("20", "20th"), ("25", "25th"), ("30", "30th")):
+        values[f"debit_{suffix}"] = "/Yes" if debit_day == day else "/Off"
+    for index in range(1, 7):
+        row = children[index - 1] if index <= len(children) else {}
+        values[f"child_{index}_name"] = _safe(row.get("full_name"))
+        values[f"child_{index}_rel"] = _safe(row.get("relationship"))
+        values[f"child_{index}_id"] = _safe(row.get("id_or_dob"))
+    for index in range(1, 5):
+        row = extended[index - 1] if index <= len(extended) else {}
+        values[f"ext_{index}_name"] = " / ".join(filter(None, [_safe(row.get("full_name")), _safe(row.get("relationship"))]))
+        values[f"ext_{index}_id"] = _safe(row.get("id_or_dob"))
+        values[f"ext_{index}_cover"] = _safe(row.get("cover"))
+        values[f"ext_{index}_premium"] = _safe(row.get("premium"))
+
+    writer = PdfWriter()
+    writer.clone_document_from_reader(PdfReader(template))
+    writer.update_page_form_field_values(None, values, auto_regenerate=False)
+    if sig_path and os.path.exists(sig_path) and len(writer.pages) > 1:
+        overlay_data = io.BytesIO()
+        overlay = canvas.Canvas(overlay_data, pagesize=A4)
+        _draw_signature(overlay, sig_path, 155, 73, 160, 24)
+        overlay.save()
+        overlay_data.seek(0)
+        writer.pages[1].merge_page(PdfReader(overlay_data).pages[0])
+    from app.services.signature_fields import application_fields
+    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"fields": application_fields(app_obj)})})
+    with open(out_path, "wb") as stream:
+        writer.write(stream)
+    return out_path
+
+
 @durable_pdf
 def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     _ensure_dir(out_path)
     sig_path = _signature_for_app(app_obj, signature_path_override, "application")
+
+    if app_obj.form_template == "gold_family_fillable":
+        return _generate_gold_family_fillable(app_obj, out_path, sig_path)
 
     product_text = ((_safe(app_obj.product.product_name if app_obj.product else "")) + " " + (_safe(app_obj.product.plan_name if app_obj.product else ""))).lower()
     template_choice = app_obj.form_template or ("member_product" if ("member +" in product_text or ("product" in product_text and ("+" in product_text or "member" in product_text))) else "single_family")
