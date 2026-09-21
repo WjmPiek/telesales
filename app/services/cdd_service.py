@@ -52,7 +52,10 @@ def save_answers(a, form):
     values={}
     for key,label,options in FIELDS:
         value=(form.get(key) or '').strip()
-        if (not value and key != 'email') or len(value)>300:
+        required = key not in {'email', 'postal_address', 'funds_details'}
+        if key == 'funds_details' and (form.get('funds') or '').strip() == 'Other':
+            required = True
+        if (required and not value) or len(value)>300:
             raise ValueError(f'Complete {label} (maximum 300 characters).')
         if options and value not in options.split('|'):
             raise ValueError(f'Select a valid answer for {label}.')

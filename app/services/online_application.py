@@ -5,14 +5,15 @@ from app.services.cdd_service import FIELDS as CDD_FIELDS, save_answers
 from app.services.compliance_service import assert_application_rules, dob_from_sa_id
 from app.services.delivery_preferences import valid_email
 from app.services.marketing_consent import apply_consent
+from app.services.member_benefits import enrich_rows
 
 FIELDS = [
  ('Your details', [
   ('title','Title','Mr|Mrs|Ms|Miss|Dr',False),
   ('first_names','First names','',True),('surname','Surname','',True),
   ('cell_number','Mobile number','',True),('email','Email for documents and policy confirmation','email',True),
-  ('residential_address','Residential address','',True),('residential_postal_code','Postal code','',True),
-  ('postal_address','Postal address','',True),('postal_code','Postal address code','',True)]),
+  ('residential_address','Residential address','',True),('residential_postal_code','Street code','',True),
+  ('postal_address','Postal address (optional)','',False),('postal_code','Postal address code (optional)','',False)]),
  ('Nominated beneficiary', [
   ('beneficiary_full_names','Beneficiary full names and surname','',True),
   ('beneficiary_relationship','Relationship','Spouse|Partner|Parent|Child|Sibling|Other',True),
@@ -55,13 +56,14 @@ def save_questionnaire(a, form):
             if not any(row.values()):continue
             if not all(row.values()):raise ValueError('Complete name, relationship and ID or date of birth for each added member.')
             rows.append(row)
-        if attribute:setattr(a,attribute,json.dumps(rows))
+        benefit_rows=enrich_rows(a.product,kind,rows)
+        if attribute:setattr(a,attribute,json.dumps(benefit_rows))
         elif rows:
             row=rows[0];names=row['full_name'].rsplit(' ',1)
             a.spouse_first_names=names[0];a.spouse_surname=names[1] if len(names)>1 else ''
             if len(row['id_or_dob'])==13:a.spouse_id_number=row['id_or_dob']
             else:a.spouse_date_of_birth=row['id_or_dob']
-        all_members.extend(rows)
+        all_members.extend(benefit_rows)
     a.product_dependents_json=json.dumps(all_members)
     if a.payment_method=='Debit Order':
         full=' '.join((a.first_names,a.surname)).strip().casefold()
