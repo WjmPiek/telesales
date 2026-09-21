@@ -343,3 +343,11 @@ Automated regression coverage is included for webhook verification and signature
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+## WhatsApp APPLY NOW self-service flow
+
+New WhatsApp templates use this button order: `APPLY NOW` (secure URL), `CALL ME BACK`, and `DELETE MY NUMBER`. The URL contains only the recipient's opaque campaign token.
+
+After selecting `APPLY NOW`, the client enters a valid South African ID number, total members and R10 000 / R20 000 / R30 000 / R40 000 cover. The system filters active products by cover and age, then opens the existing secure online application for the selected product. The application includes document uploads, the application and compliance forms, signature capture, client receipts and the staff finalisation email.
+
+Existing Render PostgreSQL databases are upgraded at startup with idempotent `ADD COLUMN IF NOT EXISTS` statements for `total_members`, `requested_cover` and `source_campaign_recipient_id`. No existing application data is removed.
