@@ -95,6 +95,45 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertIn(b'name="child_1_cover"',page.data)
         self.assertIn(b'name="extended_1_waiting_period"',page.data)
 
+    def test_product_editor_saves_family_member_setup_and_covers(self):
+        product=self.record.product
+        product_id=product.id
+        response=self.client.post(f'/policies/{product_id}/edit',data={
+          'product_name':product.product_name,'plan_name':product.plan_name,'cover_amount':'50000',
+          'monthly_premium':'300','waiting_period_months':'6','min_age':'31','max_age':'55','active':'on',
+          'plan_type':'family','spouse_slots':'1','child_slots':'8','extended_slots':'5','extra_member_slots':'0',
+          'main_member_cover':'50000','spouse_cover':'50000','family_0_11':'10000','family_1_5':'10000',
+          'family_6_13':'25000','family_14_21':'50000','stillborn_cover':'10000','extended_cover':'30000'})
+        self.assertEqual(response.status_code,302,response.data[:400])
+        rules=PolicyProductRule.query.filter_by(product_id=product_id).one()
+        self.assertEqual(rules.plan_type,'family')
+        self.assertEqual((rules.spouse_slots,rules.child_slots,rules.extended_slots),(1,8,5))
+        self.assertEqual(float(rules.family_6_13),25000)
+        page=self.client.get(f'/policies/{product_id}/edit')
+        self.assertIn(b'Application member setup',page.data)
+        self.assertIn(b'Child 14',page.data)
+
+    def test_member_product_uses_configured_extra_member_fields_online(self):
+        product=self.record.product
+        db.session.add(PolicyProductRule(product_id=product.id,plan_type='member_product',extra_member_slots=3,
+          member_0_5_product_only=10000,member_6_70_product_only=20000))
+        db.session.commit()
+        client,nonce=self.prepare()
+        page=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'Extra members (up to 3)',page.data)
+        self.assertIn(b'id="productdep_3_cover"',page.data)
+        self.assertNotIn(b'id="productdep_4_cover"',page.data)
+        self.assertNotIn(b'id="child_1_cover"',page.data)
+        data=self.save(client,nonce)
+        data.update(productdep_1_full_name='Extra Member',productdep_1_relationship='Parent',
+                    productdep_1_id_or_dob='1960-01-01')
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+        members=__import__('json').loads(self.record.product_dependents_json)
+        self.assertEqual(len(members),1)
+        self.assertEqual(members[0]['kind'],'productdep')
+        self.assertEqual(members[0]['cover'],'20000.00')
+
     def test_client_can_sign_when_supporting_documents_will_be_emailed(self):
         client,nonce=self.prepare();self.save(client,nonce,include_supporting_documents=False)
         for kind in ['application','popia','disclosure','welcome','cdd']:
