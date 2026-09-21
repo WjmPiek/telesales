@@ -784,6 +784,7 @@ def delete_campaign(campaign_id):
     # those rows, because SQLAlchemy would retain stale recipient objects in the
     # identity map and try to UPDATE them while deleting the parent campaign.
     recipient_ids = [row[0] for row in db.session.query(CampaignRecipient.id).filter_by(campaign_id=campaign.id).all()]
+    media_asset_ids = [row[0] for row in db.session.query(WhatsAppMediaAsset.id).filter_by(campaign_id=campaign.id).all()]
 
     try:
         # Keep suppression history for POPIA compliance, but remove the deleted campaign link.
@@ -805,6 +806,11 @@ def delete_campaign(campaign_id):
             entity_type="campaign", entity_id=campaign.id
         ).delete(synchronize_session=False)
         WhatsAppProviderJob.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        WhatsAppProviderLog.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        if media_asset_ids:
+            WhatsAppMediaVersion.query.filter(
+                WhatsAppMediaVersion.media_asset_id.in_(media_asset_ids)
+            ).delete(synchronize_session=False)
         WhatsAppMediaAsset.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
         WhatsAppTemplate.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
 
@@ -812,6 +818,8 @@ def delete_campaign(campaign_id):
         # request hook or template helper before deleting the parent row.
         if "recipients" in campaign.__dict__:
             db.session.expire(campaign, ["recipients"])
+        if "enterprise_template" in campaign.__dict__:
+            db.session.expire(campaign, ["enterprise_template"])
 
         db.session.delete(campaign)
         db.session.commit()
