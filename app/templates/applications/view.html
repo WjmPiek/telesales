@@ -20,6 +20,7 @@
     <p><b>Application Form Template:</b> {{app.form_template or "auto"}}</p>
     <p><b>Cover:</b> R{{app.cover_amount}} | <b>Premium:</b> R{{app.monthly_premium}}</p>
     <p><b>Joining Fee:</b> R{{app.joining_fee or 0}}</p>
+    {% if member_benefits %}<h5>Covered family members</h5><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Member</th><th>Relationship</th><th>ID / date of birth</th><th>Cover</th><th>Waiting period</th></tr></thead><tbody>{% for row in member_benefits %}<tr><td>{{row.full_name}}</td><td>{{row.relationship or row.kind|title}}</td><td>{{row.id_or_dob}}</td><td>R{{row.cover}}</td><td>{{row.waiting_period}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 
     <p><b>Employee FIC check:</b> {{screening.status if screening else 'Screenshot required before sending'}} <a href="{{url_for('applications.screening_review',app_id=app.id)}}">Record check / upload screenshots</a></p>
     {% if app.status != 'Signed' %}

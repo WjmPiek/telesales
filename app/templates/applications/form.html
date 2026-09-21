@@ -10,6 +10,15 @@
         data-name="{{p.product_name}} {{p.plan_name}}"
         data-premium="{{p.monthly_premium}}"
         data-cover="{{p.cover_amount}}"
+        data-waiting="{{p.waiting_period_months or 0}} months"
+        data-spouse-cover="{{(p.rules.spouse_cover if p.rules else 0) or p.cover_amount or 0}}"
+        data-extended-cover="{{(p.rules.extended_cover if p.rules else 0) or p.cover_amount or 0}}"
+        data-family-0-11="{{(p.rules.family_0_11 if p.rules else 0) or p.cover_amount or 0}}"
+        data-family-1-5="{{(p.rules.family_1_5 if p.rules else 0) or p.cover_amount or 0}}"
+        data-family-6-13="{{(p.rules.family_6_13 if p.rules else 0) or p.cover_amount or 0}}"
+        data-family-14-21="{{(p.rules.family_14_21 if p.rules else 0) or p.cover_amount or 0}}"
+        data-member-0-5="{{(p.rules.member_0_5_product_only if p.rules else 0) or p.cover_amount or 0}}"
+        data-member-6-70="{{(p.rules.member_6_70_product_only if p.rules else 0) or p.cover_amount or 0}}"
         data-min-age="{{p.min_age if p.min_age is not none else ''}}"
         data-max-age="{{p.max_age if p.max_age is not none else ''}}">
         {{p.product_name}} - {{p.plan_name}} / R{{p.monthly_premium}}
@@ -34,7 +43,7 @@
   <div class="col-md-4"><label>Work Tel</label><input class="form-control" name="work_tel"></div>
   <div class="col-md-4" id="plan_choice_block" style="display:none;"><label>Plan Choice (Member + Product)</label><input class="form-control" name="plan_choice" id="plan_choice" readonly></div>
   <div class="col-md-6"><label>Residential Address</label><textarea class="form-control" id="residential_address" name="residential_address">{{ lead.address if lead else '' }}</textarea><input type="hidden" name="address_place_id" id="address_place_id"><input type="hidden" name="address_lat" id="address_lat"><input type="hidden" name="address_lng" id="address_lng"></div>
-  <div class="col-md-2"><label>Residential Postal Code</label><input class="form-control" name="residential_postal_code" id="residential_postal_code"></div><div class="col-12"><div id="map" style="height:280px;border:1px solid #ccc;"></div></div>
+  <div class="col-md-2"><label>Residential Street Code</label><input class="form-control" name="residential_postal_code" id="residential_postal_code"></div><div class="col-12"><div id="map" style="height:280px;border:1px solid #ccc;"></div></div>
   <div class="col-md-6"><label>Postal Address</label><textarea class="form-control" name="postal_address"></textarea></div>
   <div class="col-md-2"><label>Postal Code</label><input class="form-control" name="postal_code"></div>
 
@@ -44,6 +53,8 @@
   <div class="col-md-4"><label>Spouse Surname</label><input class="form-control" name="spouse_surname"></div>
   <div class="col-md-3"><label>Spouse ID Number</label><input class="form-control" name="spouse_id_number" id="spouse_id_number" maxlength="13" oninput="validateSaIdField(this); fillDobFromId('spouse_id_number','spouse_date_of_birth')"></div>
   <div class="col-md-3"><label>Spouse Date of Birth</label><input class="form-control" name="spouse_date_of_birth" id="spouse_date_of_birth" placeholder="DD/MM/YYYY" oninput="formatDateInput(this)"></div>
+  <div class="col-md-3"><label>Spouse Cover</label><input class="form-control member-cover" data-kind="spouse" data-index="1" name="spouse_1_cover" readonly></div>
+  <div class="col-md-3"><label>Spouse Waiting Period</label><input class="form-control member-waiting" data-kind="spouse" data-index="1" name="spouse_1_waiting_period" readonly></div>
 
   <h5 class="mt-3">Premiums</h5>
   <div class="col-md-3"><label>Extended Premium B</label><input class="form-control premium-lock" name="extended_premium" id="extended_premium" type="number" step="0.01" {% if not (current_user.role and current_user.role.name|lower == 'admin') %}readonly{% endif %}></div>
@@ -52,24 +63,29 @@
 
   <div id="family_fields"><h5 class="mt-3">Children / Dependents (Single and Family Form)</h5>
   {% for i in range(1,7) %}
-    <div class="col-md-5"><input class="form-control" name="child_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
-    <div class="col-md-3"><input class="form-control" name="child_{{i}}_relationship" placeholder="Relationship"></div>
-    <div class="col-md-4"><input class="form-control dependent-id-dob" name="child_{{i}}_id_or_dob" placeholder="ID number or DOB" oninput="formatIdOrDobInput(this)"></div>
+    <div class="col-md-3"><input class="form-control" name="child_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
+    <div class="col-md-2"><input class="form-control" name="child_{{i}}_relationship" placeholder="Relationship"></div>
+    <div class="col-md-3"><input class="form-control dependent-id-dob" name="child_{{i}}_id_or_dob" placeholder="ID number or DOB" oninput="formatIdOrDobInput(this); refreshMemberBenefits()"></div>
+    <div class="col-md-2"><input class="form-control member-cover" data-kind="child" data-index="{{i}}" name="child_{{i}}_cover" placeholder="Cover" readonly></div>
+    <div class="col-md-2"><input class="form-control member-waiting" data-kind="child" data-index="{{i}}" name="child_{{i}}_waiting_period" placeholder="Waiting period" readonly></div>
   {% endfor %}
 
   </div><div id="member_product_fields"><h5 class="mt-3">Member + Product Dependents</h5>
   {% for i in range(1,14) %}
-    <div class="col-md-5"><input class="form-control" name="productdep_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
-    <div class="col-md-3"><input class="form-control" name="productdep_{{i}}_relationship" placeholder="Relationship"></div>
-    <div class="col-md-4"><input class="form-control dependent-id-dob" name="productdep_{{i}}_id_or_dob" placeholder="ID number or DOB" oninput="formatIdOrDobInput(this)"></div>
+    <div class="col-md-3"><input class="form-control" name="productdep_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
+    <div class="col-md-2"><input class="form-control" name="productdep_{{i}}_relationship" placeholder="Relationship"></div>
+    <div class="col-md-3"><input class="form-control dependent-id-dob" name="productdep_{{i}}_id_or_dob" placeholder="ID number or DOB" oninput="formatIdOrDobInput(this); refreshMemberBenefits()"></div>
+    <div class="col-md-2"><input class="form-control member-cover" data-kind="productdep" data-index="{{i}}" name="productdep_{{i}}_cover" placeholder="Cover" readonly></div>
+    <div class="col-md-2"><input class="form-control member-waiting" data-kind="productdep" data-index="{{i}}" name="productdep_{{i}}_waiting_period" placeholder="Waiting period" readonly></div>
   {% endfor %}
 
   </div><div id="extended_family_fields"><h5 class="mt-3">Extended Family</h5>
   {% for i in range(1,7) %}
-    <div class="col-md-4"><input class="form-control" name="extended_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
+    <div class="col-md-3"><input class="form-control" name="extended_{{i}}_full_name" placeholder="{{i}}. Full names"></div>
     <div class="col-md-2"><input class="form-control" name="extended_{{i}}_relationship" placeholder="Relationship"></div>
-    <div class="col-md-2"><input class="form-control dependent-id-dob" name="extended_{{i}}_id_or_dob" placeholder="ID/DOB" oninput="formatIdOrDobInput(this)"></div>
-    <div class="col-md-2"><input class="form-control" name="extended_{{i}}_cover" placeholder="Cover"></div>
+    <div class="col-md-2"><input class="form-control dependent-id-dob" name="extended_{{i}}_id_or_dob" placeholder="ID/DOB" oninput="formatIdOrDobInput(this); refreshMemberBenefits()"></div>
+    <div class="col-md-2"><input class="form-control member-cover" data-kind="extended" data-index="{{i}}" name="extended_{{i}}_cover" placeholder="Cover" readonly></div>
+    <div class="col-md-2"><input class="form-control member-waiting" data-kind="extended" data-index="{{i}}" name="extended_{{i}}_waiting_period" placeholder="Waiting period" readonly></div>
     <div class="col-md-2"><input class="form-control" name="extended_{{i}}_premium" placeholder="Premium"></div>
   {% endfor %}
 
@@ -202,6 +218,34 @@ function ageFromDob(value){
   return age;
 }
 
+function memberAge(value){
+  const digits=(value||'').replace(/\D/g,'');
+  if(digits.length===13) return ageFromDob(dobFromIdDigits(digits));
+  return ageFromDob(value);
+}
+
+function refreshMemberBenefits(){
+  const sel=document.getElementById('product_id');
+  if(!sel || !sel.options.length) return;
+  const opt=sel.options[sel.selectedIndex];
+  const base=opt.dataset.cover||'';
+  const waiting=opt.dataset.waiting||'';
+  document.querySelectorAll('.member-cover').forEach(field=>{
+    const kind=field.dataset.kind, index=field.dataset.index;
+    let source='';
+    if(kind==='spouse') source=(document.getElementById('spouse_id_number')?.value||document.getElementById('spouse_date_of_birth')?.value||'');
+    else source=document.querySelector(`[name="${kind}_${index}_id_or_dob"]`)?.value||'';
+    const age=memberAge(source);
+    let cover=base;
+    if(kind==='spouse') cover=opt.getAttribute('data-spouse-cover')||base;
+    else if(kind==='extended') cover=opt.getAttribute('data-extended-cover')||base;
+    else if(kind==='productdep') cover=opt.getAttribute(age!==null&&age<=5?'data-member-0-5':'data-member-6-70')||base;
+    else if(age!==null) cover=opt.getAttribute(age<1?'data-family-0-11':age<=5?'data-family-1-5':age<=13?'data-family-6-13':'data-family-14-21')||base;
+    field.value=cover;
+  });
+  document.querySelectorAll('.member-waiting').forEach(field=>field.value=waiting);
+}
+
 function checkAgeLimits(){
   const sel = document.getElementById('product_id');
   const opt = sel.options[sel.selectedIndex];
@@ -248,10 +292,11 @@ function policyChanged(){
   setSectionEnabled(document.getElementById('extended_family_fields'), !isMemberProduct && type === 'family');
   setSectionEnabled(document.getElementById('member_product_fields'), isMemberProduct);
   checkAgeLimits();
+  refreshMemberBenefits();
 }
 
 document.addEventListener('input', function(e){
-  if(e.target && ['date_of_birth','spouse_date_of_birth'].includes(e.target.id)) checkAgeLimits();
+  if(e.target && ['date_of_birth','spouse_date_of_birth','spouse_id_number'].includes(e.target.id)){ checkAgeLimits(); refreshMemberBenefits(); }
 });
 
 let map, marker;
@@ -260,23 +305,21 @@ function initMap(){
   map = new google.maps.Map(document.getElementById('map'), {zoom:12, center: defaultPos});
   marker = new google.maps.Marker({map, position: defaultPos});
   const input = document.getElementById('residential_address');
-  const autocomplete = new google.maps.places.Autocomplete(input, {componentRestrictions:{country:'za'}, fields:['formatted_address','geometry','place_id','address_components']});
-  autocomplete.addListener('place_changed', () => {
-    const place = autocomplete.getPlace();
-    if(!place.geometry) return;
+  function applyAddress(place){
+    if(!place || !place.geometry) return;
     input.value = place.formatted_address || input.value;
     document.getElementById('address_place_id').value = place.place_id || '';
     document.getElementById('address_lat').value = place.geometry.location.lat();
     document.getElementById('address_lng').value = place.geometry.location.lng();
-    map.setCenter(place.geometry.location);
-    map.setZoom(15);
-    marker.setPosition(place.geometry.location);
-    let postal = '';
-    (place.address_components || []).forEach(c => {
-      if(c.types.includes('postal_code')) postal = c.long_name;
-    });
-    if(postal) document.getElementById('residential_postal_code').value = postal;
-  });
+    map.setCenter(place.geometry.location);map.setZoom(15);marker.setPosition(place.geometry.location);
+    const component=(place.address_components||[]).find(c=>c.types.includes('postal_code'));
+    if(component) document.getElementById('residential_postal_code').value=component.long_name;
+  }
+  const autocomplete = new google.maps.places.Autocomplete(input, {componentRestrictions:{country:'za'}, fields:['formatted_address','geometry','place_id','address_components']});
+  autocomplete.addListener('place_changed',()=>applyAddress(autocomplete.getPlace()));
+  if(input.value.trim() && !document.getElementById('residential_postal_code').value){
+    new google.maps.Geocoder().geocode({address:input.value,componentRestrictions:{country:'ZA'}},(results,status)=>{if(status==='OK'&&results[0])applyAddress(results[0])});
+  }
 }
 
 function saIdValid(value){
