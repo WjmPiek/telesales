@@ -5,7 +5,7 @@ from app.services.application_layout import SIGNATURE_RECTS
 
 
 def application_template(a):
-    if a.form_template in SIGNATURE_RECTS:
+    if a.form_template in {*SIGNATURE_RECTS, 'gold_family_fillable'}:
         return a.form_template
     text = f"{a.product.product_name if a.product else ''} {a.product.plan_name if a.product else ''}".lower()
     return 'member_product' if ('member +' in text or ('product' in text and ('+' in text or 'member' in text))) else 'single_family'

@@ -362,7 +362,7 @@ def _add_terms_page(writer, app_obj, sig_path=None):
 
 
 def _generate_gold_family_fillable(app_obj, out_path, sig_path):
-    """Fill the supplied two-page Gold Family application and add its signature."""
+    """Fill the Gold Family application and place every saved signature separately."""
     template = os.path.join(TEMPLATE_DIR, "gold_family_plan_fillable_application.pdf")
     if not os.path.exists(template):
         raise FileNotFoundError("Gold Family Plan application template is missing")
@@ -412,43 +412,60 @@ def _generate_gold_family_fillable(app_obj, out_path, sig_path):
     writer = PdfWriter()
     writer.clone_document_from_reader(PdfReader(template))
     writer.update_page_form_field_values(None, values, auto_regenerate=False)
-    if sig_path and os.path.exists(sig_path) and len(writer.pages) > 1:
-        overlay_data = io.BytesIO()
-        overlay = canvas.Canvas(overlay_data, pagesize=A4)
-        _draw_signature(overlay, sig_path, 155, 73, 160, 24)
-        if "debit" in payment:
-            _draw_signature(overlay, sig_path, 155, 28, 160, 24)
-        overlay.save()
-        overlay_data.seek(0)
-        writer.pages[1].merge_page(PdfReader(overlay_data).pages[0])
-        # Blank signature widgets otherwise paint over the merged handwritten
-        # signature in several mobile PDF viewers. Remove only those widgets;
-        # all data-entry fields stay interactive in the review copy.
-        from pypdf.generic import ArrayObject, NameObject
-        kept = ArrayObject()
-        for reference in writer.pages[1].get('/Annots', []):
-            annotation = reference.get_object()
-            parent = annotation.get('/Parent')
-            parent = parent.get_object() if parent else None
-            field_name = str(annotation.get('/T') or (parent.get('/T') if parent else '') or '')
-            if field_name in {'policyholder_signature', 'account_signature'}:
-                continue
-            kept.append(reference)
-        writer.pages[1][NameObject('/Annots')] = kept
     # The supplied Gold form contains the declaration, while the official policy
     # terms live in the standard terms template. Keep them in one reviewable PDF
     # and add a visible client signature record for the terms.
     _append_policy_terms(writer, "single_family")
-    if sig_path and os.path.exists(sig_path) and len(writer.pages) > 2:
-        terms_overlay_data = io.BytesIO()
-        terms_overlay = canvas.Canvas(terms_overlay_data, pagesize=A4)
-        _draw_signature(terms_overlay, sig_path, 105, 18, 160, 24)
-        terms_overlay.save()
-        terms_overlay_data.seek(0)
-        writer.pages[2].merge_page(PdfReader(terms_overlay_data).pages[0])
-    _add_terms_page(writer, app_obj, sig_path)
-    from app.services.signature_fields import application_fields
-    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"fields": application_fields(app_obj)})})
+    _add_terms_page(writer, app_obj, None)
+
+    # Do not reuse one signature image for every field. Each signature pad is
+    # persisted as its own DocumentSignature row and merged only into the exact
+    # PDF rectangle represented by that row.
+    from app.services.signature_fields import application_fields, signature_rows
+    fields, records = application_fields(app_obj), signature_rows(app_obj)
+    for target in fields:
+        row = records.get(target["key"])
+        signature_path = row.signature_image_path if row else None
+        # Compatibility for older completed applications that only have the
+        # legacy principal signature passed to the PDF generator.
+        if not signature_path and target["key"] == "application:principal":
+            signature_path = sig_path
+        target["signed"] = bool(row or signature_path)
+        if not signature_path or not os.path.exists(signature_path):
+            continue
+        page_index = target["page"] - 1
+        if page_index < 0 or page_index >= len(writer.pages):
+            continue
+        overlay_data = io.BytesIO()
+        overlay = canvas.Canvas(overlay_data, pagesize=A4)
+        x1, y1, x2, y2 = target["rect"]
+        _draw_signature(overlay, signature_path, x1, y1, x2 - x1, y2 - y1)
+        overlay.save()
+        overlay_data.seek(0)
+        writer.pages[page_index].merge_page(PdfReader(overlay_data).pages[0])
+
+    # Blank AcroForm signature widgets can paint over the merged handwriting
+    # on mobile. Remove only widgets whose separate signature has been saved.
+    if len(writer.pages) > 1:
+        signed_widgets = set()
+        if records.get("application:principal") or sig_path:
+            signed_widgets.add("policyholder_signature")
+        if records.get("application:account"):
+            signed_widgets.add("account_signature")
+        if signed_widgets:
+            from pypdf.generic import ArrayObject, NameObject
+            kept = ArrayObject()
+            for reference in writer.pages[1].get("/Annots", []):
+                annotation = reference.get_object()
+                parent = annotation.get("/Parent")
+                parent = parent.get_object() if parent else None
+                field_name = str(annotation.get("/T") or (parent.get("/T") if parent else "") or "")
+                if field_name in signed_widgets:
+                    continue
+                kept.append(reference)
+            writer.pages[1][NameObject("/Annots")] = kept
+
+    writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"fields": fields})})
     with open(out_path, "wb") as stream:
         writer.write(stream)
     return out_path
