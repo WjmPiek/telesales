@@ -50,8 +50,9 @@ class OnlineApplicationTests(unittest.TestCase):
     def test_postal_address_and_supporting_uploads_are_optional(self):
         client,nonce=self.prepare()
         page=client.get('/online-application/fictional-online-test')
-        self.assertIn(b'Supporting documents (optional upload)',page.data)
-        self.assertIn(b'you may save and submit the application now',page.data)
+        self.assertNotIn(b'Supporting documents (optional upload)',page.data)
+        self.assertNotIn(b'name="id_copy"',page.data)
+        self.assertNotIn(b'name="proof_of_address"',page.data)
         data=self.save(client,nonce,include_supporting_documents=False)
         data.update(postal_address='',postal_code='',cdd_funds='Salary',cdd_funds_details='')
         response=client.post('/online-application/fictional-online-test?edit=1',data=data)
@@ -62,6 +63,25 @@ class OnlineApplicationTests(unittest.TestCase):
         data['cdd_funds']='Other'
         response=client.post('/online-application/fictional-online-test?edit=1',data=data)
         self.assertIn(b'Complete Explain the source of funds',response.data)
+
+    def test_child_uses_child_age_rules_and_is_not_validated_twice(self):
+        self.record.product.min_age=31
+        self.record.product.max_age=55
+        db.session.add(PolicyProductRule(product_id=self.record.product_id,plan_type='family',
+          spouse_slots=1,child_slots=5,extended_slots=5,family_14_21=40000))
+        db.session.commit()
+        client,nonce=self.prepare()
+        data=self.save(client,nonce)
+        data.update(child_1_full_name='Example Child',child_1_relationship='Child',
+                    child_1_id_or_dob='2009-08-15')
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+
+        data['child_1_id_or_dob']='0908151234088'
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        text=response.data.decode()
+        self.assertEqual(text.count('Child 1 ID number failed South African ID validation.'),1)
+        self.assertNotIn('Minimum age for this policy is 31',text)
 
     def test_street_code_and_member_benefits_are_captured_per_person(self):
         self.record.product.waiting_period_months=6
