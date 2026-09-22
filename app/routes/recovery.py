@@ -264,7 +264,14 @@ def callbacks():
     due_today = [p for p in rows if p not in overdue and not p.callback_at and p.next_action_date == today]
     upcoming = [p for p in rows if p not in overdue and ((p.callback_at and p.callback_at > now) or (p.next_action_date and p.next_action_date > today))]
     unscheduled = [p for p in rows if not p.next_action_date]
-    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming, unscheduled=unscheduled, today=today)
+    submitted_applications = scope_by_branch(
+        ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id
+    ).filter(
+        ClientApplication.status.in_(["Signed", "FICA Outstanding", "FICA Review", "QA Pending"]),
+        ClientApplication.signed_at.isnot(None),
+    ).order_by(ClientApplication.signed_at.desc()).limit(100).all()
+    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming,
+                           unscheduled=unscheduled, submitted_applications=submitted_applications, today=today)
 
 
 @recovery_bp.route('/callback-reminders')

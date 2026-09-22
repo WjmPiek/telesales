@@ -16,6 +16,7 @@ from app.services.pdf_service import generate_application_pdf, generate_welcome_
 from app.services.email_service import send_email
 from app.services.compliance_service import assert_application_rules
 from app.services.fica_validation_service import validate_fica_upload
+from app.services.document_status_service import required_fica_documents, fica_label
 
 signing_bp = Blueprint("signing", __name__, url_prefix="/sign")
 
@@ -101,10 +102,7 @@ def _is_debit_order(app_obj):
 
 
 def _required_fica_types(app_obj):
-    required = ["id_copy" if _client_is_sa(app_obj) else "passport", "proof_of_address"]
-    if not _client_is_sa(app_obj):
-        required.append("permit_visa")
-    return required
+    return [row["key"] for row in required_fica_documents(app_obj)]
 
 
 def _fica_status(app_obj):
@@ -570,14 +568,74 @@ def download_fica_upload(token, doc_id):
     app_obj = ClientApplication.query.filter_by(sign_token=token).first_or_404()
     if not session.get(_unlocked_key(app_obj.id)):
         abort(403)
-    if app_obj.sign_token_revoked or app_obj.sign_token_used_at:
-        abort(404)
     application_folder(app_obj)
     doc = ClientFicaDocument.query.filter_by(id=doc_id, application_id=app_obj.id).first_or_404()
     path = _resolve_existing(doc.file_path)
     if not path:
         abort(404)
     return send_file(path, as_attachment=False)
+
+
+@signing_bp.route("/<token>/supporting-documents", methods=["GET", "POST"])
+def supporting_documents(token):
+    """Post-signing portal for member identity files and proof of address."""
+    app_obj = ClientApplication.query.filter_by(sign_token=token).first_or_404()
+    requirements = required_fica_documents(app_obj)
+    allowed = {row["key"]: row["label"] for row in requirements}
+    error = None
+
+    if request.method == "POST" and request.form.get("action") == "unlock":
+        entered = _digits(request.form.get("id_number"))
+        if not entered or entered != _digits(app_obj.id_number):
+            error = "The ID number entered does not match this application."
+        else:
+            session[_unlocked_key(app_obj.id)] = True
+            return redirect(url_for("signing.supporting_documents", token=token))
+
+    if not session.get(_unlocked_key(app_obj.id)):
+        return render_template("sign/supporting_unlock.html", app=app_obj, token=token, error=error)
+
+    if request.method == "POST":
+        try:
+            action = request.form.get("action")
+            if action == "upload":
+                doc_type = request.form.get("document_type")
+                if doc_type not in allowed:
+                    raise ValueError("Invalid document type")
+                row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
+                required, received, outstanding, docs = _fica_status(app_obj)
+                app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
+                from app.models import AuditLog
+                db.session.add(AuditLog(action="Supporting document submitted", entity_type="ClientApplication",
+                                        entity_id=str(app_obj.id), details=f"Client uploaded {allowed[doc_type]} for staff review."))
+                db.session.commit()
+                flash(f"{allowed[doc_type]} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
+                return redirect(url_for("signing.supporting_documents", token=token))
+            if action == "complete":
+                required, received, outstanding, docs = _fica_status(app_obj)
+                if outstanding:
+                    raise ValueError("Please upload every required document before submitting: " +
+                                     ", ".join(allowed[key] for key in outstanding))
+                app_obj.status = "FICA Review"
+                from app.models import AuditLog
+                db.session.add(AuditLog(action="Supporting documents completed", entity_type="ClientApplication",
+                                        entity_id=str(app_obj.id), details="Client submitted all member identity documents and proof of address for staff review."))
+                db.session.commit()
+                session.pop(_unlocked_key(app_obj.id), None)
+                return render_template("sign/supporting_complete.html", app=app_obj)
+            raise ValueError("Choose a valid action.")
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception("Supporting document upload failed for application %s", app_obj.id)
+            error = str(exc)
+
+    required, received, outstanding, docs = _fica_status(app_obj)
+    latest = {}
+    for doc in sorted(docs, key=lambda item: item.uploaded_at or datetime.min, reverse=True):
+        if doc.status != "Replaced":
+            latest.setdefault(doc.document_type, doc)
+    return render_template("sign/supporting_documents.html", app=app_obj, token=token, requirements=requirements,
+                           received=received, outstanding=outstanding, latest=latest, error=error)
 
 
 def finish_application(app_obj, token):
@@ -599,14 +657,20 @@ def finish_application(app_obj, token):
     welcome_pdf = os.path.join(folder, f"welcome_pack_{app_obj.id}.pdf")
     popia_pdf = os.path.join(folder, f"popia_consent_{app_obj.id}.pdf")
     disclosure_pdf = os.path.join(folder, f"policy_disclosure_{app_obj.id}.pdf")
-    fica_pdf = os.path.join(folder, f"fica_verification_{app_obj.id}.pdf")
-    generate_application_pdf(app_obj, signed_pdf, signature_path_override=sig_path)
-    generate_welcome_pack(app_obj, welcome_pdf, signature_path_override=signed_records["welcome"].signature_image_path)
-    generate_popia_pdf(app_obj, popia_pdf, signature_path_override=signed_records["popia"].signature_image_path)
-    generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=signed_records["disclosure"].signature_image_path)
-    generate_fica_pdf(app_obj, fica_pdf, signature_path_override=sig_path)
+    # Each document is rendered immediately after its last signature. Reuse
+    # those completed PDFs here instead of regenerating the whole bundle during
+    # the final click; only recover a missing file.
+    if not _resolve_existing(signed_pdf):
+        generate_application_pdf(app_obj, signed_pdf, signature_path_override=sig_path)
+    if not _resolve_existing(welcome_pdf):
+        generate_welcome_pack(app_obj, welcome_pdf, signature_path_override=signed_records["welcome"].signature_image_path)
+    if not _resolve_existing(popia_pdf):
+        generate_popia_pdf(app_obj, popia_pdf, signature_path_override=signed_records["popia"].signature_image_path)
+    if not _resolve_existing(disclosure_pdf):
+        generate_disclosure_pdf(app_obj, disclosure_pdf, signature_path_override=signed_records["disclosure"].signature_image_path)
     cdd_pdf=os.path.join(folder,f"annexure_j1_{app_obj.id}.pdf")
-    generate_cdd_pdf(app_obj,cdd_pdf)
+    if not _resolve_existing(cdd_pdf):
+        generate_cdd_pdf(app_obj,cdd_pdf)
 
     if recipient != (app_obj.document_email or ''):
         from app.models import AuditLog
@@ -637,9 +701,15 @@ def finish_application(app_obj, token):
     db.session.commit()
     session.pop(_unlocked_key(app_obj.id), None)
     if recipient:
-        from app.services.email_service import client_email_content
+        from app.services.email_service import client_email_content, signing_email_html
         subject, body = client_email_content("receipt", app_obj)
-        send_email(recipient, subject, body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf], application_id=app_obj.id)
+        upload_link = current_app.config['BASE_URL'].rstrip('/') + url_for('signing.supporting_documents', token=token)
+        body += ("\n\nPlease use this secure link to upload the South African ID documents for every member on the policy "
+                 "and the proof of address:\n\n" + upload_link +
+                 "\n\nYou will need the principal member ID number to unlock the secure upload page.")
+        send_email(recipient, subject, body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf],
+                   html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
+                   application_id=app_obj.id)
     office_email = os.getenv("MAIL_DOCUMENTS_TO")
     from email.utils import parseaddr
     if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
@@ -647,7 +717,7 @@ def finish_application(app_obj, token):
         from app.services.email_service import signing_email_html
         office_body = "The client has submitted the signed application."
         if outstanding:
-            office_body += "\n\nThe following supporting documents will be emailed separately: " + ", ".join(FICA_LABELS.get(t, t) for t in outstanding) + "."
+            office_body += "\n\nThe following supporting documents will be uploaded through the client's secure follow-up link: " + ", ".join(fica_label(app_obj, t) for t in outstanding) + "."
         else:
             office_body += " Supporting documents were uploaded with the application."
         office_body += "\n\nOpen the client file (staff login required):\n\n" + app_link

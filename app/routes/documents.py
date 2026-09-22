@@ -8,7 +8,8 @@ from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from app import db
 from app.models import ClientApplication, ClientFicaDocument, AuditLog
-from app.services.document_status_service import document_summary, FICA_LABELS, STAFF_UPLOAD_LABELS
+from app.services.document_status_service import (document_summary, FICA_LABELS, STAFF_UPLOAD_LABELS,
+                                                   required_fica_documents, fica_label)
 from app.services.fica_validation_service import validate_fica_upload
 from app.services.email_service import send_email
 from app.services.whatsapp_service import send_whatsapp_message
@@ -33,11 +34,12 @@ def _client_name(app):
 
 def _ensure_active_signing_link(app):
     """Create or reopen a secure signing link so the client can re-upload rejected FICA."""
-    if not app.sign_token or app.sign_token_revoked or app.sign_token_used_at:
+    if not app.sign_token:
         app.sign_token = secrets.token_urlsafe(32)
     app.sign_token_created_at = datetime.utcnow()
-    app.sign_token_used_at = None
-    app.sign_token_revoked = False
+    if not app.signed_at:
+        app.sign_token_used_at = None
+        app.sign_token_revoked = False
     return app.sign_token
 
 
@@ -49,7 +51,8 @@ def _send_rejected_document_email(app, rejected_labels, reason=None):
     if not screened:return False, "; ".join(errors)
     token = _ensure_active_signing_link(app)
     base_url = current_app.config.get("BASE_URL") or request.url_root.rstrip("/")
-    link = f"{base_url}{url_for('signing.sign_application', token=token)}"
+    endpoint = 'signing.supporting_documents' if app.signed_at else 'signing.sign_application'
+    link = f"{base_url}{url_for(endpoint, token=token)}"
     doc_lines = "\n".join(f"- {label}" for label in rejected_labels)
     reason_text = f"\n\nReason: {reason}" if reason else ""
     body = (
@@ -129,10 +132,12 @@ def application_documents(app_id):
         return redirect(url_for("main.dashboard"))
     app = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(app, agent_attr="agent_id")
+    upload_labels = {**STAFF_UPLOAD_LABELS,
+                     **{row["key"]: row["label"] for row in required_fica_documents(app)}}
     if request.method == "POST":
         doc_type = request.form.get("document_type")
         uploaded_file = request.files.get("file")
-        if doc_type not in STAFF_UPLOAD_LABELS:
+        if doc_type not in upload_labels:
             flash("Invalid document type.", "danger")
             return redirect(url_for("documents.application_documents", app_id=app.id))
         if not uploaded_file or not uploaded_file.filename:
@@ -153,19 +158,20 @@ def application_documents(app_id):
         path = os.path.join(folder, f"{doc_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}_{safe}")
         uploaded_file.save(path)
         store_document(app, path)
+        fica_types = set(FICA_LABELS) | {row["key"] for row in required_fica_documents(app)}
         validation_status, validation_notes = (validate_fica_upload(path, safe, doc_type, app)
-            if doc_type in FICA_LABELS else ("Needs Review", "Staff must verify the complete document and all required signatures."))
+            if doc_type in fica_types else ("Needs Review", "Staff must verify the complete document and all required signatures."))
         for previous in ClientFicaDocument.query.filter_by(application_id=app.id, document_type=doc_type).all():
             previous.status = "Replaced"
         doc = ClientFicaDocument(application_id=app.id, document_type=doc_type, original_filename=safe, file_path=path, status=validation_status, uploaded_ip=request.remote_addr, user_agent=request.headers.get("User-Agent"))
         db.session.add(doc)
         if app.status not in {'Active', 'QA Approved', 'Compliance Approved', 'QA Rejected', 'Compliance Rejected', 'Signed'}:
             app.status = 'FICA Review'
-        db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{FICA_LABELS.get(doc_type, doc_type)} uploaded by staff: {safe}; Status: {validation_status}; {validation_notes}"))
+        db.session.add(AuditLog(user_id=current_user.id, action="FICA Uploaded", entity_type="ClientApplication", entity_id=str(app.id), details=f"{upload_labels.get(doc_type, doc_type)} uploaded by staff: {safe}; Status: {validation_status}; {validation_notes}"))
         db.session.commit()
         flash(f"Document uploaded. Status: {validation_status}. {validation_notes}", "warning" if validation_status == "Needs Review" else "danger")
         return redirect(url_for("documents.application_documents", app_id=app.id))
-    return render_template("documents/application.html", app=app, summary=document_summary(app), fica_labels=STAFF_UPLOAD_LABELS, upload_audit=AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(app.id)).filter(AuditLog.action.in_(["FICA Uploaded", "Duplicate upload rejected"])).order_by(AuditLog.id.desc()).limit(100).all())
+    return render_template("documents/application.html", app=app, summary=document_summary(app), fica_labels=upload_labels, upload_audit=AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(app.id)).filter(AuditLog.action.in_(["FICA Uploaded", "Duplicate upload rejected"])).order_by(AuditLog.id.desc()).limit(100).all())
 
 
 @documents_bp.route("/fica/<int:doc_id>/download")
@@ -193,7 +199,7 @@ def review_fica(doc_id, action):
         abort(404)
     old_status = doc.status
     reason = request.form.get("reason", "").strip()
-    label = FICA_LABELS.get(doc.document_type, doc.document_type)
+    label = fica_label(doc.application, doc.document_type)
 
     if action == "approve":
         doc.status = "Reviewed"
@@ -257,14 +263,11 @@ def resend_missing(app_id, channel):
     if not screened:
         flash("; ".join(errors),"danger")
         return redirect(url_for("documents.application_documents",app_id=app.id))
-    if not app.sign_token or app.sign_token_revoked or app.sign_token_used_at:
-        app.sign_token = secrets.token_urlsafe(32)
-        app.sign_token_created_at = datetime.utcnow()
-        app.sign_token_used_at = None
-        app.sign_token_revoked = False
+    _ensure_active_signing_link(app)
 
     base_url = current_app.config.get("BASE_URL") or request.url_root.rstrip("/")
-    link = f"{base_url}{url_for('signing.sign_application', token=app.sign_token)}"
+    endpoint = 'signing.supporting_documents' if app.signed_at else 'signing.sign_application'
+    link = f"{base_url}{url_for(endpoint, token=app.sign_token)}"
     body = (
         f"Dear {_client_name(app)},\n\n"
         "Martin's Funerals still needs the following documents/signatures to complete your application:\n"
