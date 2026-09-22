@@ -73,6 +73,9 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertIn(b'Street code',page.data)
         self.assertIn(b'Waiting period',page.data)
         self.assertIn(b'id="child_1_cover"',page.data)
+        self.assertIn(b'id="child_1_date_of_birth"',page.data)
+        self.assertIn(b'id="child_1_age"',page.data)
+        self.assertIn(b'Cover for this age',page.data)
         data=self.save(client,nonce)
         data.update(spouse_1_full_name='Example Spouse',spouse_1_relationship='Spouse',spouse_1_id_or_dob='1985-01-01',
           child_1_full_name='Example Child',child_1_relationship='Child',child_1_id_or_dob='2018-01-01',
@@ -87,6 +90,29 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(extended['cover'],'30000.00')
         self.assertEqual({row['kind'] for row in all_members},{'spouse','child','extended'})
         self.assertEqual(next(row for row in all_members if row['kind']=='spouse')['cover'],'50000.00')
+        review=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'People covered by this application',review.data)
+        self.assertIn(b'Example Child',review.data)
+        self.assertIn(b'R25,000.00',review.data)
+
+    def test_debit_order_with_different_account_holder_is_sent_for_client_authority(self):
+        client,nonce=self.prepare()
+        data=self.save(client,nonce)
+        data.update(payment_method='Debit Order',bank_name='FNB',branch_code='250655',
+          account_number='1234567890',account_type='Cheque',account_holder='Different Account Holder',
+          debit_day='25',first_deduction_date='2026-10-25')
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+        review=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'Debit order included',review.data)
+        self.assertIn(b'name="consent_debit"',review.data)
+        self.assertIn(b'application and terms and conditions',review.data.lower())
+        from PIL import Image
+        out=io.BytesIO();Image.new('RGB',(80,30),'black').save(out,format='PNG')
+        response=client.post('/online-application/fictional-online-test',data={
+          'nonce':nonce,'action':'sign','consent_bundle':'yes',
+          'signature_data':'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()})
+        self.assertIn(b'Confirm the debit-order authority',response.data)
 
     def test_staff_new_policy_form_has_street_code_and_member_benefit_fields(self):
         page=self.client.get('/applications/new')

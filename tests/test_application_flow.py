@@ -618,6 +618,23 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertTrue(any(f['page']==2 for f in target['fields']))
             self.assertEqual(len(pdf.pages), 3)
 
+    def test_gold_family_application_includes_terms_and_signature_record(self):
+        import json
+        from pypdf import PdfReader
+        from app.services.pdf_service import generate_application_pdf
+        self.record.form_template = 'gold_family_fillable'
+        self.record.payment_method = 'Debit Order'
+        self.record.account_number = 'TEST-ONLY'
+        dest = str(Path(application_folder(self.record)) / 'gold-family.pdf')
+        generate_application_pdf(self.record, dest)
+        pdf = PdfReader(dest)
+        text = ' '.join((page.extract_text() or '') for page in pdf.pages)
+        self.assertGreaterEqual(len(pdf.pages), 4)
+        self.assertIn('RULES, TERMS AND CONDITIONS', text.upper())
+        fields = json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))['fields']
+        self.assertIn('application:terms', [field['key'] for field in fields])
+        self.assertIn('application:account', [field['key'] for field in fields])
+
     def test_email_failure_is_not_reported_as_sent(self):
         with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False), patch('app.services.whatsapp_service.send_application_link') as wa:
             wa.return_value.ok=False
