@@ -1,3 +1,5 @@
+import json
+
 from app.models import ClientFicaDocument, DocumentSignature
 
 SIGNATURE_DOCUMENTS = [
@@ -33,10 +35,54 @@ def is_debit_order(application):
 
 
 def required_fica_types(application):
-    required = ["id_copy" if client_is_sa(application) else "passport", "proof_of_address"]
+    return [row["key"] for row in required_fica_documents(application)]
+
+
+def _json_members(raw):
+    try:
+        rows = json.loads(raw or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def required_fica_documents(application):
+    """Return one identity requirement for every person actually on the policy."""
+    rows = [{
+        "key": "id_copy" if client_is_sa(application) else "passport",
+        "label": "Principal Member South African ID Copy" if client_is_sa(application) else "Principal Member Passport Copy",
+    }]
     if not client_is_sa(application):
-        required.append("permit_visa")
-    return required
+        rows.append({"key": "permit_visa", "label": "Principal Member Permit / Visa"})
+
+    if any((getattr(application, "spouse_first_names", None), getattr(application, "spouse_surname", None),
+            getattr(application, "spouse_id_number", None), getattr(application, "spouse_date_of_birth", None))):
+        rows.append({"key": "spouse_id_copy", "label": "Spouse ID Copy"})
+
+    rules = getattr(getattr(application, "product", None), "rules", None)
+    plan_type = str(getattr(rules, "plan_type", None) or getattr(application, "form_template", None) or "family").lower()
+    if plan_type == "member_product":
+        member_groups = [("member", "Additional Member", _json_members(getattr(application, "product_dependents_json", None)))]
+    else:
+        member_groups = [
+            ("child", "Child", _json_members(getattr(application, "dependents_json", None))),
+            ("extended", "Extended Member", _json_members(getattr(application, "extended_family_json", None))),
+        ]
+    for prefix, label, members in member_groups:
+        for index, member in enumerate(members, 1):
+            if not isinstance(member, dict) or not any(member.get(k) for k in ("full_name", "id_or_dob", "relationship")):
+                continue
+            name = str(member.get("full_name") or "").strip()
+            suffix = f" - {name}" if name else ""
+            rows.append({"key": f"{prefix}_{index}_id_copy", "label": f"{label} {index} ID Copy{suffix}"})
+
+    rows.append({"key": "proof_of_address", "label": "Proof of Address"})
+    return rows
+
+
+def fica_label(application, key):
+    return next((row["label"] for row in required_fica_documents(application) if row["key"] == key),
+                FICA_LABELS.get(key, key.replace("_", " ").title()))
 
 
 def document_summary(application):
@@ -71,7 +117,9 @@ def document_summary(application):
     for doc in fica_docs:
         by_type.setdefault(doc.document_type, []).append(doc)
 
-    for key in required_fica_types(application):
+    requirements = required_fica_documents(application)
+    for requirement in requirements:
+        key, label = requirement["key"], requirement["label"]
         docs = by_type.get(key, [])
         latest = docs[0] if docs else None
         if not latest:
@@ -85,7 +133,7 @@ def document_summary(application):
         rows.append({
             "group": "FICA",
             "key": key,
-            "label": FICA_LABELS.get(key, key.replace("_", " ").title()),
+            "label": label,
             "required": True,
             "status": status,
             "badge": badge,
@@ -94,15 +142,32 @@ def document_summary(application):
             "all_documents": docs,
         })
 
+        # The staff FIC screening belongs with the principal identity check in
+        # document tracking instead of being a detached application note.
+        if key in {"id_copy", "passport"}:
+            from app.services.screening_service import latest as latest_screening
+            screening = latest_screening(application)
+            screening_ok = bool(screening and screening.status in {"Employee checked", "Reviewed"})
+            rows.append({
+                "group": "Employee FIC",
+                "key": "employee_fic",
+                "label": "Employee FIC check screenshot",
+                "required": True,
+                "status": screening.status if screening else "Screenshot required",
+                "badge": "success" if screening_ok else ("warning" if screening else "danger"),
+                "screening": screening,
+                "document": None,
+            })
+
     # Show extra uploaded FICA documents that are not currently required, so nothing is hidden.
     for key, docs in by_type.items():
-        if key in required_fica_types(application) or key in dict(SIGNATURE_DOCUMENTS):
+        if key in {row["key"] for row in requirements} or key in dict(SIGNATURE_DOCUMENTS):
             continue
         latest = docs[0]
         rows.append({
             "group": "FICA",
             "key": key,
-            "label": FICA_LABELS.get(key, key.replace("_", " ").title()) + " (extra)",
+            "label": fica_label(application, key) + " (extra)",
             "required": False,
             "status": latest.status or "Received",
             "badge": "secondary",
@@ -111,7 +176,7 @@ def document_summary(application):
             "all_documents": docs,
         })
 
-    missing = [row for row in rows if row["required"] and row["status"] in {"Missing", "Rejected"}]
+    missing = [row for row in rows if row["required"] and row["status"] in {"Missing", "Rejected", "Screenshot required"}]
     pending_review = [row for row in rows if row["status"] == "Needs Review"]
     complete = not missing and not pending_review
     return {

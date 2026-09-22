@@ -76,12 +76,12 @@ def send_email(to_email, subject, body, attachments=None, html_body=None, applic
         return outcome(False)
 
 
-def signing_email_html(app_obj, link, body):
+def signing_email_html(app_obj, link, body, link_label=None):
     """Keep the opaque secure URL behind an escaped, descriptive email link."""
     from html import escape
     name = " ".join(str(value or "").strip() for value in
                     (app_obj.first_names, app_obj.surname)).strip()
-    label = (name + " - Online Application") if name else "Online Application"
+    label = link_label or ((name + " - Online Application") if name else "Online Application")
     paragraphs = []
     for paragraph in body.split("\n\n"):
         if paragraph.strip() == link:
