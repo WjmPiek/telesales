@@ -6,7 +6,8 @@ from datetime import date
 from unittest.mock import patch
 import test_application_flow as fixtures
 from app import db
-from app.models import CommunicationCampaign, ApplicationJourney, ClientFicaDocument, DocumentSignature, PolicyProductRule
+from app.models import (CommunicationCampaign, CommunicationEvent, ApplicationJourney, ClientApplication,
+                        ClientFicaDocument, DocumentSignature, PolicyProductRule)
 from app.services.client_storage import application_folder, store_document
 from app.services.cdd_service import FIELDS as CDD_FIELDS
 from app.services.signature_fields import application_fields
@@ -279,6 +280,56 @@ class OnlineApplicationTests(unittest.TestCase):
             wa.return_value.ok=True
             self.client.post(f'/applications/{self.record_id}/send-sign-link')
             wa.assert_called_once();email.assert_not_called()
+
+    def test_product_campaign_generates_qr_and_starts_direct_application(self):
+        campaign=CommunicationCampaign(name='Gold flyer',message_body='Apply now',created_by_id=self.user_id,
+          product_id=self.record.product_id,public_application_token='public-product-campaign')
+        db.session.add(campaign);db.session.commit()
+        public=self.app.test_client()
+        page=public.get('/join/campaign/public-product-campaign')
+        self.assertEqual(page.status_code,200)
+        self.assertIn(b'The policy is already selected from the flyer',page.data)
+        self.assertIn(b'Test Family',page.data)
+        self.assertEqual(campaign.qr_scan_count,1)
+        self.assertEqual(CommunicationEvent.query.filter_by(campaign_id=campaign.id,event_type='qr_scan').count(),1)
+        public.get('/join/campaign/public-product-campaign')
+        self.assertEqual(campaign.qr_scan_count,1)
+        response=public.post('/join/campaign/public-product-campaign',data={
+          'first_names':'QR','surname':'Applicant','id_number':'8001015009087','cell_number':'0821234567',
+          'email':'qr@example.test','total_members':'3'})
+        self.assertEqual(response.status_code,302,response.data[:400])
+        self.assertIn('/online-application/',response.location)
+        application=ClientApplication.query.filter_by(application_type='New Policy - QR Campaign').one()
+        self.assertEqual(application.product_id,self.record.product_id)
+        self.assertEqual(application.total_members,3)
+        self.assertEqual(application.whatsapp_journey.campaign_id,campaign.id)
+        self.assertEqual(application.cell_number,'+27821234567')
+        self.assertEqual(CommunicationEvent.query.filter_by(campaign_id=campaign.id,event_type='application_started').count(),1)
+        follow=public.get(response.location)
+        self.assertEqual(follow.status_code,200)
+        self.assertIn(b'Your selected requirements',follow.data)
+        qr=self.client.get(f'/communications/{campaign.id}/application-qr.png?download=1')
+        self.assertEqual(qr.status_code,200)
+        self.assertEqual(qr.mimetype,'image/png')
+        self.assertGreater(len(qr.data),100)
+
+    def test_recipient_campaign_with_product_skips_product_selection(self):
+        from app.models import CampaignRecipient, LapsedPolicy
+        lead=LapsedPolicy(member_id='QR-RECIPIENT',initials='Test',surname='Recipient',
+          id_number='8001015009087',cell_number='0821234567',branch='A',assigned_agent_id=self.user_id)
+        campaign=CommunicationCampaign(name='Specific policy',message_body='Apply',created_by_id=self.user_id,
+          product_id=self.record.product_id,public_application_token='specific-policy')
+        db.session.add_all([lead,campaign]);db.session.flush()
+        recipient=CampaignRecipient(campaign_id=campaign.id,lapsed_policy_id=lead.id,secure_token='specific-recipient')
+        db.session.add(recipient);db.session.commit()
+        public=self.app.test_client()
+        page=public.get('/join/specific-recipient')
+        self.assertIn(b'Apply for Test Family',page.data)
+        self.assertNotIn(b'Choose cover',page.data)
+        response=public.post('/join/specific-recipient',data={
+          'id_number':'8001015009087','total_members':'2','cover_amount':'10000'})
+        self.assertEqual(response.status_code,302)
+        self.assertIn(f'/join/specific-recipient/application/{self.record.product_id}',response.location)
 
     def test_named_button_has_no_raw_url_in_body(self):
         import os
