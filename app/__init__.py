@@ -191,6 +191,14 @@ def _ensure_policy_product_rule_columns(app):
                 "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS child_slots INTEGER DEFAULT 6",
                 "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extended_slots INTEGER DEFAULT 6",
                 "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extra_member_slots INTEGER DEFAULT 13",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS spouse_min_age INTEGER",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS spouse_max_age INTEGER",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS child_min_age INTEGER DEFAULT 0",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS child_max_age INTEGER DEFAULT 21",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extended_min_age INTEGER DEFAULT 0",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extended_max_age INTEGER DEFAULT 100",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extra_member_min_age INTEGER DEFAULT 0",
+                "ALTER TABLE policy_product_rules ADD COLUMN IF NOT EXISTS extra_member_max_age INTEGER DEFAULT 70",
                 "UPDATE policy_product_rules r SET plan_type = 'member_product' FROM policy_products p WHERE r.product_id = p.id AND (r.plan_type IS NULL OR TRIM(r.plan_type) = '') AND (LOWER(p.product_name) LIKE '%member +%' OR LOWER(p.product_name) LIKE '%member+%' OR LOWER(p.plan_name) LIKE '%member +%' OR LOWER(p.plan_name) LIKE '%member+%')",
                 "UPDATE policy_product_rules SET plan_type = 'family' WHERE plan_type IS NULL OR TRIM(plan_type) = ''",
                 "ALTER TABLE policy_product_rules ALTER COLUMN plan_type SET DEFAULT 'family'",
@@ -198,12 +206,40 @@ def _ensure_policy_product_rule_columns(app):
                 "UPDATE policy_product_rules SET child_slots = 6 WHERE child_slots IS NULL",
                 "UPDATE policy_product_rules SET extended_slots = 6 WHERE extended_slots IS NULL",
                 "UPDATE policy_product_rules SET extra_member_slots = 13 WHERE extra_member_slots IS NULL",
+                "UPDATE policy_product_rules r SET spouse_min_age = COALESCE(p.min_age, 18), spouse_max_age = COALESCE(p.max_age, 70) FROM policy_products p WHERE r.product_id = p.id AND (r.spouse_min_age IS NULL OR r.spouse_max_age IS NULL)",
+                "ALTER TABLE policy_product_rules ALTER COLUMN spouse_min_age SET DEFAULT 18",
+                "ALTER TABLE policy_product_rules ALTER COLUMN spouse_max_age SET DEFAULT 70",
+                "UPDATE policy_product_rules SET child_min_age = 0 WHERE child_min_age IS NULL",
+                "UPDATE policy_product_rules SET child_max_age = 21 WHERE child_max_age IS NULL",
+                "UPDATE policy_product_rules SET extended_min_age = 0 WHERE extended_min_age IS NULL",
+                "UPDATE policy_product_rules SET extended_max_age = 100 WHERE extended_max_age IS NULL",
+                "UPDATE policy_product_rules SET extra_member_min_age = 0 WHERE extra_member_min_age IS NULL",
+                "UPDATE policy_product_rules SET extra_member_max_age = 70 WHERE extra_member_max_age IS NULL",
             ]
             with db.engine.begin() as conn:
                 for stmt in statements:
                     conn.execute(text(stmt))
         except Exception:
             app.logger.exception("Could not ensure policy product member configuration columns")
+
+
+def _ensure_bank_confirmation_letters_table(app):
+    """Preserve versioned bank letters in PostgreSQL instead of Render's ephemeral disk."""
+    from sqlalchemy import text
+    with app.app_context():
+        try:
+            if not str(db.engine.url).startswith("postgresql"):
+                return
+            statements = [
+                "CREATE TABLE IF NOT EXISTS bank_confirmation_letters (id SERIAL PRIMARY KEY, original_filename VARCHAR(255) NOT NULL, file_data BYTEA NOT NULL, file_size INTEGER NOT NULL DEFAULT 0, checksum_sha256 VARCHAR(64) NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE, uploaded_at TIMESTAMP NOT NULL DEFAULT NOW(), uploaded_by_id INTEGER NOT NULL REFERENCES users(id))",
+                "CREATE INDEX IF NOT EXISTS ix_bank_confirmation_letters_checksum_sha256 ON bank_confirmation_letters (checksum_sha256)",
+                "CREATE INDEX IF NOT EXISTS ix_bank_confirmation_letters_active ON bank_confirmation_letters (active)",
+            ]
+            with db.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+        except Exception:
+            app.logger.exception("Could not ensure bank confirmation letter storage")
 
 
 def create_app():
@@ -271,6 +307,7 @@ def create_app():
                 pass
             try:
                 _ensure_policy_product_rule_columns(app)
+                _ensure_bank_confirmation_letters_table(app)
             except Exception:
                 pass
             try:
@@ -306,6 +343,11 @@ def create_app():
         pass
     try:
         _ensure_join_now_columns(app)
+    except Exception:
+        pass
+    try:
+        _ensure_policy_product_rule_columns(app)
+        _ensure_bank_confirmation_letters_table(app)
     except Exception:
         pass
     try:

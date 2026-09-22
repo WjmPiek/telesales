@@ -205,6 +205,14 @@ class PolicyProductRule(db.Model):
     child_slots = db.Column(db.Integer, default=6)
     extended_slots = db.Column(db.Integer, default=6)
     extra_member_slots = db.Column(db.Integer, default=13)
+    spouse_min_age = db.Column(db.Integer, default=18)
+    spouse_max_age = db.Column(db.Integer, default=70)
+    child_min_age = db.Column(db.Integer, default=0)
+    child_max_age = db.Column(db.Integer, default=21)
+    extended_min_age = db.Column(db.Integer, default=0)
+    extended_max_age = db.Column(db.Integer, default=100)
+    extra_member_min_age = db.Column(db.Integer, default=0)
+    extra_member_max_age = db.Column(db.Integer, default=70)
     imported_at = db.Column(db.DateTime, default=datetime.utcnow)
     product = db.relationship("PolicyProduct", backref=db.backref("rules", uselist=False))
 
@@ -608,6 +616,19 @@ class SystemSetting(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = db.relationship("User")
     __table_args__ = (db.UniqueConstraint('category', 'key', name='uq_system_setting_category_key'),)
+
+
+class BankConfirmationLetter(db.Model):
+    __tablename__ = "bank_confirmation_letters"
+    id = db.Column(db.Integer, primary_key=True)
+    original_filename = db.Column(db.String(255), nullable=False)
+    file_data = db.Column(db.LargeBinary, nullable=False)
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    checksum_sha256 = db.Column(db.String(64), nullable=False, index=True)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    uploaded_by = db.relationship("User")
 
 class LoginAttempt(db.Model):
     __tablename__ = "login_attempts"
