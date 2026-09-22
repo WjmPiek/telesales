@@ -4,6 +4,7 @@ import io
 import secrets
 import os
 import json
+import qrcode
 from werkzeug.utils import secure_filename
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify, Response, send_file, session
 from flask_login import login_required, current_user
@@ -13,7 +14,8 @@ from app.models import (
     CommunicationCampaign, CampaignRecipient, LapsedPolicy, AgentNotification,
     ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication,
     WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage,
-    WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent, WhatsAppConversation, WhatsAppContact
+    WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent, WhatsAppConversation, WhatsAppContact,
+    PolicyProduct, ApplicationJourney
 )
 from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
@@ -369,6 +371,7 @@ def sync_all_templates():
 @login_required
 def create_campaign():
     if not _is_manager(): abort(403)
+    products = PolicyProduct.query.filter_by(active=True).order_by(PolicyProduct.product_name, PolicyProduct.plan_name).all()
     selected_template = None
     template_id = request.args.get("template_id", type=int) or request.form.get("template_id", type=int)
     if template_id:
@@ -385,15 +388,15 @@ def create_campaign():
             ext = os.path.splitext(image.filename)[1].lower()
             if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
                 flash("Campaign image must be JPG, PNG or WEBP.", "danger")
-                return render_template("communications/create.html")
+                return render_template("communications/create.html", selected_template=selected_template, products=products)
             image_filename = secure_filename(f"campaign_{datetime.utcnow():%Y%m%d%H%M%S}_{secrets.token_hex(5)}{ext}")
             image_data = image.read()
             if not image_data:
                 flash("The uploaded campaign image was empty.", "danger")
-                return render_template("communications/create.html")
+                return render_template("communications/create.html", selected_template=selected_template, products=products)
             if len(image_data) > 12 * 1024 * 1024:
                 flash("Campaign image is too large. Maximum size is 12 MB.", "danger")
-                return render_template("communications/create.html")
+                return render_template("communications/create.html", selected_template=selected_template, products=products)
             image_mimetype = image.mimetype or {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".webp":"image/webp"}.get(ext, "application/octet-stream")
 
         campaign_name = (request.form.get("name") or "").strip()
@@ -448,12 +451,16 @@ def create_campaign():
             send_email=False,
             branch=(request.form.get("branch") or current_user.branch or "").strip() or None,
             created_by_id=current_user.id,
+            product_id=request.form.get("product_id", type=int),
+            public_application_token=secrets.token_urlsafe(32),
         )
+        if campaign.product_id and not db.session.get(PolicyProduct, campaign.product_id):
+            abort(400)
         if campaign.audience_type not in {"individual", "group"}:
             campaign.audience_type = "group"
         if not campaign.name or not campaign.message_body:
             flash("Campaign name and message are required.", "danger")
-            return render_template("communications/create.html")
+            return render_template("communications/create.html", selected_template=selected_template, products=products)
         # During creation image_url is assigned only after the campaign has an ID.
         # Validate the uploaded binary here, not image_url, otherwise every new
         # WhatsApp image campaign is rejected before it can be saved.
@@ -464,10 +471,10 @@ def create_campaign():
             if not campaign.whatsapp_template_name:
                 missing.append("campaign name so a template name can be generated")
             flash("Please provide the " + " and ".join(missing) + " for this WhatsApp image campaign.", "danger")
-            return render_template("communications/create.html")
+            return render_template("communications/create.html", selected_template=selected_template, products=products)
         if not campaign.send_whatsapp and not campaign.send_email:
             flash("Select at least one delivery channel.", "danger")
-            return render_template("communications/create.html")
+            return render_template("communications/create.html", selected_template=selected_template, products=products)
         db.session.add(campaign)
         db.session.commit()
         if campaign.image_data:
@@ -497,13 +504,13 @@ def create_campaign():
                 db.session.delete(campaign)
                 db.session.commit()
                 flash(phone_error, "danger")
-                return render_template("communications/create.html")
+                return render_template("communications/create.html", selected_template=selected_template, products=products)
             if is_suppressed(policy) or preference_for(policy).opted_out_all:
                 db.session.rollback()
                 db.session.delete(campaign)
                 db.session.commit()
                 flash("This number is opted out or suppressed and cannot receive marketing messages.", "danger")
-                return render_template("communications/create.html")
+                return render_template("communications/create.html", selected_template=selected_template, products=products)
             individual_recipient = CampaignRecipient(
                 campaign_id=campaign.id,
                 lapsed_policy_id=policy.id,
@@ -534,7 +541,7 @@ def create_campaign():
         else:
             flash("Campaign created. Add recipients and send it from the campaign page.", "success")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
-    return render_template("communications/create.html", selected_template=selected_template)
+    return render_template("communications/create.html", selected_template=selected_template, products=products)
 
 
 @communications_bp.route("/<int:campaign_id>")
@@ -563,7 +570,26 @@ def view_campaign(campaign_id):
         "opt_outs": sum(1 for r in recipients if r.response_type == "opt_out"),
     }
     branches = [row[0] for row in db.session.query(LapsedPolicy.branch).filter(LapsedPolicy.branch.isnot(None), LapsedPolicy.branch != "").distinct().order_by(LapsedPolicy.branch).all()]
-    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches)
+    public_application_link = (url_for("join.campaign_application", token=campaign.public_application_token, _external=True)
+                               if campaign.product_id and campaign.public_application_token else None)
+    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches,
+                           public_application_link=public_application_link)
+
+
+@communications_bp.route("/<int:campaign_id>/application-qr.png")
+@login_required
+def campaign_application_qr(campaign_id):
+    if not _is_manager(): abort(403)
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not campaign.product_id or not campaign.public_application_token:
+        abort(404)
+    link = url_for("join.campaign_application", token=campaign.public_application_token, _external=True)
+    image = qrcode.make(link)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    output.seek(0)
+    filename = secure_filename(f"{campaign.name}-application-qr.png") or f"campaign-{campaign.id}-application-qr.png"
+    return send_file(output, mimetype="image/png", download_name=filename, as_attachment=request.args.get("download") == "1")
 
 
 
@@ -636,6 +662,7 @@ def duplicate_campaign(campaign_id):
         image_filename=source.image_filename, image_url=source.image_url, image_data=source.image_data, image_mimetype=source.image_mimetype, audience_type=source.audience_type or "group",
         template_status="Pending", template_approved_at=None, template_approved_by_id=None,
         send_whatsapp=True, send_email=False, branch=source.branch,
+        product_id=source.product_id, public_application_token=secrets.token_urlsafe(32),
         created_by_id=current_user.id, status="Draft")
     db.session.add(clone); db.session.flush()
     if request.form.get("copy_recipients"):
@@ -966,8 +993,8 @@ def campaign_report(campaign_id):
     if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
     recipients = campaign.recipients
-    application_lead_ids = [r.lapsed_policy_id for r in recipients]
-    applications = ClientApplication.query.filter(ClientApplication.lapsed_policy_id.in_(application_lead_ids)).all() if application_lead_ids else []
+    applications = (ClientApplication.query.join(ApplicationJourney)
+                    .filter(ApplicationJourney.campaign_id == campaign.id).all())
     metrics = {
         "recipients": len(recipients),
         "wa_sent": sum(r.whatsapp_status in {"Sent", "Delivered", "Read"} for r in recipients),
@@ -976,9 +1003,11 @@ def campaign_report(campaign_id):
         "not_interested": sum(r.response_type == "not_interested" for r in recipients),
         "opt_outs": sum(r.response_type == "opt_out" for r in recipients),
         "applications": len(applications),
+        "qr_scans": campaign.qr_scan_count or 0,
     }
     metrics["callback_rate"] = round((metrics["callbacks"] / metrics["recipients"] * 100), 1) if metrics["recipients"] else 0
-    metrics["application_rate"] = round((metrics["applications"] / metrics["recipients"] * 100), 1) if metrics["recipients"] else 0
+    application_opportunities = metrics["qr_scans"] or metrics["recipients"]
+    metrics["application_rate"] = round((metrics["applications"] / application_opportunities * 100), 1) if application_opportunities else 0
     events = CommunicationEvent.query.filter_by(campaign_id=campaign.id).order_by(CommunicationEvent.created_at.desc()).limit(300).all()
     return render_template("communications/report.html", campaign=campaign, metrics=metrics, events=events)
 
