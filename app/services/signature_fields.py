@@ -13,7 +13,13 @@ def application_template(a):
 
 def application_fields(a):
     if application_template(a) == 'gold_family_fillable':
-        return [dict(key='application:principal', label='Policyholder / principal member signature', page=2, rect=[155, 73, 315, 97])]
+        fields = [
+            dict(key='application:principal', label='Policyholder / principal member signature', page=2, rect=[155, 73, 315, 97]),
+            dict(key='application:terms', label='Policy terms and conditions signature', page=4, rect=[145, 410, 365, 485]),
+        ]
+        if 'debit' in (a.payment_method or '').lower() or any((a.account_number, a.account_holder, a.bank_name)):
+            fields.append(dict(key='application:account', label='Debit-order account holder signature', page=2, rect=[155, 28, 315, 52]))
+        return fields
     member = application_template(a) == 'member_product'
     def box(key, label, page, left, top, right, bottom):
         return dict(key='application:'+key,label=label,page=page,rect=[left,A4[1]-bottom,right,A4[1]-top])

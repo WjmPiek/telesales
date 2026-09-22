@@ -416,9 +416,37 @@ def _generate_gold_family_fillable(app_obj, out_path, sig_path):
         overlay_data = io.BytesIO()
         overlay = canvas.Canvas(overlay_data, pagesize=A4)
         _draw_signature(overlay, sig_path, 155, 73, 160, 24)
+        if "debit" in payment:
+            _draw_signature(overlay, sig_path, 155, 28, 160, 24)
         overlay.save()
         overlay_data.seek(0)
         writer.pages[1].merge_page(PdfReader(overlay_data).pages[0])
+        # Blank signature widgets otherwise paint over the merged handwritten
+        # signature in several mobile PDF viewers. Remove only those widgets;
+        # all data-entry fields stay interactive in the review copy.
+        from pypdf.generic import ArrayObject, NameObject
+        kept = ArrayObject()
+        for reference in writer.pages[1].get('/Annots', []):
+            annotation = reference.get_object()
+            parent = annotation.get('/Parent')
+            parent = parent.get_object() if parent else None
+            field_name = str(annotation.get('/T') or (parent.get('/T') if parent else '') or '')
+            if field_name in {'policyholder_signature', 'account_signature'}:
+                continue
+            kept.append(reference)
+        writer.pages[1][NameObject('/Annots')] = kept
+    # The supplied Gold form contains the declaration, while the official policy
+    # terms live in the standard terms template. Keep them in one reviewable PDF
+    # and add a visible client signature record for the terms.
+    _append_policy_terms(writer, "single_family")
+    if sig_path and os.path.exists(sig_path) and len(writer.pages) > 2:
+        terms_overlay_data = io.BytesIO()
+        terms_overlay = canvas.Canvas(terms_overlay_data, pagesize=A4)
+        _draw_signature(terms_overlay, sig_path, 105, 18, 160, 24)
+        terms_overlay.save()
+        terms_overlay_data.seek(0)
+        writer.pages[2].merge_page(PdfReader(terms_overlay_data).pages[0])
+    _add_terms_page(writer, app_obj, sig_path)
     from app.services.signature_fields import application_fields
     writer.add_metadata({"/Subject": "martins-signature:" + json.dumps({"fields": application_fields(app_obj)})})
     with open(out_path, "wb") as stream:

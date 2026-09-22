@@ -1,7 +1,7 @@
 """Resolve per-member cover and waiting periods from the selected product."""
 from decimal import Decimal
 
-from app.services.compliance_service import age_from_dob, dob_from_sa_id
+from app.services.compliance_service import age_from_dob, dob_from_sa_id, format_dob
 
 
 def member_limits(product):
@@ -63,7 +63,13 @@ def member_benefit(product, kind, id_or_dob=''):
             cover = _positive(getattr(rules, 'family_6_13', 0), base_cover)
         else:
             cover = _positive(getattr(rules, 'family_14_21', 0), base_cover)
-    return {'cover': format(cover, '.2f'), 'waiting_period': waiting}
+    dob = format_dob(dob_from_sa_id(id_or_dob) or id_or_dob)
+    return {
+        'cover': format(cover, '.2f'),
+        'waiting_period': waiting,
+        'date_of_birth': dob,
+        'age': age,
+    }
 
 
 def enrich_rows(product, kind, rows):

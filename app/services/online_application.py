@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 from app.services.cdd_service import FIELDS as CDD_FIELDS, save_answers
-from app.services.compliance_service import assert_application_rules, dob_from_sa_id
+from app.services.compliance_service import assert_application_rules, dob_from_sa_id, format_dob
 from app.services.delivery_preferences import valid_email
 from app.services.marketing_consent import apply_consent
 from app.services.member_benefits import enrich_rows, member_limits
@@ -32,6 +32,11 @@ def save_questionnaire(a, form):
     for group, fields in FIELDS:
         for key,label,options,required in fields:
             value=form.get(key,'').strip()
+            if key == 'beneficiary_date_of_birth' and not value:
+                derived = format_dob(dob_from_sa_id(form.get('beneficiary_id_number', '')))
+                if derived:
+                    dd, mm, yyyy = derived.split('/')
+                    value = f'{yyyy}-{mm}-{dd}'
             if required and not value:
                 raise ValueError('Please complete '+label+'.')
             if len(value)>min(300, getattr(a.__table__.columns[key].type,'length',None) or 300):
@@ -71,9 +76,6 @@ def save_questionnaire(a, form):
         all_members.extend(benefit_rows)
     a.product_dependents_json=json.dumps(all_members)
     if a.payment_method=='Debit Order':
-        full=' '.join((a.first_names,a.surname)).strip().casefold()
-        if a.account_holder.strip().casefold()!=full:
-            raise ValueError('Single-signature applications require your own bank account. Ask staff for assistance if another account holder must sign.')
         if not a.debit_day or not a.first_deduction_date:
             raise ValueError('Select the debit day and first deduction date.')
     else:
