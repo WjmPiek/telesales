@@ -635,6 +635,33 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertIn('application:terms', [field['key'] for field in fields])
         self.assertIn('application:account', [field['key'] for field in fields])
 
+    def test_gold_family_saves_each_application_signature_in_its_own_pdf_space(self):
+        import json
+        from PIL import Image, ImageDraw
+        from pypdf import PdfReader
+        from app.models import DocumentSignature
+        from app.services.pdf_service import generate_application_pdf
+        from app.services.signature_fields import application_fields
+        self.record.form_template = 'gold_family_fillable'
+        self.record.payment_method = 'Debit Order'
+        self.record.account_number = 'TEST-ONLY'
+        expected=application_fields(self.record)
+        for index,target in enumerate(expected):
+            path=str(Path(application_folder(self.record))/f'gold-signature-{index}.png')
+            image=Image.new('RGBA',(120,40),'white')
+            ImageDraw.Draw(image).line([(4,34),(45,4),(115,30-index)],fill='black',width=3)
+            image.save(path)
+            db.session.add(DocumentSignature(application_id=self.record.id,document_type=target['key'],
+                signature_image_path=path,typed_name='Fictional Test'))
+        db.session.flush()
+        dest=str(Path(application_folder(self.record))/'gold-family-signed.pdf')
+        generate_application_pdf(self.record,dest)
+        pdf=PdfReader(dest)
+        fields=json.loads(pdf.metadata['/Subject'].removeprefix('martins-signature:'))['fields']
+        self.assertEqual({field['key'] for field in fields if field['signed']},{field['key'] for field in expected})
+        self.assertTrue(pdf.pages[1].get('/Resources').get('/XObject'))
+        self.assertTrue(pdf.pages[3].get('/Resources').get('/XObject'))
+
     def test_email_failure_is_not_reported_as_sent(self):
         with patch('app.routes.applications.ensure_screened', return_value=(True,[])), patch('app.routes.applications.send_email', return_value=False), patch('app.services.whatsapp_service.send_application_link') as wa:
             wa.return_value.ok=False
@@ -696,9 +723,10 @@ class ApplicationFlowTests(unittest.TestCase):
                         nonce=session[f'document_review_{self.record_id}_{kind}']
                 response = public.post(f'/sign/{token}',data={'action':'sign_document','document_type':kind,'signature_field':key,'typed_name':'Fictional Test','signature_data':signature,'review_nonce':nonce})
                 self.assertEqual(response.status_code,302)
-                next_kind = {'application':'popia','popia':'disclosure','disclosure':'welcome','welcome':'cdd'}.get(kind)
-                expected = f'/review/{next_kind}' if index == len(keys)-1 and next_kind else (f'/sign/{token}' if index == len(keys)-1 else '/review/application')
-                self.assertTrue(response.location.endswith(expected), response.location)
+                if kind == 'application' and index < len(keys)-1:
+                    self.assertIn('/review/application?saved=', response.location)
+                else:
+                    self.assertTrue(response.location.endswith(f'/sign/{token}'), response.location)
             from pypdf import PdfReader
             with public.get(f'/sign/{token}/document/{kind}') as saved:
                 pdf = PdfReader(io.BytesIO(saved.data))

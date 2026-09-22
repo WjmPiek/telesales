@@ -222,6 +222,38 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertIn(b'Documents Submitted',response.data)
         self.assertEqual(self.record.status,'Signed')
 
+    def test_document_opens_before_pad_and_returns_to_document_after_each_signature(self):
+        from PIL import Image
+        client,nonce=self.prepare();self.save(client,nonce,include_supporting_documents=False)
+        fields=[field['key'] for field in application_fields(self.record)]
+        review=client.get('/sign/fictional-online-test/review/application')
+        self.assertEqual(review.status_code,200)
+        self.assertIn(b'deliberately taps its highlighted space',review.data)
+        self.assertNotIn(b'openPad(remaining[0].target)',review.data)
+
+        image=io.BytesIO();Image.new('RGB',(80,30),'black').save(image,format='PNG')
+        signature='data:image/png;base64,'+base64.b64encode(image.getvalue()).decode()
+        for index,field in enumerate(fields):
+            if index:
+                review=client.get('/sign/fictional-online-test/review/application')
+            with client.session_transaction() as session:
+                review_nonce=session[f'document_review_{self.record_id}_application']
+            response=client.post('/sign/fictional-online-test',data={
+                'action':'sign_document','document_type':'application','signature_field':field,
+                'typed_name':'Fictional Test','signature_data':signature,'review_nonce':review_nonce})
+            self.assertEqual(response.status_code,302)
+            if index < len(fields)-1:
+                self.assertIn('/review/application?saved=',response.location)
+                saved=client.get(response.location)
+                self.assertIn(b'Signature saved on the document',saved.data)
+            else:
+                self.assertTrue(response.location.endswith('/online-application/fictional-online-test'))
+
+        self.assertEqual(
+            {row.document_type for row in DocumentSignature.query.filter_by(application_id=self.record_id).all()},
+            set(fields),
+        )
+
     def test_saved_client_contact_details_are_present_in_application_pdf(self):
         from pypdf import PdfReader
         from app.routes.signing import _signable_pdf
