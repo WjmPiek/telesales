@@ -7,6 +7,43 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 
 
+def business_bank_confirmation_attachment():
+    """Materialise the admin-approved cash-payment letter for one email send."""
+    import base64
+    import json
+    import tempfile
+    from pathlib import Path
+    from app.models import BankConfirmationLetter, SystemSetting
+
+    current = BankConfirmationLetter.query.filter_by(active=True).order_by(
+        BankConfirmationLetter.uploaded_at.desc(), BankConfirmationLetter.id.desc()
+    ).first()
+    if current and current.file_data and current.file_data.startswith(b"%PDF"):
+        folder = Path(tempfile.mkdtemp(prefix="martins_bank_letter_"))
+        path = folder / "martins_business_bank_confirmation_letter.pdf"
+        path.write_bytes(current.file_data)
+        return str(path)
+
+    # Backward-compatible fallback for the temporary single-file setting used
+    # before versioned bank-letter administration was introduced.
+    row = SystemSetting.query.filter_by(
+        category="Email", key="business_bank_confirmation_pdf", active=True
+    ).first()
+    if not row or not row.value:
+        return None
+    try:
+        payload = json.loads(row.value)
+        content = base64.b64decode(payload.get("content", ""), validate=True)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+    if not content.startswith(b"%PDF"):
+        return None
+    folder = Path(tempfile.mkdtemp(prefix="martins_bank_letter_"))
+    path = folder / "martins_business_bank_confirmation_letter.pdf"
+    path.write_bytes(content)
+    return str(path)
+
+
 def send_email(to_email, subject, body, attachments=None, html_body=None, application_id=None, policy_id=None):
     from app.services.branding import display_brand
     subject, body = display_brand(subject), display_brand(body)

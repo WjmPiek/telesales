@@ -113,16 +113,33 @@ def validate_age_limit(label, dob_value, product, errors):
 
 
 def validate_member_age(label, dob_value, kind, product, errors):
-    """Apply the eligibility range for the member type, not the principal range."""
+    """Apply the locked member-type range saved on this product.
+
+    The principal member is the only person checked against PolicyProduct
+    min_age/max_age.  Spouse, child, extended and member-plus rows use their
+    own PolicyProductRule ranges.
+    """
     age = age_from_dob(dob_value)
     if age is None:
+        errors.append(f'{label} needs a valid ID number or date of birth so the age rule can be checked.')
         return
-    if kind == 'spouse':
-        validate_age_limit(label, dob_value, product, errors)
-    elif kind == 'child' and age > 21:
-        errors.append(f'{label} age is {age}. Children on this policy may not be older than 21.')
-    elif kind == 'productdep' and age > 70:
-        errors.append(f'{label} age is {age}. Extra members on this policy may not be older than 70.')
+    rules = getattr(product, 'rules', None)
+    fields = {
+        'spouse': ('spouse_min_age', 'spouse_max_age', 18, 70, 'spouse'),
+        'child': ('child_min_age', 'child_max_age', 0, 21, 'child'),
+        'extended': ('extended_min_age', 'extended_max_age', 0, 100, 'extended family member'),
+        'productdep': ('extra_member_min_age', 'extra_member_max_age', 0, 70, 'extra member'),
+    }
+    min_field, max_field, default_min, default_max, member_name = fields[kind]
+    minimum = getattr(rules, min_field, None) if rules else None
+    maximum = getattr(rules, max_field, None) if rules else None
+    minimum = default_min if minimum is None else int(minimum)
+    maximum = default_max if maximum is None else int(maximum)
+    if age < minimum or age > maximum:
+        errors.append(
+            f'{label} age is {age}. This product allows the {member_name} age range '
+            f'{minimum} to {maximum} years.'
+        )
 
 
 def validate_application_rules(app_obj):
@@ -148,8 +165,6 @@ def validate_application_rules(app_obj):
 
     spouse_id = getattr(app_obj, 'spouse_id_number', '')
     spouse_dob = format_dob(getattr(app_obj, 'spouse_date_of_birth', '') or dob_from_sa_id(spouse_id))
-    if spouse_id and not is_valid_sa_id(spouse_id):
-        errors.append('Spouse ID number failed South African ID validation.')
     if spouse_dob:
         validate_member_age('Spouse', spouse_dob, 'spouse', product, errors)
 
@@ -165,9 +180,9 @@ def validate_application_rules(app_obj):
     for label, kind, rows in member_groups:
         for idx, row in enumerate(rows, start=1):
             id_or_dob = row.get('id_or_dob') or row.get('id_number') or row.get('date_of_birth')
-            digits = only_digits(id_or_dob)
-            if len(digits) == 13 and not is_valid_sa_id(digits):
-                errors.append(f'{label} {idx} ID number failed South African ID validation.')
+            # Only the principal member is blocked by the SA-ID checksum. For
+            # covered members the ID/date supplies the date of birth, while
+            # eligibility is enforced by the product's locked member age rule.
             validate_member_age(f'{label} {idx}', dob_from_sa_id(id_or_dob) or id_or_dob, kind, product, errors)
 
     if is_debit_order(method):
