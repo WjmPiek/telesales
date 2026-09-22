@@ -470,14 +470,15 @@ def sign_application(token):
                 _signable_pdf(app_obj, doc_type)
                 db.session.commit()
                 session.pop(f"document_review_{app_obj.id}_{doc_type}", None)
-                # Completion badges provide persistent feedback without stacking flashes.
+                # Return to the document after each field so the client can see
+                # the saved signature in place before scrolling to the next pad.
                 if doc_type in _signed_doc_types(app_obj):
-                    completed = _signed_doc_types(app_obj)
-                    next_doc = next((key for key, label in REQUIRED_SIGNATURE_DOCS if key not in completed), None)
-                    if next_doc:
-                        return redirect(url_for("signing.edit_document", token=token, doc_type=next_doc))
+                    # WhatsApp/browser questionnaire applications choose their
+                    # next document from the online application page.
+                    if app_obj.whatsapp_journey:
+                        return redirect(url_for("online_application.form", token=token))
                     return redirect(url_for("signing.sign_application", token=token))
-                return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type))
+                return redirect(url_for("signing.edit_document", token=token, doc_type=doc_type, saved=field_key))
 
             if action == "final_submit":
                 return finish_application(app_obj, token)
@@ -532,7 +533,7 @@ def edit_document(token, doc_type):
     session[f"document_review_{app_obj.id}_{doc_type}"] = nonce
     response = current_app.make_response(render_template("sign/document.html", app=app_obj,
         token=token, doc_type=doc_type, label=DOC_LABELS[doc_type], targets=targets, marketing_consent=consent_value(app_obj), cdd_fields=CDD_FIELDS, cdd_answers=answers_for(app_obj) if doc_type=='cdd' else {}, cdd_complete=cdd_completed(app_obj),
-        review_nonce=nonce, signed=doc_type in _signed_doc_types(app_obj)))
+        review_nonce=nonce, signed=doc_type in _signed_doc_types(app_obj), saved_field=request.args.get("saved", "")))
     response.headers['Cache-Control'] = 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'
     return response
