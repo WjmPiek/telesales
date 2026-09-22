@@ -26,6 +26,10 @@ FIELDS = [
   ('account_holder','Account holder full names','',False),('debit_day','Debit day','1|5|15|20|25|30',False),
   ('first_deduction_date','First deduction date','date',False)])]
 BANKS=['Absa','African Bank','Capitec','Discovery Bank','FNB','Investec','Nedbank','Standard Bank','TymeBank']
+STANDARD_BRANCH_CODES={
+ 'Absa':'632005','African Bank':'430000','Capitec':'470010','Discovery Bank':'679000',
+ 'FNB':'250655','Investec':'580105','Nedbank':'198765','Standard Bank':'051001','TymeBank':'678910'
+}
 
 
 def save_questionnaire(a, form):
@@ -47,6 +51,8 @@ def save_questionnaire(a, form):
                 try: datetime.strptime(value,'%Y-%m-%d')
                 except ValueError: raise ValueError('Enter a valid date for '+label+'.')
             setattr(a,key,value)
+    if a.bank_name in STANDARD_BRANCH_CODES:
+        a.branch_code=STANDARD_BRANCH_CODES[a.bank_name]
     if not valid_email(a.email):
         raise ValueError('Enter an email address for the signed documents and policy confirmation.')
     a.document_email=a.email
