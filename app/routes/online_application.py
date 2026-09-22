@@ -98,6 +98,8 @@ def form(token):
                 if a.whatsapp_journey.signed_bundle_at:raise ValueError('These documents have already been signed.')
                 if not a.whatsapp_journey.ready:raise ValueError('Complete the questions first.')
                 if request.form.get('consent_bundle')!='yes':raise ValueError('Confirm that you agree to apply your signature to all listed documents.')
+                if 'debit' in (a.payment_method or '').lower() and request.form.get('consent_debit')!='yes':
+                    raise ValueError('Confirm the debit-order authority before signing.')
                 reviewed=set(session.get(f'questionnaire_review_{a.id}',[]))
                 if reviewed != {key for key,label in REQUIRED_SIGNATURE_DOCS}:raise ValueError('Open and review every document before signing.')
                 from app.services.compliance_service import assert_application_rules
@@ -110,7 +112,8 @@ def form(token):
                     db.session.add(DocumentSignature(application_id=a.id,document_type=key,typed_name=full_name,
                       signature_image_path=path,ip_address=request.remote_addr,user_agent=request.headers.get('User-Agent')))
                 a.whatsapp_journey.signed_bundle_at=datetime.utcnow()
-                db.session.add(AuditLog(action='Document bundle signed',entity_type='ClientApplication',entity_id=str(a.id),details='Client reviewed the application, POPIA, disclosure, welcome pack and CDD, and explicitly authorised one signature for all client signature spaces.'))
+                debit_note = ' Debit-order authority was explicitly accepted.' if 'debit' in (a.payment_method or '').lower() else ''
+                db.session.add(AuditLog(action='Document bundle signed',entity_type='ClientApplication',entity_id=str(a.id),details='Client reviewed the application with attached terms and conditions, POPIA, disclosure, welcome pack and CDD, and explicitly authorised one signature for all client signature spaces.'+debit_note))
                 db.session.flush()
                 return finish_application(a,token)
             raise ValueError('Choose a valid action.')
@@ -127,6 +130,7 @@ def form(token):
     if a.whatsapp_journey.signed_bundle_at:
         return render_template('online/replacements.html',app=a,nonce=session[nonce_key],error=error)
     from app.services.member_benefits import member_benefit, member_limits
+    from app.services.compliance_service import age_from_dob, dob_from_sa_id, format_dob
     limits=member_limits(a.product)
     member_values={}
     stored_groups = ([('productdep',a.product_dependents_json)] if limits['plan_type']=='member_product'
@@ -144,10 +148,20 @@ def form(token):
             benefit=member_benefit(a.product,kind,member_values.get(f'{kind}_{i}_id_or_dob',''))
             member_values.setdefault(f'{kind}_{i}_cover',benefit['cover'])
             member_values.setdefault(f'{kind}_{i}_waiting_period',benefit['waiting_period'])
+            member_values.setdefault(f'{kind}_{i}_date_of_birth',benefit['date_of_birth'])
+            member_values.setdefault(f'{kind}_{i}_age','' if benefit['age'] is None else benefit['age'])
+    selected_members=[]
+    try:
+        selected_members=json.loads(a.product_dependents_json or '[]')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        selected_members=[]
+    principal_dob=format_dob(a.date_of_birth or dob_from_sa_id(a.id_number))
+    principal_age=age_from_dob(principal_dob)
     return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,
-      received=_fica_status(a)[1],nonce=session[nonce_key],error=error,
+      received=_fica_status(a)[1],nonce=session[nonce_key],error=error,selected_members=selected_members,
+      principal_dob=principal_dob,principal_age=principal_age,
       google_maps_api_key=current_app.config.get('GOOGLE_MAPS_API_KEY') or __import__('os').getenv('GOOGLE_MAPS_API_KEY',''))
 
 

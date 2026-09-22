@@ -20,7 +20,7 @@ from app.services.fica_validation_service import validate_fica_upload
 signing_bp = Blueprint("signing", __name__, url_prefix="/sign")
 
 REQUIRED_SIGNATURE_DOCS = [
-    ("application", "Application Form"),
+    ("application", "Application Form, Terms and Conditions, and Debit Order (when selected)"),
     ("popia", "POPIA Consent"),
     ("disclosure", "Policy Disclosure"),
     ("welcome", "Welcome Pack Acknowledgement"),
