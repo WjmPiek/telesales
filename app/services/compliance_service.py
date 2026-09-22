@@ -112,6 +112,19 @@ def validate_age_limit(label, dob_value, product, errors):
         errors.append(f'{label} age is {age}. Maximum age for this policy is {max_age}.')
 
 
+def validate_member_age(label, dob_value, kind, product, errors):
+    """Apply the eligibility range for the member type, not the principal range."""
+    age = age_from_dob(dob_value)
+    if age is None:
+        return
+    if kind == 'spouse':
+        validate_age_limit(label, dob_value, product, errors)
+    elif kind == 'child' and age > 21:
+        errors.append(f'{label} age is {age}. Children on this policy may not be older than 21.')
+    elif kind == 'productdep' and age > 70:
+        errors.append(f'{label} age is {age}. Extra members on this policy may not be older than 70.')
+
+
 def validate_application_rules(app_obj):
     errors = []
     product = getattr(app_obj, 'product', None)
@@ -138,15 +151,24 @@ def validate_application_rules(app_obj):
     if spouse_id and not is_valid_sa_id(spouse_id):
         errors.append('Spouse ID number failed South African ID validation.')
     if spouse_dob:
-        validate_age_limit('Spouse', spouse_dob, product, errors)
+        validate_member_age('Spouse', spouse_dob, 'spouse', product, errors)
 
-    for label, rows in [('Dependent', _rows(getattr(app_obj, 'dependents_json', ''))), ('Extended family member', _rows(getattr(app_obj, 'extended_family_json', ''))), ('Product dependent', _rows(getattr(app_obj, 'product_dependents_json', '')) )]:
+    plan_type = classify_product_template(product)
+    member_groups = (
+        [('Extra member', 'productdep', _rows(getattr(app_obj, 'product_dependents_json', '')))]
+        if plan_type == 'member_product'
+        else [
+            ('Child', 'child', _rows(getattr(app_obj, 'dependents_json', ''))),
+            ('Extended family member', 'extended', _rows(getattr(app_obj, 'extended_family_json', ''))),
+        ]
+    )
+    for label, kind, rows in member_groups:
         for idx, row in enumerate(rows, start=1):
             id_or_dob = row.get('id_or_dob') or row.get('id_number') or row.get('date_of_birth')
             digits = only_digits(id_or_dob)
             if len(digits) == 13 and not is_valid_sa_id(digits):
                 errors.append(f'{label} {idx} ID number failed South African ID validation.')
-            validate_age_limit(f'{label} {idx}', dob_from_sa_id(id_or_dob) or id_or_dob, product, errors)
+            validate_member_age(f'{label} {idx}', dob_from_sa_id(id_or_dob) or id_or_dob, kind, product, errors)
 
     if is_debit_order(method):
         required_bank = [
