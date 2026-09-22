@@ -38,6 +38,8 @@
           <td>
             {% if row.group == 'FICA' and row.document %}
               <a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('documents.download_fica', doc_id=row.document.id)}}">View Upload</a>
+            {% elif row.group == 'Employee FIC' %}
+              <a class="btn btn-outline-primary btn-sm" href="{{url_for('applications.screening_review', app_id=app.id)}}">Record check / upload screenshots</a>
             {% elif row.group == 'Signature' %}
               {% if row.key == 'application' and app.signed_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='signed_application')}}">View PDF</a>{% endif %}
               {% if row.key == 'popia' and app.popia_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='popia')}}">View PDF</a>{% endif %}
@@ -46,7 +48,9 @@
             {% endif %}
           </td>
           <td>
-            {% if row.group == 'FICA' and row.document and row.status in ['Needs Review', 'Rejected'] %}
+            {% if row.group == 'Employee FIC' %}
+              <a class="btn btn-primary btn-sm" href="{{url_for('applications.screening_review', app_id=app.id)}}">{{'View FIC check' if row.screening else 'Upload required screenshot'}}</a>
+            {% elif row.group == 'FICA' and row.document and row.status in ['Needs Review', 'Rejected'] %}
               <div class="d-flex gap-1 flex-wrap align-items-start">
                 <form method="post" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='approve')}}">
                   <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Approve this FICA document?')">Accept</button>
