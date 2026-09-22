@@ -9,6 +9,7 @@ from app import db
 from app.models import CommunicationCampaign, ApplicationJourney, ClientFicaDocument, DocumentSignature, PolicyProductRule
 from app.services.client_storage import application_folder, store_document
 from app.services.cdd_service import FIELDS as CDD_FIELDS
+from app.services.signature_fields import application_fields
 
 class OnlineApplicationTests(unittest.TestCase):
     setUp=fixtures.ApplicationFlowTests.setUp
@@ -46,6 +47,24 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(response.status_code,302,response.data[:400])
         self.assertTrue(self.record.whatsapp_journey.ready)
         return data
+
+    def sign_documents(self, client):
+        from PIL import Image
+        out=io.BytesIO();Image.new('RGB',(80,30),'black').save(out,format='PNG')
+        signature='data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()
+        targets={'application':[field['key'] for field in application_fields(self.record)],
+                 'popia':['popia'],'disclosure':['disclosure'],'welcome':['welcome'],'cdd':['cdd']}
+        for kind,fields in targets.items():
+            for field in fields:
+                response=client.get(f'/sign/fictional-online-test/review/{kind}')
+                self.assertEqual(response.status_code,200,response.data[:400])
+                self.assertIn(b'Sign here',response.data)
+                with client.session_transaction() as session:
+                    review_nonce=session[f'document_review_{self.record_id}_{kind}']
+                response=client.post('/sign/fictional-online-test',data={
+                    'action':'sign_document','document_type':kind,'signature_field':field,
+                    'typed_name':'Fictional Test','signature_data':signature,'review_nonce':review_nonce})
+                self.assertEqual(response.status_code,302,response.data[:400])
 
     def test_postal_address_and_supporting_uploads_are_optional(self):
         client,nonce=self.prepare()
@@ -95,7 +114,9 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertIn(b'id="child_1_cover"',page.data)
         self.assertIn(b'id="child_1_date_of_birth"',page.data)
         self.assertIn(b'id="child_1_age"',page.data)
-        self.assertIn(b'Cover for this age',page.data)
+        self.assertIn(b'Cover for selected age',page.data)
+        self.assertIn(b'Add next child',page.data)
+        self.assertIn(b'data-index="2" hidden',page.data)
         data=self.save(client,nonce)
         data.update(spouse_1_full_name='Example Spouse',spouse_1_relationship='Spouse',spouse_1_id_or_dob='1985-01-01',
           child_1_full_name='Example Child',child_1_relationship='Child',child_1_id_or_dob='2018-01-01',
@@ -125,14 +146,10 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(response.status_code,302,response.data[:400])
         review=client.get('/online-application/fictional-online-test')
         self.assertIn(b'Debit order included',review.data)
-        self.assertIn(b'name="consent_debit"',review.data)
-        self.assertIn(b'application and terms and conditions',review.data.lower())
-        from PIL import Image
-        out=io.BytesIO();Image.new('RGB',(80,30),'black').save(out,format='PNG')
-        response=client.post('/online-application/fictional-online-test',data={
-          'nonce':nonce,'action':'sign','consent_bundle':'yes',
-          'signature_data':'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()})
-        self.assertIn(b'Confirm the debit-order authority',response.data)
+        self.assertIn(b'Open document and sign',review.data)
+        keys={field['key'] for field in application_fields(self.record)}
+        self.assertIn('application:account',keys)
+        self.assertIn('application:terms_account',keys)
 
     def test_standard_branch_code_is_automatic_and_not_manually_required(self):
         client,nonce=self.prepare()
@@ -180,7 +197,7 @@ class OnlineApplicationTests(unittest.TestCase):
         db.session.commit()
         client,nonce=self.prepare()
         page=client.get('/online-application/fictional-online-test')
-        self.assertIn(b'Extra members (up to 3)',page.data)
+        self.assertIn(b'Extra members (add one at a time, up to 3)',page.data)
         self.assertIn(b'id="productdep_3_cover"',page.data)
         self.assertNotIn(b'id="productdep_4_cover"',page.data)
         self.assertNotIn(b'id="child_1_cover"',page.data)
@@ -196,30 +213,30 @@ class OnlineApplicationTests(unittest.TestCase):
 
     def test_client_can_sign_when_supporting_documents_will_be_emailed(self):
         client,nonce=self.prepare();self.save(client,nonce,include_supporting_documents=False)
-        for kind in ['application','popia','disclosure','welcome','cdd']:
-            self.assertEqual(client.get('/online-application/fictional-online-test/document/'+kind).status_code,200)
-        from PIL import Image
-        out=io.BytesIO();Image.new('RGB',(80,30),'black').save(out,format='PNG')
-        data={'nonce':nonce,'action':'sign','consent_bundle':'yes','signature_data':'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()}
+        self.sign_documents(client)
+        data={'nonce':nonce,'action':'final_submit','document_email':'client@example.test','document_email_confirm':'client@example.test'}
         with patch('app.routes.signing.send_email',return_value=True):
             response=client.post('/online-application/fictional-online-test',data=data)
         self.assertEqual(response.status_code,200)
         self.assertIn(b'Documents Submitted',response.data)
         self.assertEqual(self.record.status,'Signed')
 
+    def test_saved_client_contact_details_are_present_in_application_pdf(self):
+        from pypdf import PdfReader
+        from app.routes.signing import _signable_pdf
+        client,nonce=self.prepare();self.save(client,nonce,include_supporting_documents=False)
+        path=_signable_pdf(self.record,'application')
+        text=' '.join(page.extract_text() or '' for page in PdfReader(path).pages)
+        self.assertIn('0821234567',text)
+        self.assertIn('client@example.test',text)
+        self.assertIn('1 Example Road',text)
+
     def test_full_whatsapp_questionnaire_signature_and_activation(self):
         client,nonce=self.prepare();self.save(client,nonce)
-        from PIL import Image
-        out=io.BytesIO();Image.new('RGB',(80,30),'black').save(out,format='PNG')
-        data={'nonce':nonce,'action':'sign','signature_data':'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()}
+        data={'nonce':nonce,'action':'final_submit','document_email':'client@example.test','document_email_confirm':'client@example.test'}
         response=client.post('/online-application/fictional-online-test',data=data)
-        self.assertIn(b'Confirm that you agree',response.data)
-        data['consent_bundle']='yes'
-        response=client.post('/online-application/fictional-online-test',data=data)
-        self.assertIn(b'Open and review every document',response.data)
-        for kind in ['application','popia','disclosure','welcome','cdd']:
-            with client.get('/online-application/fictional-online-test/document/'+kind) as response:
-                self.assertEqual(response.status_code,200)
+        self.assertIn(b'Open and sign these documents first',response.data)
+        self.sign_documents(client)
         with patch('app.routes.signing.send_email',return_value=True) as mail:
             response=client.post('/online-application/fictional-online-test',data=data)
             self.assertEqual(response.status_code,200)
@@ -227,7 +244,7 @@ class OnlineApplicationTests(unittest.TestCase):
             self.assertEqual(len(mail.call_args_list[0].args[3]),5)
         signatures=DocumentSignature.query.filter_by(application_id=self.record_id).all()
         self.assertGreaterEqual(len(signatures),7)
-        self.assertEqual(len({row.signature_image_path for row in signatures}),1)
+        self.assertEqual(len({row.signature_image_path for row in signatures}),len(signatures))
         self.assertIsNone(self.record.whatsapp_journey.activated_at)
         self.assertEqual(client.get('/online-application/fictional-online-test').status_code,410)
         self.assertEqual(self.record.beneficiary_full_names,'Example Beneficiary')
