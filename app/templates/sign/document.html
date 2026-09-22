@@ -70,7 +70,7 @@
 
 {% endif %}
 
-<p class="hint">Read the document, then tap the highlighted client signature space on the page. Sign each highlighted space separately. After saving, the next signature opens automatically. When this document is complete, the next document opens. You can review each document before signing.</p><p id="loading" role="status">Loading document…</p><p id="load-error" class="error" hidden>The document could not be loaded. Please reload this page to try again. <a href="{{url_for('signing.view_sign_document',token=token,doc_type=doc_type)}}">Download PDF for review</a></p><div id="pages"></div><noscript>JavaScript is required to sign this document.</noscript></main>
+{% if saved_field %}<p class="status" role="status">Signature saved on the document. Review it below, then scroll to the next highlighted signature space.</p>{% endif %}<p class="hint">Read the document first. Tap a highlighted <strong>Sign here</strong> space only when you are ready, draw that signature and select <strong>Save signature</strong>. The signed document will reopen so you can see the saved signature before moving to the next space. When this document is finished, you will return to the online application to choose the next document.</p><p id="loading" role="status">Loading document…</p><p id="load-error" class="error" hidden>The document could not be loaded. Please reload this page to try again. <a href="{{url_for('signing.view_sign_document',token=token,doc_type=doc_type)}}">Download PDF for review</a></p><div id="pages"></div><noscript>JavaScript is required to sign this document.</noscript></main>
 
 <dialog id="signature-dialog" aria-labelledby="signature-title"><form method="post" action="{{url_for('signing.sign_application',token=token)}}" id="signature-form">
 
@@ -80,7 +80,7 @@
 
 <script type="module">
 
-const targets={{targets|tojson}}, canSign={{((doc_type != "popia" or marketing_consent is not none) and (doc_type != "cdd" or cdd_complete))|tojson}}, pdfUrl={{url_for('signing.view_sign_document',token=token,doc_type=doc_type)|tojson}};
+const targets={{targets|tojson}}, canSign={{((doc_type != "popia" or marketing_consent is not none) and (doc_type != "cdd" or cdd_complete))|tojson}}, pdfUrl={{url_for('signing.view_sign_document',token=token,doc_type=doc_type)|tojson}}, savedField={{saved_field|tojson}};
 
 const dialog=document.getElementById('signature-dialog'),pad=document.getElementById('pad'),ctx=pad.getContext('2d');let drawing=false,hasInk=false;
 
@@ -151,7 +151,9 @@ try{
  if(!canSign)document.getElementById('loading').textContent='Complete and save the choices above, then sign the document.';
 
  if(!canSign)document.getElementById('loading').hidden=false;
- if(canSign && remaining.length){remaining[0].button.scrollIntoView({block:'center'});openPad(remaining[0].target);}
+ // Always show the document first. A signature pad opens only when the client
+ // deliberately taps its highlighted space.
+ if(savedField){const saved=signatureButtons.find(x=>x.target.key===savedField);saved?.button.scrollIntoView({block:'center'});}
 
 }catch(error){document.getElementById('loading').hidden=true;document.getElementById('load-error').hidden=false;}
 
