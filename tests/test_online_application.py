@@ -111,6 +111,17 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertIn('This product allows the child age range 0 to 21 years.',text)
         self.assertNotIn('Minimum age for this policy is 31',text)
 
+    def test_questionnaire_draft_is_restored_after_network_failure_and_cleared_after_save(self):
+        client,nonce=self.prepare()
+        page=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'id="questionnaire-form"',page.data)
+        self.assertIn(b'mf-application-draft-',page.data)
+        self.assertIn(b'Your answers are saved automatically on this device',page.data)
+        self.assertIn(b'Your saved answers were restored',page.data)
+        self.save(client,nonce)
+        review=client.get('/online-application/fictional-online-test')
+        self.assertIn(b"localStorage.removeItem('mf-application-draft-",review.data)
+
     def test_street_code_and_member_benefits_are_captured_per_person(self):
         self.record.product.waiting_period_months=6
         db.session.add(PolicyProductRule(product_id=self.record.product_id,spouse_cover=50000,
