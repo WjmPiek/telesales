@@ -134,6 +134,20 @@ class OnlineApplicationTests(unittest.TestCase):
           'signature_data':'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()})
         self.assertIn(b'Confirm the debit-order authority',response.data)
 
+    def test_standard_branch_code_is_automatic_and_not_manually_required(self):
+        client,nonce=self.prepare()
+        page=client.get('/online-application/fictional-online-test')
+        self.assertIn(b'id="branch_code"',page.data)
+        self.assertIn(b'readonly',page.data)
+        self.assertIn(b'The standard branch code is added automatically',page.data)
+        data=self.save(client,nonce)
+        data.update(payment_method='Debit Order',bank_name='Standard Bank',branch_code='',
+          account_number='1234567890',account_type='Cheque',account_holder='Example Account Holder',
+          debit_day='25',first_deduction_date='2026-10-25')
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+        self.assertEqual(self.record.branch_code,'051001')
+
     def test_staff_new_policy_form_has_street_code_and_member_benefit_fields(self):
         page=self.client.get('/applications/new')
         self.assertIn(b'Residential Street Code',page.data)
