@@ -590,6 +590,48 @@ class ApplicationFlowTests(unittest.TestCase):
         text=' '.join(page.extract_text() for page in PdfReader(path).pages)
         self.assertNotIn('Bank statement',text);self.assertNotIn('Bank Verification',text)
 
+    def test_document_tracking_requires_every_loaded_member_id_and_employee_fic(self):
+        from app.services.document_status_service import required_fica_documents, document_summary
+        self.record.spouse_first_names='Example';self.record.spouse_surname='Spouse';self.record.spouse_id_number='8501015009087'
+        self.record.dependents_json=json.dumps([{'full_name':'Example Child','relationship':'Child','id_or_dob':'2015-01-01'}])
+        self.record.extended_family_json=json.dumps([{'full_name':'Example Parent','relationship':'Parent','id_or_dob':'1960-01-01'}])
+        db.session.commit()
+        requirements=required_fica_documents(self.record)
+        self.assertEqual([row['key'] for row in requirements],
+                         ['id_copy','spouse_id_copy','child_1_id_copy','extended_1_id_copy','proof_of_address'])
+        labels=[row['label'] for row in document_summary(self.record)['rows']]
+        for label in ['Principal Member South African ID Copy','Spouse ID Copy','Child 1 ID Copy - Example Child',
+                      'Extended Member 1 ID Copy - Example Parent','Employee FIC check screenshot']:
+            self.assertIn(label,labels)
+
+    def test_submitted_application_is_due_now_and_secure_member_upload_portal_works(self):
+        from datetime import datetime
+        from PIL import Image
+        from app.services.document_status_service import required_fica_documents
+        self.record.sign_token='post-signing-supporting-token';self.record.signed_at=datetime.utcnow();self.record.status='Signed'
+        self.record.spouse_first_names='Example';self.record.spouse_surname='Spouse'
+        self.record.dependents_json=json.dumps([{'full_name':'Example Child','relationship':'Child','id_or_dob':'2015-01-01'}])
+        db.session.commit()
+        due=self.client.get('/recovery/callbacks')
+        self.assertIn(b'Client applications submitted',due.data)
+        self.assertIn(b'TEST-ONLY',due.data)
+        self.assertIn(b'Finalise application',due.data)
+
+        public=self.app.test_client()
+        link='/sign/post-signing-supporting-token/supporting-documents'
+        self.assertIn(b'Principal member ID number',public.get(link).data)
+        self.assertIn(b'does not match',public.post(link,data={'action':'unlock','id_number':'0000000000000'}).data)
+        self.assertEqual(public.post(link,data={'action':'unlock','id_number':self.record.id_number}).status_code,302)
+        page=public.get(link)
+        self.assertIn(b'Spouse ID Copy',page.data);self.assertIn(b'Child 1 ID Copy',page.data)
+        for index,item in enumerate(required_fica_documents(self.record),1):
+            stream=io.BytesIO();Image.new('RGB',(120,120),(index*20%255,30,40)).save(stream,format='PNG');stream.seek(0)
+            response=public.post(link,data={'action':'upload','document_type':item['key'],'file':(stream,item['key']+'.png')},content_type='multipart/form-data')
+            self.assertEqual(response.status_code,302,response.data[:400])
+        completed=public.post(link,data={'action':'complete'})
+        self.assertIn(b'Supporting documents received',completed.data)
+        self.assertEqual(self.record.status,'FICA Review')
+
     def test_named_email_link_escapes_client_values(self):
         from app.services.email_service import signing_email_html
         self.record.first_names = '<Alex & Sam>'

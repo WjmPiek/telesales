@@ -275,6 +275,7 @@ class OnlineApplicationTests(unittest.TestCase):
             self.assertEqual(response.status_code,200)
             self.assertIn(b'Documents Submitted',response.data)
             self.assertEqual(len(mail.call_args_list[0].args[3]),5)
+            self.assertIn('/sign/fictional-online-test/supporting-documents',mail.call_args_list[0].args[2])
         signatures=DocumentSignature.query.filter_by(application_id=self.record_id).all()
         self.assertGreaterEqual(len(signatures),7)
         self.assertEqual(len({row.signature_image_path for row in signatures}),len(signatures))
