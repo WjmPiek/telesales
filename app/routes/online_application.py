@@ -11,7 +11,7 @@ from app.services.branch_access import ensure_branch_access
 from app.services.online_application import FIELDS, BANKS, STANDARD_BRANCH_CODES, save_questionnaire
 from app.services.cdd_service import FIELDS as CDD_FIELDS, answers_for
 from app.services.marketing_consent import consent_value
-from app.services.signature_fields import application_fields
+from app.services.signature_fields import signed_documents
 
 online_bp=Blueprint('online_application',__name__,url_prefix='/online-application')
 
@@ -89,28 +89,13 @@ def form(token):
                 db.session.commit()
                 session.pop(f'questionnaire_review_{a.id}',None)
                 return redirect(url_for('online_application.form',token=token))
-            if action=='sign':
-                a=ClientApplication.query.filter_by(id=a.id).with_for_update().populate_existing().one()
-                if a.sign_token_used_at:abort(409)
-                if a.whatsapp_journey.signed_bundle_at:raise ValueError('These documents have already been signed.')
+            if action=='final_submit':
                 if not a.whatsapp_journey.ready:raise ValueError('Complete the questions first.')
-                if request.form.get('consent_bundle')!='yes':raise ValueError('Confirm that you agree to apply your signature to all listed documents.')
-                if 'debit' in (a.payment_method or '').lower() and request.form.get('consent_debit')!='yes':
-                    raise ValueError('Confirm the debit-order authority before signing.')
-                reviewed=set(session.get(f'questionnaire_review_{a.id}',[]))
-                if reviewed != {key for key,label in REQUIRED_SIGNATURE_DOCS}:raise ValueError('Open and review every document before signing.')
-                from app.services.compliance_service import assert_application_rules
-                ok,errors=assert_application_rules(a)
-                if not ok:raise ValueError('; '.join(errors))
-                full_name=f'{a.first_names} {a.surname}'.strip()
-                path=_save_signature_file(a,'document_bundle',request.form.get('signature_data',''))
-                keys=[f['key'] for f in application_fields(a)]+[key for key,label in REQUIRED_SIGNATURE_DOCS if key!='application']
-                for key in keys:
-                    db.session.add(DocumentSignature(application_id=a.id,document_type=key,typed_name=full_name,
-                      signature_image_path=path,ip_address=request.remote_addr,user_agent=request.headers.get('User-Agent')))
+                completed=signed_documents(a)
+                missing=[label for key,label in REQUIRED_SIGNATURE_DOCS if key not in completed]
+                if missing:raise ValueError('Open and sign these documents first: '+', '.join(missing))
                 a.whatsapp_journey.signed_bundle_at=datetime.utcnow()
-                debit_note = ' Debit-order authority was explicitly accepted.' if 'debit' in (a.payment_method or '').lower() else ''
-                db.session.add(AuditLog(action='Document bundle signed',entity_type='ClientApplication',entity_id=str(a.id),details='Client reviewed the application with attached terms and conditions, POPIA, disclosure, welcome pack and CDD, and explicitly authorised one signature for all client signature spaces.'+debit_note))
+                db.session.add(AuditLog(action='WhatsApp documents completed',entity_type='ClientApplication',entity_id=str(a.id),details='Client signed each highlighted signature space inside every required document and submitted the completed application.'))
                 db.session.flush()
                 return finish_application(a,token)
             raise ValueError('Choose a valid action.')
@@ -156,7 +141,7 @@ def form(token):
     principal_age=age_from_dob(principal_dob)
     return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,branch_codes=STANDARD_BRANCH_CODES,
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
-      cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,
+      cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,signed_docs=signed_documents(a),
       received=_fica_status(a)[1],nonce=session[nonce_key],error=error,selected_members=selected_members,
       principal_dob=principal_dob,principal_age=principal_age,
       google_maps_api_key=current_app.config.get('GOOGLE_MAPS_API_KEY') or __import__('os').getenv('GOOGLE_MAPS_API_KEY',''))

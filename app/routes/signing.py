@@ -390,7 +390,11 @@ def sign_application(token):
     if not session.get(_unlocked_key(app_obj.id)):
         return render_template("sign/unlock.html", app=app_obj, token=token)
 
-    if app_obj.whatsapp_journey:
+    # Campaign/WhatsApp applications use their questionnaire page as the
+    # document dashboard, but their document signature forms still post here.
+    # Redirect only ordinary page loads; allowing POST keeps the highlighted
+    # in-document signature workflow available on mobile.
+    if app_obj.whatsapp_journey and request.method == "GET":
         return redirect(url_for("online_application.form", token=token))
 
     if request.method == "POST":
