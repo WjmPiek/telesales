@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
+from sqlalchemy import inspect
 from app import db
 from app.models import LoginAttempt, AuditLog, User, SystemSetting
 
@@ -36,6 +37,12 @@ def _checklist():
     secret = os.getenv('SECRET_KEY', '')
     database_url = os.getenv('DATABASE_URL', '')
     auto_create = os.getenv('AUTO_CREATE_TABLES', '1')
+    postgres = database_url.startswith(('postgres://', 'postgresql://'))
+    try:
+        documents_in_database = postgres and inspect(db.engine).has_table('client_stored_files')
+    except Exception:
+        documents_in_database = False
+    git_deployment = bool(os.getenv('RENDER_GIT_COMMIT'))
     return [
         {
             'key': 'secret_key',
@@ -47,23 +54,25 @@ def _checklist():
         {
             'key': 'database_url',
             'label': 'DATABASE_URL uses PostgreSQL',
-            'done': database_url.startswith(('postgres://', 'postgresql://')),
+            'done': postgres,
             'detail': 'Controlled by the Render environment variable DATABASE_URL.',
             'actionable': False,
         },
         {
             'key': 'auto_create_tables_disabled',
             'label': 'AUTO_CREATE_TABLES disabled after migrations are stable',
-            'done': auto_create == '0' or _get_setting('auto_create_tables_disabled') == '1',
-            'detail': 'Set AUTO_CREATE_TABLES=0 in Render after migrations are tested. You can also mark this checklist item as completed after doing it.',
-            'actionable': True,
+            'done': auto_create == '0',
+            'detail': ('Automatic table creation is disabled. Keep versioned migrations in the deployment process.'
+                       if auto_create == '0' else
+                       'The app currently creates and updates tables at startup. Keep this enabled until versioned migrations are installed and tested; then set AUTO_CREATE_TABLES=0 in Render.'),
+            'actionable': False,
         },
         {
             'key': 'cloud_upload_storage',
-            'label': 'Uploads moved to permanent cloud storage',
-            'done': _get_setting('cloud_upload_storage') == '1' or bool(os.getenv('UPLOADS_CLOUD_PROVIDER') or os.getenv('S3_BUCKET') or os.getenv('GOOGLE_DRIVE_FOLDER_ID')),
-            'detail': 'Use S3, Google Drive, or another permanent storage provider for signed PDFs and FICA documents.',
-            'actionable': True,
+            'label': 'Application and FICA files stored in PostgreSQL',
+            'done': documents_in_database,
+            'detail': 'Signed PDFs, signatures and uploaded identity/FICA documents are saved in client_stored_files. Local files are regenerated from that database copy when needed.',
+            'actionable': False,
         },
         {
             'key': 'default_passwords_changed',
@@ -81,9 +90,9 @@ def _checklist():
         },
         {
             'key': 'no_git_folder',
-            'label': 'No .git folder in deployment ZIP',
-            'done': not os.path.exists(os.path.join(os.getcwd(), '.git')),
-            'detail': 'Deployment package should not contain a .git folder.',
+            'label': 'Deployment source verified',
+            'done': git_deployment or not os.path.exists(os.path.join(os.getcwd(), '.git')),
+            'detail': 'Render is deploying a Git commit.' if git_deployment else 'ZIP deployments should exclude the .git folder.',
             'actionable': False,
         },
     ]
@@ -106,8 +115,6 @@ def complete_checklist_item(key):
     if not is_admin():
         return redirect(url_for('main.dashboard'))
     allowed = {
-        'auto_create_tables_disabled': 'AUTO_CREATE_TABLES was confirmed disabled or accepted as ready.',
-        'cloud_upload_storage': 'Permanent cloud upload storage was confirmed configured.',
         'default_passwords_changed': 'Default/admin passwords were confirmed changed.',
         'database_backups_configured': 'Regular database backups were confirmed configured.',
     }
@@ -126,7 +133,7 @@ def complete_checklist_item(key):
 def reset_checklist_item(key):
     if not is_admin():
         return redirect(url_for('main.dashboard'))
-    allowed = {'auto_create_tables_disabled', 'cloud_upload_storage', 'default_passwords_changed', 'database_backups_configured'}
+    allowed = {'default_passwords_changed', 'database_backups_configured'}
     if key not in allowed:
         flash('This checklist item is controlled automatically and cannot be changed here.', 'warning')
         return redirect(url_for('security_center.index'))
