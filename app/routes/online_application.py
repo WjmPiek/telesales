@@ -139,11 +139,19 @@ def form(token):
         selected_members=[]
     principal_dob=format_dob(a.date_of_birth or dob_from_sa_id(a.id_number))
     principal_age=age_from_dob(principal_dob)
+    rules=a.product.rules
+    member_age_rules={
+      'spouse':(getattr(rules,'spouse_min_age',None) if rules else None,getattr(rules,'spouse_max_age',None) if rules else None,18,70),
+      'child':(getattr(rules,'child_min_age',None) if rules else None,getattr(rules,'child_max_age',None) if rules else None,0,21),
+      'extended':(getattr(rules,'extended_min_age',None) if rules else None,getattr(rules,'extended_max_age',None) if rules else None,0,100),
+      'productdep':(getattr(rules,'extra_member_min_age',None) if rules else None,getattr(rules,'extra_member_max_age',None) if rules else None,0,70),
+    }
+    member_age_rules={key:(values[2] if values[0] is None else values[0],values[3] if values[1] is None else values[1]) for key,values in member_age_rules.items()}
     return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,branch_codes=STANDARD_BRANCH_CODES,
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,signed_docs=signed_documents(a),
       received=_fica_status(a)[1],nonce=session[nonce_key],error=error,selected_members=selected_members,
-      principal_dob=principal_dob,principal_age=principal_age,
+      principal_dob=principal_dob,principal_age=principal_age,member_age_rules=member_age_rules,
       google_maps_api_key=current_app.config.get('GOOGLE_MAPS_API_KEY') or __import__('os').getenv('GOOGLE_MAPS_API_KEY',''))
 
 

@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file
 from flask_login import login_required, current_user
 from app import db
 from app.models import SystemSetting, AuditLog
@@ -41,7 +41,6 @@ def seed():
 @settings_bp.route('/email-templates', methods=['GET', 'POST'])
 @login_required
 def email_templates():
-    from flask import abort
     import json
     from app.services.email_service import client_email_templates, validate_client_email_templates, CLIENT_EMAIL_DEFAULTS
     if not is_admin():
@@ -73,6 +72,78 @@ def email_templates():
             flash('Email templates saved. Future emails will use this wording.', 'success')
             return redirect(url_for('settings.email_templates'))
     return render_template('settings/email_templates.html', templates=templates, error=error)
+
+
+@settings_bp.route('/bank-confirmation-letters', methods=['GET', 'POST'])
+@login_required
+def bank_confirmation_letters():
+    import hashlib
+    import io
+    from pypdf import PdfReader
+    from app.models import BankConfirmationLetter
+    if not is_admin():
+        abort(403)
+    if request.method == 'POST':
+        upload = request.files.get('bank_confirmation_letter')
+        content = upload.read() if upload and upload.filename else b''
+        if not content:
+            flash('Choose the official business bank confirmation PDF.', 'danger')
+        elif len(content) > 5 * 1024 * 1024:
+            flash('The business bank confirmation PDF may not exceed 5 MB.', 'danger')
+        elif not content.startswith(b'%PDF'):
+            flash('The bank confirmation letter must be a PDF.', 'danger')
+        else:
+            try:
+                if not PdfReader(io.BytesIO(content)).pages:
+                    raise ValueError('empty PDF')
+            except Exception:
+                flash('The selected file is not a readable PDF.', 'danger')
+            else:
+                checksum = hashlib.sha256(content).hexdigest()
+                BankConfirmationLetter.query.update({'active': False}, synchronize_session=False)
+                letter = BankConfirmationLetter(
+                    original_filename=(upload.filename or 'bank-confirmation.pdf')[:255],
+                    file_data=content, file_size=len(content), checksum_sha256=checksum,
+                    active=True, uploaded_by_id=current_user.id)
+                db.session.add(letter)
+                db.session.flush()
+                db.session.add(AuditLog(user_id=current_user.id, action='Bank confirmation letter uploaded',
+                    entity_type='BankConfirmationLetter', entity_id=str(letter.id),
+                    details='Uploaded a new current business bank confirmation PDF.'))
+                db.session.commit()
+                flash('Newest bank confirmation letter uploaded and set as current.', 'success')
+                return redirect(url_for('settings.bank_confirmation_letters'))
+    letters = BankConfirmationLetter.query.order_by(BankConfirmationLetter.uploaded_at.desc(), BankConfirmationLetter.id.desc()).all()
+    return render_template('settings/bank_confirmation_letters.html', letters=letters)
+
+
+@settings_bp.route('/bank-confirmation-letters/<int:letter_id>/download')
+@login_required
+def download_bank_confirmation_letter(letter_id):
+    import io
+    from app.models import BankConfirmationLetter
+    if not is_admin():
+        abort(403)
+    letter = BankConfirmationLetter.query.get_or_404(letter_id)
+    return send_file(io.BytesIO(letter.file_data), mimetype='application/pdf',
+                     as_attachment=True, download_name=letter.original_filename)
+
+
+@settings_bp.route('/bank-confirmation-letters/<int:letter_id>/activate', methods=['POST'])
+@login_required
+def activate_bank_confirmation_letter(letter_id):
+    from app.models import BankConfirmationLetter
+    if not is_admin():
+        abort(403)
+    letter = BankConfirmationLetter.query.get_or_404(letter_id)
+    BankConfirmationLetter.query.update({'active': False}, synchronize_session=False)
+    letter.active = True
+    db.session.add(AuditLog(user_id=current_user.id, action='Bank confirmation letter activated',
+        entity_type='BankConfirmationLetter', entity_id=str(letter.id),
+        details='Selected an existing bank confirmation PDF as the current cash-payment attachment.'))
+    db.session.commit()
+    flash('Selected bank confirmation letter is now current.', 'success')
+    return redirect(url_for('settings.bank_confirmation_letters'))
 
 
 @settings_bp.route('/data-reset', methods=['GET', 'POST'])

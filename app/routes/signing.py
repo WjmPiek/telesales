@@ -640,7 +640,16 @@ def supporting_documents(token):
 
 def finish_application(app_obj, token):
     from app.services.delivery_preferences import receipt_address
+    from app.services.email_service import business_bank_confirmation_attachment
     recipient = receipt_address(request.form, app_obj)
+    cash_bank_letter = None
+    if str(app_obj.payment_method or '').strip().lower() == 'cash':
+        cash_bank_letter = business_bank_confirmation_attachment()
+        if not cash_bank_letter:
+            raise ValueError(
+                "The official Martin's Funerals business bank confirmation letter has not been configured. "
+                "Please ask staff to upload it under Settings > Client email templates, then submit again."
+            )
     ok, errors = assert_application_rules(app_obj)
     if not ok:
         raise ValueError("Application blocked: " + "; ".join(errors))
@@ -707,9 +716,18 @@ def finish_application(app_obj, token):
         body += ("\n\nPlease use this secure link to upload the South African ID documents for every member on the policy "
                  "and the proof of address:\n\n" + upload_link +
                  "\n\nYou will need the principal member ID number to unlock the secure upload page.")
-        send_email(recipient, subject, body, [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf],
-                   html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
-                   application_id=app_obj.id)
+        attachments = [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf]
+        if cash_bank_letter:
+            attachments.append(cash_bank_letter)
+            body += "\n\nThe official Martin's Funerals business bank confirmation letter is also attached for your cash payment."
+        try:
+            send_email(recipient, subject, body, attachments,
+                       html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
+                       application_id=app_obj.id)
+        finally:
+            if cash_bank_letter:
+                import shutil
+                shutil.rmtree(os.path.dirname(cash_bank_letter), ignore_errors=True)
     office_email = os.getenv("MAIL_DOCUMENTS_TO")
     from email.utils import parseaddr
     if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():

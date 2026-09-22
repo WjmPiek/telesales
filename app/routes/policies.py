@@ -57,6 +57,13 @@ def _slot_count(value, default=0, maximum=30):
         return default
 
 
+def _age_rule(value, default, maximum=120):
+    try:
+        return max(0, min(int(value), maximum))
+    except (TypeError, ValueError):
+        return default
+
+
 def _save_product_rules(product):
     rules = PolicyProductRule.query.filter_by(product_id=product.id).first()
     if not rules:
@@ -68,6 +75,20 @@ def _save_product_rules(product):
     rules.child_slots = _slot_count(request.form.get("child_slots"), 6)
     rules.extended_slots = _slot_count(request.form.get("extended_slots"), 6)
     rules.extra_member_slots = _slot_count(request.form.get("extra_member_slots"), 13)
+    age_defaults = {
+        "spouse_min_age": 18, "spouse_max_age": 70,
+        "child_min_age": 0, "child_max_age": 21,
+        "extended_min_age": 0, "extended_max_age": 100,
+        "extra_member_min_age": 0, "extra_member_max_age": 70,
+    }
+    for field, default in age_defaults.items():
+        setattr(rules, field, _age_rule(request.form.get(field), default))
+    for prefix in ("spouse", "child", "extended", "extra_member"):
+        minimum = getattr(rules, prefix + "_min_age")
+        maximum = getattr(rules, prefix + "_max_age")
+        if minimum > maximum:
+            setattr(rules, prefix + "_min_age", maximum)
+            setattr(rules, prefix + "_max_age", minimum)
     for field in [
         "main_member_cover", "spouse_cover", "extended_cover", "stillborn_cover",
         "family_0_11", "family_1_5", "family_6_13", "family_14_21",
