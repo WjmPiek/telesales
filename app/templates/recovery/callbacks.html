@@ -32,6 +32,26 @@
 </div>
 {% endmacro %}
 
+<div class="card mb-4 border-success">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <b>Client applications submitted — finalise now</b>
+    <span class="badge bg-success">{{ submitted_applications|length }}</span>
+  </div>
+  <div class="card-body p-0 table-responsive">
+    <table class="table table-sm table-striped align-middle mb-0">
+      <tr><th>Submitted</th><th>Application</th><th>Client</th><th>Cell</th><th>Branch</th><th>Status</th><th>Actions</th></tr>
+      {% for app in submitted_applications %}
+      <tr class="table-success">
+        <td>{{ app.signed_at.strftime('%Y-%m-%d %H:%M') if app.signed_at else '' }}</td>
+        <td>{{ app.application_ref }}</td><td>{{ app.first_names }} {{ app.surname }}</td><td>{{ app.cell_number }}</td><td>{{ app.branch or '' }}</td>
+        <td><span class="badge bg-success">{{ app.status }}</span></td>
+        <td><a class="btn btn-sm btn-primary" href="{{url_for('applications.view_application',app_id=app.id)}}">Finalise application</a> <a class="btn btn-sm btn-outline-primary" href="{{url_for('documents.application_documents',app_id=app.id)}}">Document tracking</a></td>
+      </tr>
+      {% else %}<tr><td colspan="7" class="text-muted">No newly submitted applications.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+
 {{ callback_table('Due now / overdue callbacks', overdue, 'table-danger') }}
 {{ callback_table("Today's callbacks", due_today, 'table-warning') }}
 {{ callback_table('Upcoming callbacks', upcoming, '') }}
