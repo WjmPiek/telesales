@@ -140,7 +140,12 @@ CLIENT_EMAIL_DEFAULTS = {
     "activation": {
         "label": "Policy activation confirmation",
         "subject": "Martin's Funerals - policy {policy_number} is active",
-        "body": "Dear {client_name},\n\nYour application has been verified and policy {policy_number} is now active from {start_date}.\n\nPlease refer to your policy documents for the benefits, waiting periods, exclusions and payment terms.\n\nThank you.\nMartin's Funerals - Insurance Sales",
+        "body": "Dear {client_name},\n\nYour application has passed all required checks and policy {policy_number} is now active from {start_date}.\n\nYour final approved policy documents are attached. Please keep them in a safe place and refer to them for the benefits, waiting periods, exclusions and payment terms.\n\nThank you.\nMartin's Funerals - Insurance Sales",
+    },
+    "supporting": {
+        "label": "Application received and supporting documents requested",
+        "subject": "Martin's Funerals - application {application_ref} received",
+        "body": "Dear {client_name},\n\nYour signed application has been received and is awaiting verification. Your policy is not active yet.\n\nPlease use this secure link to upload the South African ID document for every member on the application and the principal member's proof of address:\n\n{link}\n\nYou will need the principal member ID number to unlock the page. Your final approved documents will be emailed only after all required checks are complete and the policy has been activated.",
     },
     "receipt": {
         "label": "Signed documents receipt",
@@ -183,8 +188,8 @@ def validate_client_email_templates(templates):
                         raise ValueError("The receipt cannot use the signing link because it is locked after submission.")
                     if part == "body":
                         fields.add(field)
-        if key == "invitation" and "link" not in fields:
-            raise ValueError("The signing invitation must contain {link} in its message.")
+        if key in {"invitation", "supporting"} and "link" not in fields:
+            raise ValueError("The signing invitation and supporting-document request must contain {link} in their messages.")
 
 
 def client_email_content(kind, application, link=""):

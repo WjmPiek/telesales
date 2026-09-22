@@ -375,19 +375,21 @@ def _generate_gold_family_fillable(app_obj, out_path, sig_path):
         "policy_no": _safe(app_obj.policy_number or app_obj.application_ref),
         "surname": _safe(app_obj.surname), "first_names": _safe(app_obj.first_names),
         "title": _safe(app_obj.title), "id_number": _safe(app_obj.id_number),
-        "dob": _safe(app_obj.date_of_birth), "contact": _safe(app_obj.cell_number),
+        "dob": _date_boxes(app_obj.date_of_birth), "contact": _safe(app_obj.cell_number),
         "email": _safe(app_obj.email), "res_address": _safe(app_obj.residential_address or app_obj.address),
-        "postal_address": _safe(app_obj.postal_address), "postal_code": _safe(app_obj.postal_code),
+        "postal_address": _safe(app_obj.postal_address),
+        "postal_code": _safe(app_obj.residential_postal_code or app_obj.postal_code),
         "spouse_surname": _safe(app_obj.spouse_surname), "spouse_first": _safe(app_obj.spouse_first_names),
         "spouse_title": _safe(app_obj.spouse_title), "spouse_id": _safe(app_obj.spouse_id_number),
-        "spouse_dob": _safe(app_obj.spouse_date_of_birth),
+        "spouse_dob": _date_boxes(app_obj.spouse_date_of_birth),
         "beneficiary_name": _safe(app_obj.beneficiary_full_names), "beneficiary_rel": _safe(app_obj.beneficiary_relationship),
-        "beneficiary_id": _safe(app_obj.beneficiary_id_number), "beneficiary_dob": _safe(app_obj.beneficiary_date_of_birth),
-        "first_deduction": _safe(app_obj.first_deduction_date),
+        "beneficiary_id": _safe(app_obj.beneficiary_id_number), "beneficiary_dob": _date_boxes(app_obj.beneficiary_date_of_birth),
+        "first_deduction": _date_boxes(app_obj.first_deduction_date),
         "bank_name": _safe(app_obj.bank_name), "branch_name": _safe(app_obj.branch_name),
         "account_no": _safe(app_obj.account_number), "branch_code": _safe(app_obj.branch_code),
         "account_holder": _safe(app_obj.account_holder), "account_type": _safe(app_obj.account_type),
         "monthly_premium_a": _money(app_obj.monthly_premium), "premium_b": _money(app_obj.extended_premium),
+        "extended_premium_b": _money(app_obj.extended_premium),
         "total_premium": _money(app_obj.total_payment or app_obj.monthly_premium),
         "employer": _safe(app_obj.employer), "persal_no": _safe(app_obj.persal_no),
         "signature_date": datetime.now().strftime("%d/%m/%Y"),
@@ -412,6 +414,12 @@ def _generate_gold_family_fillable(app_obj, out_path, sig_path):
     writer = PdfWriter()
     writer.clone_document_from_reader(PdfReader(template))
     writer.update_page_form_field_values(None, values, auto_regenerate=False)
+    label_data = io.BytesIO()
+    label = canvas.Canvas(label_data, pagesize=A4)
+    label.setFillColorRGB(1, 1, 1); label.rect(296, 480, 80, 18, stroke=0, fill=1)
+    label.setFillColorRGB(0, 0, 0); label.setFont("Helvetica", 8); label.drawString(300, 486, "Street Code")
+    label.save(); label_data.seek(0)
+    writer.pages[0].merge_page(PdfReader(label_data).pages[0])
     # The supplied Gold form contains the declaration, while the official policy
     # terms live in the standard terms template. Keep them in one reviewable PDF
     # and add a visible client signature record for the terms.

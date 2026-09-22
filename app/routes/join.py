@@ -10,6 +10,7 @@ from app.models import (
     CommunicationCampaign, CommunicationEvent, LapsedPolicy, PolicyProduct, User,
 )
 from app.services.compliance_service import age_from_dob, classify_product_template, dob_from_sa_id, is_valid_sa_id
+from app.services.member_benefits import member_limits
 
 
 join_bp = Blueprint("join", __name__, url_prefix="/join")
@@ -27,17 +28,45 @@ def _qualification_key(recipient):
     return f"join_qualification_{recipient.id}"
 
 
-def _eligible_products(qualification):
+def _product_capacity(product):
+    """Return the number of people included in the advertised base product."""
+    limits = member_limits(product)
+    if limits["plan_type"] == "member_product":
+        return 1 + limits["productdep"]
+    if limits["plan_type"] == "single":
+        return 1
+    # Extended-family rows are optional add-ons with separate cover/premium.
+    return 1 + limits["spouse"] + limits["child"]
+
+
+def _product_choices(qualification):
     age = int(qualification["age"])
     cover = Decimal(str(qualification["cover_amount"]))
-    return (
+    total_members = int(qualification["total_members"])
+    age_eligible = (
         PolicyProduct.query.filter_by(active=True)
-        .filter(PolicyProduct.cover_amount == cover)
         .filter(db.or_(PolicyProduct.min_age.is_(None), PolicyProduct.min_age <= age))
         .filter(db.or_(PolicyProduct.max_age.is_(None), PolicyProduct.max_age >= age))
-        .order_by(PolicyProduct.monthly_premium.asc(), PolicyProduct.product_name.asc())
         .all()
     )
+    exact = [product for product in age_eligible
+             if Decimal(str(product.cover_amount or 0)) == cover and _product_capacity(product) >= total_members]
+    exact.sort(key=lambda product: (product.monthly_premium or 0, product.product_name or ""))
+    if exact:
+        return exact, False
+    alternatives = [product for product in age_eligible if _product_capacity(product) >= total_members]
+    alternatives.sort(key=lambda product: (
+        abs(Decimal(str(product.cover_amount or 0)) - cover),
+        0 if Decimal(str(product.cover_amount or 0)) <= cover else 1,
+        _product_capacity(product) - total_members,
+        product.monthly_premium or 0,
+        product.product_name or "",
+    ))
+    return alternatives[:3], True
+
+
+def _eligible_products(qualification):
+    return _product_choices(qualification)[0]
 
 
 def _resume(application):
@@ -96,7 +125,9 @@ def products(token):
     qualification = session.get(_qualification_key(recipient))
     if not qualification:
         return redirect(url_for("join.qualify", token=token))
-    return render_template("join/products.html", recipient=recipient, qualification=qualification, products=_eligible_products(qualification))
+    choices, alternatives = _product_choices(qualification)
+    return render_template("join/products.html", recipient=recipient, qualification=qualification,
+                           products=choices, alternatives=alternatives, product_capacity=_product_capacity)
 
 
 @join_bp.route("/<token>/application/<int:product_id>")
@@ -116,7 +147,7 @@ def application(token, product_id):
     policy = recipient.policy
     agent = db.session.get(User, policy.assigned_agent_id) if policy.assigned_agent_id else recipient.campaign.created_by
     product_text = f"{product.product_name or ''} {product.plan_name or ''}".lower()
-    form_template = "gold_family_fillable" if qualification["cover_amount"] == 40000 and "gold" in product_text and "family" in product_text else classify_product_template(product)
+    form_template = "gold_family_fillable" if product.cover_amount == 40000 and "gold" in product_text and "family" in product_text else classify_product_template(product)
     application = ClientApplication(
         application_ref="WEB-" + datetime.utcnow().strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper(),
         product=product,

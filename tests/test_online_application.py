@@ -151,10 +151,29 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(extended['cover'],'30000.00')
         self.assertEqual({row['kind'] for row in all_members},{'spouse','child','extended'})
         self.assertEqual(next(row for row in all_members if row['kind']=='spouse')['cover'],'50000.00')
+        self.assertEqual(self.record.spouse_date_of_birth,'01/01/1985')
         review=client.get('/online-application/fictional-online-test')
         self.assertIn(b'People covered by this application',review.data)
         self.assertIn(b'Example Child',review.data)
         self.assertIn(b'R25,000.00',review.data)
+
+        from pypdf import PdfReader
+        from app.services.pdf_service import generate_application_pdf
+        self.record.form_template='gold_family_fillable';self.record.postal_code='';db.session.commit()
+        output=Path(application_folder(self.record))/f'mapping_check_{self.record_id}.pdf'
+        generate_application_pdf(self.record,str(output))
+        fields=PdfReader(str(output)).get_fields()
+        value=lambda key: str(fields[key].get('/V') or '')
+        self.assertEqual(value('contact'),'0821234567')
+        self.assertEqual(value('email'),'client@example.test')
+        self.assertEqual(value('res_address'),'1 Example Road')
+        self.assertEqual(value('postal_code'),'1234')
+        self.assertEqual(value('spouse_first'),'Example')
+        self.assertEqual(value('spouse_surname'),'Spouse')
+        self.assertEqual(value('spouse_dob'),'01/01/1985')
+        self.assertEqual(value('child_1_name'),'Example Child')
+        self.assertEqual(value('ext_1_name'),'Example Parent / Parent')
+        self.assertEqual(value('beneficiary_name'),'Example Beneficiary')
 
     def test_debit_order_with_different_account_holder_is_sent_for_client_authority(self):
         client,nonce=self.prepare()
@@ -298,9 +317,9 @@ class OnlineApplicationTests(unittest.TestCase):
             response=client.post('/online-application/fictional-online-test',data=data)
             self.assertEqual(response.status_code,200)
             self.assertIn(b'Documents Submitted',response.data)
-            self.assertEqual(len(mail.call_args_list[0].args[3]),6)
-            self.assertEqual(Path(mail.call_args_list[0].args[3][-1]).name,'martins_business_bank_confirmation_letter.pdf')
-            self.assertIn('business bank confirmation letter is also attached',mail.call_args_list[0].args[2])
+            self.assertEqual(mail.call_args_list[0].args[3],[])
+            self.assertIn('awaiting verification',mail.call_args_list[0].args[2])
+            self.assertIn('not active yet',mail.call_args_list[0].args[2])
             self.assertIn('/sign/fictional-online-test/supporting-documents',mail.call_args_list[0].args[2])
         signatures=DocumentSignature.query.filter_by(application_id=self.record_id).all()
         self.assertGreaterEqual(len(signatures),7)
@@ -320,6 +339,9 @@ class OnlineApplicationTests(unittest.TestCase):
             self.assertEqual(self.record.status,'Active')
             self.assertEqual(self.record.whatsapp_journey.notice_status,'Sent')
             self.assertIn('TEST-POLICY',mail.call_args.args[2])
+            self.assertIn('now active',mail.call_args.args[2])
+            self.assertEqual(len(mail.call_args.args[3]),6)
+            self.assertEqual(Path(mail.call_args.args[3][-1]).name,'martins_business_bank_confirmation_letter.pdf')
             self.client.post(f'/qa/application/{self.record_id}',data=review)
             self.assertEqual(mail.call_count,1)
 

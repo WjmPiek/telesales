@@ -19,6 +19,7 @@ from app.models import (
     ContactSuppression,
     LapsedPolicy,
     PolicyProduct,
+    PolicyProductRule,
     Role,
     User,
     WhatsAppContact,
@@ -218,6 +219,31 @@ class WhatsAppProcessTests(unittest.TestCase):
         self.assertEqual(int(application.requested_cover), 10000)
         self.assertEqual(application.product_id, product_id)
         self.assertEqual(self.client.get(response.location).status_code, 200)
+
+    def test_join_now_offers_closest_product_that_covers_all_members(self):
+        recipient = self._campaign_recipient()
+        recipient.policy.id_number = "8001015009087"
+        gold = PolicyProduct(product_name="Gold Family", plan_name="R40k", monthly_premium=300,
+                             cover_amount=40000, min_age=31, max_age=55, active=True)
+        alternative = PolicyProduct(product_name="Member +9", plan_name="R30k", monthly_premium=280,
+                                    cover_amount=30000, min_age=18, max_age=70, active=True)
+        db.session.add_all([gold, alternative]); db.session.flush()
+        db.session.add_all([
+            PolicyProductRule(product_id=gold.id, plan_type="family", spouse_slots=1, child_slots=6),
+            PolicyProductRule(product_id=alternative.id, plan_type="member_product", extra_member_slots=9),
+        ])
+        db.session.commit(); alternative_id = alternative.id
+        response = self.client.post("/join/recipient-token", data={
+            "id_number": "8001015009087", "total_members": "10", "cover_amount": "40000"})
+        page = self.client.get(response.location)
+        self.assertIn(b"No policy matches both choices exactly", page.data)
+        self.assertIn(b"Member +9", page.data); self.assertIn(b"R 30,000.00", page.data)
+        self.assertNotIn(b"Gold Family", page.data)
+        selected = self.client.get(f"/join/recipient-token/application/{alternative_id}")
+        self.assertIn("/online-application/", selected.location)
+        application = ClientApplication.query.filter_by(source_campaign_recipient_id=recipient.id).one()
+        self.assertEqual(int(application.requested_cover), 40000)
+        self.assertEqual(int(application.cover_amount), 30000)
 
     def test_template_send_keeps_apply_callback_delete_order(self):
         from app.services.whatsapp_service import send_whatsapp_template_image

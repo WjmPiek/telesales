@@ -1,6 +1,6 @@
 {% extends 'base.html' %}{% block content %}
 <h2>Client email templates</h2><p>Edit the wording used for future client emails. Previously sent messages stay unchanged. Saving does not send an email.</p>
-<p>Placeholders: <code>{client_name}</code>, <code>{first_names}</code>, <code>{surname}</code>, <code>{application_ref}</code>, <code>{policy_number}</code>, <code>{start_date}</code>. The invitation must also include <code>{link}</code>, preferably on its own line. The receipt automatically includes the signed documents.</p>
+<p>Placeholders: <code>{client_name}</code>, <code>{first_names}</code>, <code>{surname}</code>, <code>{application_ref}</code>, <code>{policy_number}</code>, <code>{start_date}</code>. The invitation and supporting-document request must include <code>{link}</code>, preferably on its own line. Final approved documents are attached only to the policy activation confirmation.</p>
 {% if error %}<div class="alert alert-danger">{{error}}</div>{% endif %}
 <form method="post">{% for key, item in templates.items() %}<section class="card card-body mb-3"><h3>{{item.label}}</h3>
 <label for="{{key}}-subject">Subject</label><input class="form-control mb-3" id="{{key}}-subject" name="{{key}}_subject" maxlength="200" required value="{{item.subject}}">

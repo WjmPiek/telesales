@@ -650,6 +650,9 @@ def finish_application(app_obj, token):
                 "The official Martin's Funerals business bank confirmation letter has not been configured. "
                 "Please ask staff to upload it under Settings > Client email templates, then submit again."
             )
+        import shutil
+        shutil.rmtree(os.path.dirname(cash_bank_letter), ignore_errors=True)
+        cash_bank_letter = None
     ok, errors = assert_application_rules(app_obj)
     if not ok:
         raise ValueError("Application blocked: " + "; ".join(errors))
@@ -711,23 +714,11 @@ def finish_application(app_obj, token):
     session.pop(_unlocked_key(app_obj.id), None)
     if recipient:
         from app.services.email_service import client_email_content, signing_email_html
-        subject, body = client_email_content("receipt", app_obj)
         upload_link = current_app.config['BASE_URL'].rstrip('/') + url_for('signing.supporting_documents', token=token)
-        body += ("\n\nPlease use this secure link to upload the South African ID documents for every member on the policy "
-                 "and the proof of address:\n\n" + upload_link +
-                 "\n\nYou will need the principal member ID number to unlock the secure upload page.")
-        attachments = [signed_pdf, welcome_pdf, popia_pdf, disclosure_pdf, cdd_pdf]
-        if cash_bank_letter:
-            attachments.append(cash_bank_letter)
-            body += "\n\nThe official Martin's Funerals business bank confirmation letter is also attached for your cash payment."
-        try:
-            send_email(recipient, subject, body, attachments,
-                       html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
-                       application_id=app_obj.id)
-        finally:
-            if cash_bank_letter:
-                import shutil
-                shutil.rmtree(os.path.dirname(cash_bank_letter), ignore_errors=True)
+        subject, body = client_email_content("supporting", app_obj, upload_link)
+        send_email(recipient, subject, body, [],
+                   html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
+                   application_id=app_obj.id)
     office_email = os.getenv("MAIL_DOCUMENTS_TO")
     from email.utils import parseaddr
     if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():

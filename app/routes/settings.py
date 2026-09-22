@@ -64,7 +64,7 @@ def email_templates():
             row.value = json.dumps(templates)
             row.active = True
             row.updated_by_id = current_user.id
-            row.description = 'Client invitation and signed-document receipt wording'
+            row.description = 'Client invitation, supporting-document request and policy activation wording'
             db.session.add(AuditLog(user_id=current_user.id, action='Email templates updated',
                 entity_type='SystemSetting', entity_id='Email:client_templates_v1',
                 details='Updated client email wording for future messages.'))

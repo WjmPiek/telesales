@@ -77,8 +77,9 @@ def save_questionnaire(a, form):
         elif rows:
             row=rows[0];names=row['full_name'].rsplit(' ',1)
             a.spouse_first_names=names[0];a.spouse_surname=names[1] if len(names)>1 else ''
-            if len(row['id_or_dob'])==13:a.spouse_id_number=row['id_or_dob']
-            else:a.spouse_date_of_birth=row['id_or_dob']
+            identifier=row['id_or_dob']
+            if len(identifier)==13:a.spouse_id_number=identifier
+            a.spouse_date_of_birth=format_dob(dob_from_sa_id(identifier) or identifier)
         all_members.extend(benefit_rows)
     a.product_dependents_json=json.dumps(all_members)
     if a.payment_method=='Debit Order':
@@ -92,7 +93,6 @@ def save_questionnaire(a, form):
     if choice not in {'yes','no'}:raise ValueError('Select Yes or No for marketing messages.')
     cdd={key:form.get('cdd_'+key,'').strip() for key,label,options in CDD_FIELDS}
     cdd.update(telephone=a.cell_number,residential_address=a.residential_address,postal_address=a.postal_address,email=a.email)
-    from app.services.compliance_service import format_dob
     cdd['birth_date']=datetime.strptime(format_dob(a.date_of_birth),'%d/%m/%Y').strftime('%Y-%m-%d')
     save_answers(a,cdd)
     apply_consent(a,choice=='yes',None,None)
@@ -100,17 +100,58 @@ def save_questionnaire(a, form):
 
 
 def notify_activation(a):
-    """Do not resend on duplicate verification. Failed delivery can be retried explicitly."""
+    """Release the final policy pack only after staff activate the policy."""
+    import logging
+    import os
+    import shutil
     from app import db
-    from app.models import ApplicationJourney
-    from app.services.email_service import client_email_content, send_email
+    from app.models import ApplicationJourney, DocumentSignature
+    from app.services.cdd_service import generate_cdd_pdf
+    from app.services.client_storage import application_folder
+    from app.services.email_service import business_bank_confirmation_attachment, client_email_content, send_email
+    from app.services.pdf_service import (generate_application_pdf, generate_disclosure_pdf,
+                                          generate_popia_pdf, generate_welcome_pack)
     journey=ApplicationJourney.query.filter_by(application_id=a.id).with_for_update().populate_existing().one()
     if not journey.activated_at or journey.notice_status in {'Sent','Sending'}:
         return journey.notice_status=='Sent'
     journey.notice_status='Sending'
     db.session.commit()
-    subject,body=client_email_content('activation',a)
-    sent=send_email(a.document_email or a.email,subject,body,application_id=a.id)
+    bank_letter = None
+    sent = False
+    try:
+        signatures = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=a.id).all()}
+        folder = application_folder(a)
+        paths = {
+            'application': os.path.join(folder, f'signed_application_{a.id}.pdf'),
+            'welcome': os.path.join(folder, f'welcome_pack_{a.id}.pdf'),
+            'popia': os.path.join(folder, f'popia_consent_{a.id}.pdf'),
+            'disclosure': os.path.join(folder, f'policy_disclosure_{a.id}.pdf'),
+            'cdd': os.path.join(folder, f'annexure_j1_{a.id}.pdf'),
+        }
+        principal = signatures.get('application:principal')
+        generate_application_pdf(a, paths['application'], signature_path_override=principal.signature_image_path if principal else None)
+        for key, generator in [('welcome', generate_welcome_pack), ('popia', generate_popia_pdf),
+                               ('disclosure', generate_disclosure_pdf)]:
+            row = signatures.get(key)
+            generator(a, paths[key], signature_path_override=row.signature_image_path if row else None)
+        generate_cdd_pdf(a, paths['cdd'])
+        a.signed_pdf_path = paths['application']; a.welcome_pack_path = paths['welcome']
+        a.popia_pdf_path = paths['popia']; a.disclosure_pdf_path = paths['disclosure']
+        db.session.commit()
+        attachments = list(paths.values())
+        if str(a.payment_method or '').strip().lower() == 'cash':
+            bank_letter = business_bank_confirmation_attachment()
+            if not bank_letter:
+                raise ValueError('The current business bank confirmation letter is not configured.')
+            attachments.append(bank_letter)
+        subject,body=client_email_content('activation',a)
+        sent=send_email(a.document_email or a.email,subject,body,attachments,application_id=a.id)
+    except Exception as exc:
+        logging.getLogger(__name__).warning('Final activation pack delivery failed (%s)', type(exc).__name__)
+        sent = False
+    finally:
+        if bank_letter:
+            shutil.rmtree(os.path.dirname(bank_letter), ignore_errors=True)
     journey.notice_status='Sent' if sent else 'Failed'
     if sent:journey.notice_sent_at=datetime.utcnow()
     db.session.commit()
