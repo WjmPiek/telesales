@@ -1,0 +1,25 @@
+{% extends "join/_layout.html" %}
+{% block join_content %}
+<h1>Apply for {{ product.product_name }}</h1>
+<section class="product">
+  <p>{{ product.plan_name or '' }}</p>
+  <p><strong>R {{ "{:,.2f}".format(product.monthly_premium or 0) }} per month</strong><br>
+  Cover: R {{ "{:,.2f}".format(product.cover_amount or 0) }} · Waiting period: {{ product.waiting_period_months or 0 }} months</p>
+</section>
+<p class="muted">Complete these details to open the secure application. The policy is already selected from the flyer.</p>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+<form method="post" class="grid">
+  <div class="grid two">
+    <div class="field"><label>First names</label><input name="first_names" value="{{ values.first_names }}" autocomplete="given-name" required></div>
+    <div class="field"><label>Surname</label><input name="surname" value="{{ values.surname }}" autocomplete="family-name" required></div>
+  </div>
+  <div class="field"><label>South African ID number</label><input name="id_number" inputmode="numeric" maxlength="13" value="{{ values.id_number }}" required></div>
+  <div class="grid two">
+    <div class="field"><label>Mobile number</label><input name="cell_number" inputmode="tel" value="{{ values.cell_number }}" autocomplete="tel" required></div>
+    <div class="field"><label>Email address</label><input name="email" type="email" value="{{ values.email }}" autocomplete="email" required></div>
+  </div>
+  <div class="field"><label>Total members</label><input name="total_members" type="number" min="1" max="{{ maximum_members }}" value="{{ values.total_members }}" required><small>Include the main member. This policy allows up to {{ maximum_members }} people.</small></div>
+  <button class="button" type="submit">START SECURE APPLICATION</button>
+</form>
+<p class="muted" style="margin-bottom:0;margin-top:18px">Campaign: {{ campaign.name }}. This link contains no client information.</p>
+{% endblock %}
