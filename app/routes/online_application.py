@@ -86,9 +86,6 @@ def form(token):
             if action=='save':
                 if a.whatsapp_journey.signed_bundle_at:abort(409)
                 save_questionnaire(a,request.form)
-                for kind in ['id_copy','proof_of_address']:
-                    upload=request.files.get(kind)
-                    if upload and upload.filename:_save_upload(a,kind,upload)
                 db.session.commit()
                 session.pop(f'questionnaire_review_{a.id}',None)
                 return redirect(url_for('online_application.form',token=token))
