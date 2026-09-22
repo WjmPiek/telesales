@@ -61,6 +61,43 @@ class ApplicationFlowTests(unittest.TestCase):
         user.role.name = 'Agent'; db.session.commit()
         self.assertEqual(self.client.post('/settings/email-templates', data=data).status_code, 403)
 
+    def test_versioned_bank_confirmation_letters_keep_history_and_current_attachment(self):
+        from pypdf import PdfWriter
+        from app.models import BankConfirmationLetter
+        from app.services.email_service import business_bank_confirmation_attachment
+
+        def pdf_bytes(width):
+            output = io.BytesIO()
+            writer = PdfWriter(); writer.add_blank_page(width=width, height=842); writer.write(output)
+            return output.getvalue()
+
+        first = pdf_bytes(500)
+        second = pdf_bytes(600)
+        response = self.client.post('/settings/bank-confirmation-letters', data={
+            'bank_confirmation_letter': (io.BytesIO(first), 'first-confirmation.pdf')},
+            content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        response = self.client.post('/settings/bank-confirmation-letters', data={
+            'bank_confirmation_letter': (io.BytesIO(second), 'newest-confirmation.pdf')},
+            content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        letters = BankConfirmationLetter.query.order_by(BankConfirmationLetter.id).all()
+        self.assertEqual(len(letters), 2)
+        self.assertFalse(letters[0].active)
+        self.assertTrue(letters[1].active)
+        page = self.client.get('/settings/bank-confirmation-letters')
+        self.assertIn(b'All bank confirmation letters', page.data)
+        self.assertIn(b'newest-confirmation.pdf', page.data)
+        self.assertIn(b'Current', page.data)
+        download = self.client.get(f'/settings/bank-confirmation-letters/{letters[1].id}/download')
+        self.assertEqual(download.data, second)
+        path = business_bank_confirmation_attachment()
+        try:
+            self.assertEqual(Path(path).read_bytes(), second)
+        finally:
+            import shutil
+            shutil.rmtree(Path(path).parent, ignore_errors=True)
+
     def test_member_capture_and_beneficiary_transfer(self):
         import json
         from app.models import TelesalesScriptSession
@@ -779,13 +816,18 @@ class ApplicationFlowTests(unittest.TestCase):
                     page = pdf.pages[field['page']-1]
                     self.assertTrue(any(img.image.size == (80,30) for img in page.images))
                 self.assertIn(b'Document signed', public.get(f'/sign/{token}/review/{kind}').data)
+        from app.models import SystemSetting
+        db.session.add(SystemSetting(category='Email',key='business_bank_confirmation_pdf',active=True,
+            value=json.dumps({'filename':'letter.pdf','content':base64.b64encode(b'%PDF-1.4\n%%EOF').decode()})))
+        db.session.commit()
         with patch.dict(os.environ,{'MAIL_DOCUMENTS_TO':'copies@example.test'}), patch('app.routes.signing.send_email', return_value=True) as delivery:
             response = public.post(f'/sign/{token}',data={'action':'final_submit','document_email':'copies@example.test','document_email_confirm':'copies@example.test'})
             self.assertEqual(delivery.call_args.args[0],'copies@example.test')
             self.assertEqual(self.record.document_email,'copies@example.test')
             self.assertEqual(delivery.call_count,1)
-            self.assertEqual(len(delivery.call_args.args[3]),5)
-            self.assertTrue(all(Path(p).exists() for p in delivery.call_args.args[3]))
+            self.assertEqual(len(delivery.call_args.args[3]),6)
+            self.assertTrue(all(Path(p).exists() for p in delivery.call_args.args[3][:5]))
+            self.assertEqual(Path(delivery.call_args.args[3][-1]).name,'martins_business_bank_confirmation_letter.pdf')
             self.assertIn('attached for your records',delivery.call_args.args[2])
         self.assertEqual(response.status_code,200)
         self.assertEqual(self.record.status,'Signed')

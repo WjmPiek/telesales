@@ -7,7 +7,7 @@ from unittest.mock import patch
 import test_application_flow as fixtures
 from app import db
 from app.models import (CommunicationCampaign, CommunicationEvent, ApplicationJourney, ClientApplication,
-                        ClientFicaDocument, DocumentSignature, PolicyProductRule)
+                        ClientFicaDocument, DocumentSignature, PolicyProductRule, SystemSetting)
 from app.services.client_storage import application_folder, store_document
 from app.services.cdd_service import FIELDS as CDD_FIELDS
 from app.services.signature_fields import application_fields
@@ -19,6 +19,10 @@ class OnlineApplicationTests(unittest.TestCase):
     upload_screening=fixtures.ApplicationFlowTests.upload_screening
 
     def prepare(self):
+        import json
+        if not SystemSetting.query.filter_by(category='Email',key='business_bank_confirmation_pdf').first():
+            db.session.add(SystemSetting(category='Email',key='business_bank_confirmation_pdf',active=True,
+                value=json.dumps({'filename':'letter.pdf','content':base64.b64encode(b'%PDF-1.4\n%%EOF').decode()})))
         campaign=CommunicationCampaign(name='Isolated test',message_body='Test',created_by_id=self.user_id)
         db.session.add(campaign);db.session.flush()
         db.session.add(ApplicationJourney(application_id=self.record_id,campaign_id=campaign.id))
@@ -99,8 +103,12 @@ class OnlineApplicationTests(unittest.TestCase):
 
         data['child_1_id_or_dob']='0908151234088'
         response=client.post('/online-application/fictional-online-test?edit=1',data=data)
+        self.assertEqual(response.status_code,302,response.data[:400])
+
+        data['child_1_id_or_dob']='2000-08-15'
+        response=client.post('/online-application/fictional-online-test?edit=1',data=data)
         text=response.data.decode()
-        self.assertEqual(text.count('Child 1 ID number failed South African ID validation.'),1)
+        self.assertIn('This product allows the child age range 0 to 21 years.',text)
         self.assertNotIn('Minimum age for this policy is 31',text)
 
     def test_street_code_and_member_benefits_are_captured_per_person(self):
@@ -180,6 +188,8 @@ class OnlineApplicationTests(unittest.TestCase):
           'product_name':product.product_name,'plan_name':product.plan_name,'cover_amount':'50000',
           'monthly_premium':'300','waiting_period_months':'6','min_age':'31','max_age':'55','active':'on',
           'plan_type':'family','spouse_slots':'1','child_slots':'8','extended_slots':'5','extra_member_slots':'0',
+          'spouse_min_age':'31','spouse_max_age':'55','child_min_age':'0','child_max_age':'21',
+          'extended_min_age':'22','extended_max_age':'75','extra_member_min_age':'0','extra_member_max_age':'70',
           'main_member_cover':'50000','spouse_cover':'50000','family_0_11':'10000','family_1_5':'10000',
           'family_6_13':'25000','family_14_21':'50000','stillborn_cover':'10000','extended_cover':'30000'})
         self.assertEqual(response.status_code,302,response.data[:400])
@@ -187,8 +197,11 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(rules.plan_type,'family')
         self.assertEqual((rules.spouse_slots,rules.child_slots,rules.extended_slots),(1,8,5))
         self.assertEqual(float(rules.family_6_13),25000)
+        self.assertEqual((rules.spouse_min_age,rules.spouse_max_age),(31,55))
+        self.assertEqual((rules.extended_min_age,rules.extended_max_age),(22,75))
         page=self.client.get(f'/policies/{product_id}/edit')
         self.assertIn(b'Application member setup',page.data)
+        self.assertIn(b'Locked member age rules',page.data)
         self.assertIn(b'Child 14',page.data)
 
     def test_member_product_uses_configured_extra_member_fields_online(self):
@@ -274,7 +287,9 @@ class OnlineApplicationTests(unittest.TestCase):
             response=client.post('/online-application/fictional-online-test',data=data)
             self.assertEqual(response.status_code,200)
             self.assertIn(b'Documents Submitted',response.data)
-            self.assertEqual(len(mail.call_args_list[0].args[3]),5)
+            self.assertEqual(len(mail.call_args_list[0].args[3]),6)
+            self.assertEqual(Path(mail.call_args_list[0].args[3][-1]).name,'martins_business_bank_confirmation_letter.pdf')
+            self.assertIn('business bank confirmation letter is also attached',mail.call_args_list[0].args[2])
             self.assertIn('/sign/fictional-online-test/supporting-documents',mail.call_args_list[0].args[2])
         signatures=DocumentSignature.query.filter_by(application_id=self.record_id).all()
         self.assertGreaterEqual(len(signatures),7)
