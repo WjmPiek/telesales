@@ -8,7 +8,7 @@ from app import db
 from app.models import ClientApplication, ApplicationJourney, CampaignRecipient, PolicyProduct, DocumentSignature, AuditLog
 from app.security import permission_required
 from app.services.branch_access import ensure_branch_access
-from app.services.online_application import FIELDS, BANKS, save_questionnaire
+from app.services.online_application import FIELDS, BANKS, STANDARD_BRANCH_CODES, save_questionnaire
 from app.services.cdd_service import FIELDS as CDD_FIELDS, answers_for
 from app.services.marketing_consent import consent_value
 from app.services.signature_fields import application_fields
@@ -154,7 +154,7 @@ def form(token):
         selected_members=[]
     principal_dob=format_dob(a.date_of_birth or dob_from_sa_id(a.id_number))
     principal_age=age_from_dob(principal_dob)
-    return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,
+    return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,branch_codes=STANDARD_BRANCH_CODES,
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,
       received=_fica_status(a)[1],nonce=session[nonce_key],error=error,selected_members=selected_members,
