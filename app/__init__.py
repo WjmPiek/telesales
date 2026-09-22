@@ -70,9 +70,15 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS queue_status VARCHAR(30) DEFAULT 'idle'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES policy_products(id)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS public_application_token VARCHAR(128)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS qr_scan_count INTEGER DEFAULT 0",
+                "CREATE INDEX IF NOT EXISTS ix_communication_campaigns_product_id ON communication_campaigns (product_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_communication_campaigns_public_application_token ON communication_campaigns (public_application_token)",
                 "UPDATE communication_campaigns SET audience_type = 'group' WHERE audience_type IS NULL OR TRIM(audience_type) = ''",
                 "UPDATE communication_campaigns SET template_status = 'Pending' WHERE template_status IS NULL OR TRIM(template_status) = ''",
                 "UPDATE communication_campaigns SET queue_status = 'idle' WHERE queue_status IS NULL OR TRIM(queue_status) = ''",
+                "UPDATE communication_campaigns SET qr_scan_count = 0 WHERE qr_scan_count IS NULL",
             ]
             with db.engine.begin() as conn:
                 for stmt in statements:

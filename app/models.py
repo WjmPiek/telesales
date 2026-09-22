@@ -728,8 +728,12 @@ class CommunicationCampaign(db.Model):
     queue_status = db.Column(db.String(30), default="idle", nullable=False, index=True)
     archived_at = db.Column(db.DateTime)
     deleted_at = db.Column(db.DateTime)
+    product_id = db.Column(db.Integer, db.ForeignKey("policy_products.id"), index=True)
+    public_application_token = db.Column(db.String(128), unique=True, index=True)
+    qr_scan_count = db.Column(db.Integer, default=0, nullable=False)
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     template_approved_by = db.relationship("User", foreign_keys=[template_approved_by_id])
+    product = db.relationship("PolicyProduct")
 
 class CampaignRecipient(db.Model):
     __tablename__ = "campaign_recipients"
