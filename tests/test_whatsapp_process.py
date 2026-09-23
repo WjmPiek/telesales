@@ -25,6 +25,7 @@ from app.models import (
     WhatsAppContact,
     WhatsAppConversation,
     WhatsAppMessage,
+    WhatsAppTemplate,
     WhatsAppWebhookEvent,
 )
 from app.services.whatsapp_service import SendResult, normalize_phone
@@ -113,8 +114,33 @@ class WhatsAppProcessTests(unittest.TestCase):
         from app.routes.communications import _send_to_recipient
         with patch("requests.post") as post:
             ok, error = _send_to_recipient(recipient.campaign, recipient, "whatsapp")
-        self.assertFalse(ok)
+            self.assertFalse(ok)
         post.assert_not_called()
+
+    def test_reused_approved_template_keeps_header_image(self):
+        recipient = self._campaign_recipient()
+        source = recipient.campaign
+        source.created_by.role.name = "Super Admin"
+        source.image_filename = "campaign.jpg"
+        source.image_data = b"test-image"
+        source.image_mimetype = "image/jpeg"
+        source.image_url = f"https://example.test/communications/media/{source.id}/campaign.jpg"
+        template = WhatsAppTemplate(campaign_id=source.id, name="approved_test", language="en",
+                                    body_text="Hello {{1}}", status="Approved", created_by_id=source.created_by_id)
+        db.session.add(template)
+        db.session.commit()
+        owner_id, template_id = source.created_by_id, template.id
+        with self.client.session_transaction() as session:
+            session["_user_id"] = str(owner_id)
+            session["_fresh"] = True
+        response = self.client.post(f"/communications/new?template_id={template_id}", data={
+            "name": "Single-recipient image test", "audience_type": "group", "message_body": "Hello {{1}}",
+        })
+        self.assertEqual(response.status_code, 302)
+        reused = CommunicationCampaign.query.filter_by(name="Single-recipient image test").one()
+        self.assertEqual(reused.image_data, b"test-image")
+        self.assertEqual(reused.image_mimetype, "image/jpeg")
+        self.assertIn(f"/communications/{reused.id}/image", reused.image_url)
 
     def test_scheduled_sender_saves_each_recipient(self):
         recipient = self._campaign_recipient()
@@ -429,3 +455,4 @@ class WhatsAppProcessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

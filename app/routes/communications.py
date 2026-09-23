@@ -398,6 +398,17 @@ def create_campaign():
                 flash("Campaign image is too large. Maximum size is 12 MB.", "danger")
                 return render_template("communications/create.html", selected_template=selected_template, products=products)
             image_mimetype = image.mimetype or {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".webp":"image/webp"}.get(ext, "application/octet-stream")
+        elif selected_template:
+            # Reused image templates still need a public header URL when sent.
+            # Keep our own copy so the new campaign does not depend on the
+            # original campaign remaining active.
+            source = selected_template.campaign
+            if source and source.image_data:
+                image_filename = source.image_filename
+                image_data = source.image_data
+                image_mimetype = source.image_mimetype
+            else:
+                image_url = selected_template.header_image_url or (source.image_url if source else None)
 
         campaign_name = (request.form.get("name") or "").strip()
         message_body = (request.form.get("message_body") or "").strip()
@@ -1223,3 +1234,4 @@ def whatsapp_webhook():
     """Backward-compatible webhook alias; the canonical Meta URL is /whatsapp/webhook."""
     from app.routes.whatsapp import webhook
     return webhook()
+
