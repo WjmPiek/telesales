@@ -76,6 +76,13 @@ class ApplicationFlowTests(unittest.TestCase):
             self.assertEqual(response.status_code, 302)
             self.assertIn('/sign/fictional-supporting-token/supporting-documents', mail.call_args.args[2])
         self.assertEqual(AuditLog.query.filter_by(action='Supporting upload reminder', entity_id=str(self.record_id)).count(), 1)
+        record = db.session.get(ClientApplication, self.record_id)
+        record.status = 'Active'
+        db.session.commit()
+        self.assertNotIn(b'Send secure document-upload email', self.client.get(f'/applications/{self.record_id}').data)
+        with patch('app.routes.signing.send_email') as mail:
+            self.client.post(f'/applications/{self.record_id}/send-supporting-link')
+            mail.assert_not_called()
 
     def test_versioned_bank_confirmation_letters_keep_history_and_current_attachment(self):
         from pypdf import PdfWriter

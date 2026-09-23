@@ -262,6 +262,9 @@ def send_supporting_link(app_id):
     if not a.signed_at or not a.sign_token:
         flash("The application must be signed before requesting supporting documents.", "danger")
         return redirect(url_for("applications.view_application", app_id=a.id))
+    if (a.whatsapp_journey and a.whatsapp_journey.activated_at) or str(a.status or "").lower() == "active":
+        flash("This policy is already active; no supporting-document reminder was sent.", "info")
+        return redirect(url_for("applications.view_application", app_id=a.id))
     if not (a.document_email or a.email):
         flash("Add the client's email address before sending the secure upload link.", "danger")
         return redirect(url_for("applications.view_application", app_id=a.id))

@@ -30,11 +30,15 @@
       <button class="btn btn-success">Send WhatsApp Signing Link</button>
     </form>
     {% else %}
+    {% if (app.whatsapp_journey and app.whatsapp_journey.activated_at) or app.status == 'Active' %}
+    <div class="alert alert-success">Policy active. Final approved documents have been issued through the activation process.</div>
+    {% else %}
     <div class="alert alert-info">Application signed, but the policy is not active yet. The client must upload each member's ID and proof of address through the secure email link. Complete the required checks before sending the final approved documents.</div>
     {% if upload_email_event %}<p><b>Latest secure upload email:</b> {{ upload_email_event.details }} {{ upload_email_event.created_at or '' }}</p>{% endif %}
     <form method="post" action="{{url_for('applications.send_supporting_link', app_id=app.id)}}">
       <button class="btn btn-outline-primary mb-3" type="submit">{{ 'Resend' if upload_email_event else 'Send' }} secure document-upload email</button>
     </form>
+    {% endif %}
     {% endif %}
 
 
