@@ -61,6 +61,22 @@ class ApplicationFlowTests(unittest.TestCase):
         user.role.name = 'Agent'; db.session.commit()
         self.assertEqual(self.client.post('/settings/email-templates', data=data).status_code, 403)
 
+    def test_agent_can_resend_secure_supporting_link_after_signing(self):
+        from datetime import datetime
+        from app.models import AuditLog
+        record = db.session.get(ClientApplication, self.record_id)
+        record.sign_token = 'fictional-supporting-token'
+        record.signed_at = datetime.utcnow()
+        record.status = 'FICA Outstanding'
+        db.session.commit()
+        page = self.client.get(f'/applications/{self.record_id}')
+        self.assertIn(b'Send secure document-upload email', page.data)
+        with patch('app.routes.signing.send_email', return_value=True) as mail:
+            response = self.client.post(f'/applications/{self.record_id}/send-supporting-link')
+            self.assertEqual(response.status_code, 302)
+            self.assertIn('/sign/fictional-supporting-token/supporting-documents', mail.call_args.args[2])
+        self.assertEqual(AuditLog.query.filter_by(action='Supporting upload reminder', entity_id=str(self.record_id)).count(), 1)
+
     def test_versioned_bank_confirmation_letters_keep_history_and_current_attachment(self):
         from pypdf import PdfWriter
         from app.models import BankConfirmationLetter
@@ -668,6 +684,10 @@ class ApplicationFlowTests(unittest.TestCase):
         completed=public.post(link,data={'action':'complete'})
         self.assertIn(b'Supporting documents received',completed.data)
         self.assertEqual(self.record.status,'FICA Review')
+        from app.models import AgentNotification, AuditLog
+        self.assertEqual(AgentNotification.query.filter_by(user_id=self.user_id, entity_id=self.record_id,
+                                                            title='Supporting documents ready for review').count(), 1)
+        self.assertEqual(AuditLog.query.filter_by(action='Supporting documents completed', entity_id=str(self.record_id)).count(), 1)
 
     def test_named_email_link_escapes_client_values(self):
         from app.services.email_service import signing_email_html

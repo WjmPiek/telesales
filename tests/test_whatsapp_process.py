@@ -245,6 +245,28 @@ class WhatsAppProcessTests(unittest.TestCase):
         self.assertEqual(int(application.requested_cover), 40000)
         self.assertEqual(int(application.cover_amount), 30000)
 
+    def test_recommendation_cross_checks_member_count_and_cover(self):
+        from app.routes.join import _product_choices
+        from app.services.compliance_service import classify_product_template
+        one = PolicyProduct(product_name="Principal Only", plan_name="R20k", cover_amount=20000, monthly_premium=100, active=True)
+        family = PolicyProduct(product_name="Family Eight", plan_name="R20k", cover_amount=20000, monthly_premium=110, active=True)
+        ten_30 = PolicyProduct(product_name="1 + 9 R30 000", plan_name="R30k", cover_amount=30000, monthly_premium=270, active=True)
+        ten_40 = PolicyProduct(product_name="Member +9 R40 000", plan_name="R40k", cover_amount=40000, monthly_premium=310, active=True)
+        larger_40 = PolicyProduct(product_name="Member +13 R40 000", plan_name="R40k", cover_amount=40000, monthly_premium=320, active=True)
+        db.session.add_all([one, family, ten_30, ten_40, larger_40]); db.session.flush()
+        db.session.add(PolicyProductRule(product_id=one.id, plan_type="single"))
+        db.session.commit()
+        self.assertEqual(classify_product_template(ten_30), 'member_product')
+        products, alternatives = _product_choices({"age": 40, "total_members": 1, "cover_amount": 40000})
+        self.assertTrue(alternatives)
+        self.assertEqual([p.id for p in products], [one.id])
+        products, alternatives = _product_choices({"age": 40, "total_members": 10, "cover_amount": 40000})
+        self.assertFalse(alternatives)
+        self.assertEqual([p.id for p in products], [ten_40.id])
+        products, alternatives = _product_choices({"age": 40, "total_members": 10, "cover_amount": 20000})
+        self.assertTrue(alternatives)
+        self.assertEqual([p.id for p in products], [ten_30.id, ten_40.id])
+
     def test_template_send_keeps_apply_callback_delete_order(self):
         from app.services.whatsapp_service import send_whatsapp_template_image
         response = Mock(status_code=200, content=b"json")

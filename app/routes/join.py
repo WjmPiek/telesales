@@ -49,12 +49,20 @@ def _product_choices(qualification):
         .filter(db.or_(PolicyProduct.max_age.is_(None), PolicyProduct.max_age >= age))
         .all()
     )
-    exact = [product for product in age_eligible
-             if Decimal(str(product.cover_amount or 0)) == cover and _product_capacity(product) >= total_members]
+    # A single applicant must never be offered a family or Member+ package.
+    candidates = [p for p in age_eligible if _product_capacity(p) == 1] if total_members == 1 else [
+        p for p in age_eligible if _product_capacity(p) >= total_members]
+    # Prefer the package that advertises precisely the requested member count.
+    # Only fall back to a larger family package if there is no such package.
+    matching_count = [p for p in candidates if _product_capacity(p) == total_members]
+    if matching_count:
+        candidates = matching_count
+    exact = [product for product in candidates
+             if Decimal(str(product.cover_amount or 0)) == cover]
     exact.sort(key=lambda product: (product.monthly_premium or 0, product.product_name or ""))
     if exact:
         return exact, False
-    alternatives = [product for product in age_eligible if _product_capacity(product) >= total_members]
+    alternatives = candidates
     alternatives.sort(key=lambda product: (
         abs(Decimal(str(product.cover_amount or 0)) - cover),
         0 if Decimal(str(product.cover_amount or 0)) <= cover else 1,

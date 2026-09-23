@@ -617,9 +617,14 @@ def supporting_documents(token):
                     raise ValueError("Please upload every required document before submitting: " +
                                      ", ".join(allowed[key] for key in outstanding))
                 app_obj.status = "FICA Review"
-                from app.models import AuditLog
+                from app.models import AgentNotification, AuditLog
                 db.session.add(AuditLog(action="Supporting documents completed", entity_type="ClientApplication",
                                         entity_id=str(app_obj.id), details="Client submitted all member identity documents and proof of address for staff review."))
+                if app_obj.agent_id:
+                    db.session.add(AgentNotification(user_id=app_obj.agent_id,
+                        title="Supporting documents ready for review",
+                        message=f"Application {app_obj.application_ref}: review the member IDs and proof of address before finalising.",
+                        notification_type="application", entity_type="ClientApplication", entity_id=app_obj.id))
                 db.session.commit()
                 session.pop(_unlocked_key(app_obj.id), None)
                 return render_template("sign/supporting_complete.html", app=app_obj)
@@ -636,6 +641,34 @@ def supporting_documents(token):
             latest.setdefault(doc.document_type, doc)
     return render_template("sign/supporting_documents.html", app=app_obj, token=token, requirements=requirements,
                            received=received, outstanding=outstanding, latest=latest, error=error)
+
+
+def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False):
+    """Send the post-signing upload link and retain an auditable delivery result."""
+    from app.models import AgentNotification, AuditLog
+    from app.services.email_service import client_email_content, signing_email_html
+    recipient = (app_obj.document_email or app_obj.email or "").strip()
+    sent = False
+    if recipient and app_obj.sign_token:
+        base_url = (current_app.config.get("BASE_URL") or request.url_root).rstrip("/")
+        upload_link = base_url + url_for("signing.supporting_documents", token=app_obj.sign_token)
+        subject, body = client_email_content("supporting", app_obj, upload_link)
+        try:
+            sent = send_email(recipient, subject, body, [],
+                html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
+                application_id=app_obj.id)
+        except Exception:
+            current_app.logger.exception("Supporting upload email failed for application %s", app_obj.id)
+    action = "Supporting upload reminder" if reminder else "Supporting upload invitation"
+    db.session.add(AuditLog(user_id=actor_id, action=action, entity_type="ClientApplication",
+        entity_id=str(app_obj.id), details="Email accepted by mail server." if sent else "Email delivery failed or recipient missing."))
+    if not sent and app_obj.agent_id:
+        db.session.add(AgentNotification(user_id=app_obj.agent_id,
+            title="Supporting document email needs attention",
+            message=f"Application {app_obj.application_ref}: the secure upload email was not sent. Check the client's email and retry from the application page.",
+            notification_type="application", entity_type="ClientApplication", entity_id=app_obj.id))
+    db.session.commit()
+    return sent
 
 
 def finish_application(app_obj, token):
@@ -712,13 +745,7 @@ def finish_application(app_obj, token):
         ))
     db.session.commit()
     session.pop(_unlocked_key(app_obj.id), None)
-    if recipient:
-        from app.services.email_service import client_email_content, signing_email_html
-        upload_link = current_app.config['BASE_URL'].rstrip('/') + url_for('signing.supporting_documents', token=token)
-        subject, body = client_email_content("supporting", app_obj, upload_link)
-        send_email(recipient, subject, body, [],
-                   html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
-                   application_id=app_obj.id)
+    upload_email_sent = send_supporting_upload_email(app_obj)
     office_email = os.getenv("MAIL_DOCUMENTS_TO")
     from email.utils import parseaddr
     if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
@@ -733,4 +760,4 @@ def finish_application(app_obj, token):
         send_email(office_email, "Signed documents received: " + app_obj.application_ref,
                    office_body, html_body=signing_email_html(app_obj,app_link,office_body), application_id=app_obj.id)
     db.session.commit()
-    return render_template("sign/complete.html", app=app_obj)
+    return render_template("sign/complete.html", app=app_obj, upload_email_sent=upload_email_sent)

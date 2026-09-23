@@ -3,10 +3,11 @@ import io
 import base64
 from pathlib import Path
 from datetime import date
+from datetime import datetime
 from unittest.mock import patch
 import test_application_flow as fixtures
 from app import db
-from app.models import (CommunicationCampaign, CommunicationEvent, ApplicationJourney, ClientApplication,
+from app.models import (AgentNotification, AuditLog, CommunicationCampaign, CommunicationEvent, ApplicationJourney, ClientApplication,
                         ClientFicaDocument, DocumentSignature, PolicyProductRule, SystemSetting)
 from app.services.client_storage import application_folder, store_document
 from app.services.cdd_service import FIELDS as CDD_FIELDS
@@ -307,6 +308,24 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertIn('client@example.test',text)
         self.assertIn('1 Example Road',text)
 
+    def test_supporting_email_failure_is_logged_and_can_be_retried(self):
+        from app.routes.signing import send_supporting_upload_email
+        self.record.sign_token = 'fictional-online-test'
+        self.record.signed_at = datetime.utcnow()
+        self.record.document_email = 'client@example.test'
+        db.session.commit()
+        with self.app.test_request_context('/'):
+            with patch('app.routes.signing.send_email', return_value=False):
+                self.assertFalse(send_supporting_upload_email(self.record))
+            failure = AuditLog.query.filter_by(action='Supporting upload invitation', entity_id=str(self.record_id)).one()
+            self.assertIn('failed', failure.details)
+            self.assertEqual(AgentNotification.query.filter_by(entity_id=self.record_id).count(), 1)
+            with patch('app.routes.signing.send_email', return_value=True) as mail:
+                self.assertTrue(send_supporting_upload_email(self.record, actor_id=self.user_id, reminder=True))
+                self.assertIn('/sign/fictional-online-test/supporting-documents', mail.call_args.args[2])
+            reminder = AuditLog.query.filter_by(action='Supporting upload reminder', entity_id=str(self.record_id)).one()
+            self.assertIn('accepted', reminder.details)
+
     def test_full_whatsapp_questionnaire_signature_and_activation(self):
         client,nonce=self.prepare();self.save(client,nonce)
         data={'nonce':nonce,'action':'final_submit','document_email':'client@example.test','document_email_confirm':'client@example.test'}
@@ -317,6 +336,7 @@ class OnlineApplicationTests(unittest.TestCase):
             response=client.post('/online-application/fictional-online-test',data=data)
             self.assertEqual(response.status_code,200)
             self.assertIn(b'Documents Submitted',response.data)
+            self.assertIn(b'secure link', response.data)
             self.assertEqual(mail.call_args_list[0].args[3],[])
             self.assertIn('awaiting verification',mail.call_args_list[0].args[2])
             self.assertIn('not active yet',mail.call_args_list[0].args[2])

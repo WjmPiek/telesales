@@ -22,7 +22,7 @@
     <p><b>Joining Fee:</b> R{{app.joining_fee or 0}}</p>
     {% if member_benefits %}<h5>Covered family members</h5><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Member</th><th>Relationship</th><th>ID / date of birth</th><th>Cover</th><th>Waiting period</th></tr></thead><tbody>{% for row in member_benefits %}<tr><td>{{row.full_name}}</td><td>{{row.relationship or row.kind|title}}</td><td>{{row.id_or_dob}}</td><td>R{{row.cover}}</td><td>{{row.waiting_period}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 
-    {% if app.status != 'Signed' %}
+    {% if not app.signed_at %}
     <form method="post" action="{{url_for('applications.send_sign_link', app_id=app.id)}}" style="display:inline-block;">
       <button class="btn btn-primary">{{'Send WhatsApp application form' if app.whatsapp_journey else 'Send Signing Link (Email first, then WhatsApp)'}}</button>
     </form>
@@ -30,7 +30,11 @@
       <button class="btn btn-success">Send WhatsApp Signing Link</button>
     </form>
     {% else %}
-    <div class="alert alert-success">Application signed. Documents are stored securely. A confirmation email is sent when email delivery is available.</div>
+    <div class="alert alert-info">Application signed, but the policy is not active yet. The client must upload each member's ID and proof of address through the secure email link. Complete the required checks before sending the final approved documents.</div>
+    {% if upload_email_event %}<p><b>Latest secure upload email:</b> {{ upload_email_event.details }} {{ upload_email_event.created_at or '' }}</p>{% endif %}
+    <form method="post" action="{{url_for('applications.send_supporting_link', app_id=app.id)}}">
+      <button class="btn btn-outline-primary mb-3" type="submit">{{ 'Resend' if upload_email_event else 'Send' }} secure document-upload email</button>
+    </form>
     {% endif %}
 
 

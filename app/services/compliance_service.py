@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 
 
@@ -79,12 +80,16 @@ def product_text(product):
 
 
 def classify_product_template(product):
+    text = product_text(product)
+    # Imported "1 + N" packages may have no rule row yet; their advertised
+    # member count still determines both the form and recommendation capacity.
+    if re.search(r'(?:\bmember\s*\+\s*|\b1\s*\+\s*)\d+\b', text):
+        return 'member_product'
     configured = str(getattr(getattr(product, 'rules', None), 'plan_type', '') or '').strip().lower()
     if configured == 'member_product':
         return 'member_product'
     if configured in {'single', 'family'}:
         return 'single_family'
-    text = product_text(product)
     if 'member +' in text or 'member+' in text or ('product' in text and ('+' in text or 'member' in text)):
         return 'member_product'
     return 'single_family'

@@ -24,7 +24,12 @@
     <div class="check mx-auto mb-3">✓</div>
     <h1 class="fw-bold" style="color:var(--mf-purple)">Documents Submitted</h1>
     <p class="lead">{{ message or 'Thank you. Your application documents have been signed and submitted securely.' }}</p>
-    <div class="alert alert-success rounded-4 mt-3">Your signing link is now locked. Martin's Funerals will continue processing your application.</div>
+    <div class="alert alert-success rounded-4 mt-3">Your signing link is now locked. Your policy is not active yet; Martin's Funerals will review your documents before final approval.</div>
+    {% if upload_email_sent %}
+    <p>A separate email has been sent to {{ app.document_email or app.email }} with a secure link. Please use it to upload an ID document for every member on the policy and the principal member's proof of address. Your agent will then finalise the application and email the approved documents.</p>
+    {% else %}
+    <div class="alert alert-warning">We could not send the secure document-upload email yet. Your signed application has been saved. Please contact Martin's Funerals to check your email address; your agent can resend the link.</div>
+    {% endif %}
     <div class="footer-note mt-4">Martin's Funerals | An Authorised Financial Service Provider (FSP 48189)</div>
   </div>
 </div>

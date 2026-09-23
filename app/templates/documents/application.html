@@ -7,6 +7,13 @@
   <a class="btn btn-outline-secondary" href="{{url_for('applications.view_application', app_id=app.id)}}">Back to Application</a><a class="btn btn-outline-primary" href="{{url_for('qa.review_application',app_id=app.id)}}">Quality Review</a>
 </div>
 
+{% if app.signed_at %}
+<div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <span>Client ID documents and proof of address are collected through the secure post-signing upload link.</span>
+  <form method="post" action="{{url_for('applications.send_supporting_link', app_id=app.id)}}"><button class="btn btn-sm btn-outline-primary">Resend secure upload email</button></form>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-3">
   <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Completion</div><h3>{{summary.completion_percent}}%</h3></div></div></div>
   <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Missing / Rejected</div><h3>{{summary.missing|length}}</h3></div></div></div>
@@ -16,10 +23,10 @@
 {% if summary.missing %}
 <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div><b>Missing items:</b> {% for row in summary.missing %}{{row.label}}{% if not loop.last %}, {% endif %}{% endfor %}</div>
-  <div class="d-flex gap-2">
+  {% if not app.signed_at %}<div class="d-flex gap-2">
     <form method="post" action="{{url_for('documents.resend_missing', app_id=app.id, channel='email')}}"><button class="btn btn-sm btn-outline-primary">Resend Email Request</button></form>
     <form method="post" action="{{url_for('documents.resend_missing', app_id=app.id, channel='whatsapp')}}"><button class="btn btn-sm btn-outline-success">Resend WhatsApp Request</button></form>
-  </div>
+  </div>{% endif %}
 </div>
 {% endif %}
 

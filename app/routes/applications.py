@@ -244,8 +244,33 @@ def view_application(app_id):
         member_benefits = json.loads(a.product_dependents_json or '[]')
     except (TypeError, ValueError):
         member_benefits = []
+    from app.models import AuditLog
+    upload_email_event = (AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(a.id))
+                          .filter(AuditLog.action.in_(["Supporting upload invitation", "Supporting upload reminder"]))
+                          .order_by(AuditLog.id.desc()).first())
     return render_template("applications/view.html", app=a, member_benefits=member_benefits,
-                           document_summary=document_summary(a), screening=latest_screening(a))
+                           document_summary=document_summary(a), screening=latest_screening(a),
+                           upload_email_event=upload_email_event)
+
+
+@applications_bp.route("/<int:app_id>/send-supporting-link", methods=["POST"])
+@login_required
+@permission_required("applications.view")
+def send_supporting_link(app_id):
+    a = ClientApplication.query.get_or_404(app_id)
+    ensure_branch_access(a, agent_attr="agent_id")
+    if not a.signed_at or not a.sign_token:
+        flash("The application must be signed before requesting supporting documents.", "danger")
+        return redirect(url_for("applications.view_application", app_id=a.id))
+    if not (a.document_email or a.email):
+        flash("Add the client's email address before sending the secure upload link.", "danger")
+        return redirect(url_for("applications.view_application", app_id=a.id))
+    from app.routes.signing import send_supporting_upload_email
+    sent = send_supporting_upload_email(a, actor_id=current_user.id, reminder=True)
+    flash("Secure document-upload email accepted by the mail server." if sent else
+          "The secure document-upload email failed. Check the address and email service, then retry.",
+          "success" if sent else "danger")
+    return redirect(url_for("applications.view_application", app_id=a.id))
 
 
 def _client_salutation(app_obj):
