@@ -11,7 +11,7 @@
       <form method="post">
         <div class="row">
         {% for key, label in checklist %}
-          <div class="col-md-6 mb-2"><div class="form-check"><input class="form-check-input" type="checkbox" id="{{ key }}" name="{{ key }}" {% if checklist_defaults.get(key) %}checked{% endif %}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div></div>
+          <div class="col-md-6 mb-2"><div class="form-check"><input class="form-check-input" type="checkbox" id="{{ key }}" name="{{ key }}" {% if checklist_defaults.get(key) %}checked{% endif %} {% if cash_payment and key == 'debit_order' %}disabled{% endif %}><label class="form-check-label" for="{{ key }}">{{ 'Debit order authority — not applicable (cash payment)' if cash_payment and key == 'debit_order' else label }}</label></div></div>
         {% endfor %}
         </div>
         {% if app.whatsapp_journey %}<div class="alert alert-info">Completing verification activates this policy and emails the client. Confirm the issued policy details below.</div><label>Issued policy number</label><input class="form-control" name="policy_number" value="{{app.policy_number or ''}}"><label>Policy start date</label><input class="form-control" type="date" name="start_date" value="{{app.inception_date or ''}}">{% endif %}

@@ -568,10 +568,26 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertFalse(ensure_screened(self.record)[0])
         response=self.upload_screening()
         self.assertIn(b'screenshots saved',response.data)
+        self.assertIn(b'QA Review: TEST-ONLY',response.data)
         self.assertTrue(ensure_screened(self.record)[0]);self.assertEqual(latest(self.record).status,'Employee checked')
         stored=ClientStoredFile.query.one();self.assertTrue(stored.content.startswith(b'\x89PNG'))
         self.record.surname='Changed';db.session.commit()
         self.assertFalse(ensure_screened(self.record)[0])
+
+    def test_screening_page_has_quality_review_step(self):
+        response=self.client.get(f'/applications/{self.record_id}/screening')
+        self.assertIn(b'Continue to quality review',response.data)
+        self.assertIn(f'/qa/application/{self.record_id}'.encode(),response.data)
+
+    def test_cash_qa_debit_order_is_not_applicable_and_blocker_is_specific(self):
+        from app.models import ComplianceReview
+        page=self.client.get(f'/qa/application/{self.record_id}')
+        self.assertIn(b'not applicable (cash payment)',page.data)
+        response=self.client.post(f'/qa/application/{self.record_id}',data={'decision':'QA Approved'},follow_redirects=True)
+        self.assertIn(b'Approval blocked: confirm the remaining QA checklist items:',response.data)
+        self.assertIn(b'POPIA confirmed',response.data)
+        self.assertNotIn(b'confirm the remaining QA checklist items: Debit order authority confirmed',response.data)
+        self.assertEqual(ComplianceReview.query.count(),0)
 
     def test_possible_match_blocks_until_admin_review(self):
         from app.services.screening_service import ensure_screened,latest

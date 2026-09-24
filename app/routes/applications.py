@@ -504,6 +504,8 @@ def screening_review(app_id):
                 if checked.tzinfo is not None:raise ValueError('Use the South African local date and time.')
                 save_employee_check(a,request.files.getlist('screenshots'),request.form.get('outcome'),(request.form.get('notes') or '').strip(),checked,current_user.id)
                 db.session.commit();flash('FIC check and screenshots saved with the application.','success')
+                if request.form.get('outcome') == 'no_match':
+                    return redirect(url_for('qa.review_application', app_id=a.id))
             except (ValueError,TypeError) as exc:
                 db.session.rollback();flash(str(exc),'danger')
         elif request.form.get('action')=='review':
@@ -515,7 +517,8 @@ def screening_review(app_id):
             else:
                 screening.reviewed_by=current_user.id;screening.reviewed_at=datetime.utcnow();screening.review_notes=notes;screening.status='Reviewed'
                 db.session.add(AuditLog(action='FIC_STAFF_REVIEW',entity_type='ClientApplication',entity_id=str(a.id),details='Screening '+str(screening.id)+' reviewed by user '+str(current_user.id)))
-                db.session.commit();flash('Staff review recorded. You may send the signing link from the application.','success')
+                db.session.commit();flash('Staff review recorded. Continue with quality review.','success')
+                return redirect(url_for('qa.review_application', app_id=a.id))
         return redirect(url_for('applications.screening_review',app_id=a.id))
     paths=json.loads(screening.evidence_json) if screening else []
     evidence=ClientStoredFile.query.filter(ClientStoredFile.application_id==a.id,ClientStoredFile.relative_path.in_(paths)).all() if paths else []

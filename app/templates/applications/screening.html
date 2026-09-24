@@ -15,4 +15,4 @@
 <label for="notes">Searches performed and findings</label><textarea id="notes" class="form-control mb-3" name="notes" minlength="10" maxlength="3000" required></textarea>
 <label for="screenshots">Result screenshots (PNG/JPEG, up to 5 files, 10 MB each)</label><input id="screenshots" class="form-control mb-3" type="file" name="screenshots" accept="image/png,image/jpeg" multiple required>
 <label><input type="checkbox" name="confirmed" value="yes" required> I performed the ID and name searches for this client and attached the result evidence.</label><button class="btn btn-primary mt-3">Save FIC check and screenshots</button></form>
-<a href="{{url_for('applications.view_application',app_id=app.id)}}">Back to application</a>{% endblock %}
+<div class="d-flex gap-2 flex-wrap mb-3"><a class="btn btn-primary" href="{{url_for('qa.review_application',app_id=app.id)}}">Continue to quality review</a><a class="btn btn-outline-secondary" href="{{url_for('applications.view_application',app_id=app.id)}}">Back to application</a></div>{% endblock %}

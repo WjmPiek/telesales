@@ -23,6 +23,10 @@ QA_CHECKLIST = [
     ('no_red_flags', 'No unresolved red flags or complaints'),
 ]
 
+
+def _cash_payment(app):
+    return (app.payment_method or '').strip().casefold() == 'cash'
+
 def _role_name():
     return str(getattr(getattr(current_user, 'role', None), 'name', '') or '').lower().replace('_', ' ')
 
@@ -106,10 +110,13 @@ def review_application(app_id):
             flash('Invalid review decision.', 'danger')
             return redirect(url_for('qa.review_application', app_id=app.id))
         checked = {key: (request.form.get(key) == 'on') for key, _ in QA_CHECKLIST}
+        if _cash_payment(app):
+            checked['debit_order'] = True  # Not applicable: no debit-order authority exists for cash.
         score = round(sum(1 for ok in checked.values() if ok) / len(QA_CHECKLIST) * 100)
         notes = request.form.get('notes') or ''
         if decision in {'QA Approved', 'Compliance Approved'} and score < 100:
-            flash('Approval blocked: all QA checklist items must be ticked before approving.', 'danger')
+            outstanding = [label for key, label in QA_CHECKLIST if not checked[key]]
+            flash('Approval blocked: confirm the remaining QA checklist items: ' + '; '.join(outstanding) + '.', 'danger')
             return redirect(url_for('qa.review_application', app_id=app.id))
 
         if decision in {'QA Approved', 'Compliance Approved'}:
@@ -161,6 +168,8 @@ def review_application(app_id):
         return redirect(url_for('qa.qa_dashboard'))
 
     checklist_defaults = {key: False for key, _ in QA_CHECKLIST}
+    if _cash_payment(app):
+        checklist_defaults['debit_order'] = True
     if app.signed_at:
         checklist_defaults['signature_complete'] = True
     if all(row['status'] == 'Approved' for row in document_summary(app)['rows'] if row['key'] in document_summary(app)['required_fica_types']):
@@ -168,7 +177,7 @@ def review_application(app_id):
     if script and script.status == 'Completed':
         for key in ['popia_confirmed', 'product_explained', 'premium_confirmed', 'waiting_periods', 'debit_order', 'contact_details']:
             checklist_defaults[key] = True
-    return render_template('qa/review_application.html', app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults)
+    return render_template('qa/review_application.html', app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
 
 @qa_bp.route('/fica/<int:doc_id>/<decision>', methods=['POST'])
 @login_required
