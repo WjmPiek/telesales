@@ -15,6 +15,7 @@ from app.services.pdf_service import generate_application_pdf, generate_welcome_
 from app.services.compliance_service import only_digits, format_dob, dob_from_sa_id, is_valid_sa_id, validate_age_limit, classify_product_template, assert_application_rules
 from app.services.document_status_service import document_summary
 from app.services.branch_access import scope_by_branch, ensure_branch_access
+from email_validator import EmailNotValidError, validate_email
 
 applications_bp = Blueprint("applications", __name__, url_prefix="/applications")
 
@@ -248,9 +249,74 @@ def view_application(app_id):
     upload_email_event = (AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(a.id))
                           .filter(AuditLog.action.in_(["Supporting upload invitation", "Supporting upload reminder"]))
                           .order_by(AuditLog.id.desc()).first())
+    office_email_event = (AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(a.id),
+                                                   action="Office signed pack sent")
+                          .order_by(AuditLog.id.desc()).first())
     return render_template("applications/view.html", app=a, member_benefits=member_benefits,
                            document_summary=document_summary(a), screening=latest_screening(a),
-                           upload_email_event=upload_email_event)
+                           upload_email_event=upload_email_event, office_email_event=office_email_event,
+                           office_prompt=request.args.get("office_prompt") == "1")
+
+
+@applications_bp.route("/<int:app_id>/send-office-documents", methods=["POST"])
+@login_required
+@permission_required("applications.view")
+def send_office_documents(app_id):
+    """Send the already-issued, signed policy pack to a staff-entered office address."""
+    from pathlib import Path
+    from app.models import AuditLog
+
+    application = ClientApplication.query.get_or_404(app_id)
+    ensure_branch_access(application, agent_attr="agent_id")
+    journey = application.whatsapp_journey
+    if not journey or not journey.activated_at or journey.notice_status != "Sent" or application.status != "Active":
+        flash("Send the final approved policy email to the client before sending an office copy.", "danger")
+        return redirect(url_for("applications.view_application", app_id=app_id))
+
+    entered = (request.form.get("office_email") or "").strip()
+    try:
+        office_email = validate_email(entered, check_deliverability=False).normalized
+    except EmailNotValidError:
+        flash("Enter a valid office email address before sending the documents.", "danger")
+        return redirect(url_for("applications.view_application", app_id=app_id, office_prompt=1))
+
+    folder = Path(application_folder(application))
+    filenames = [f"signed_application_{app_id}.pdf", f"welcome_pack_{app_id}.pdf",
+                 f"popia_consent_{app_id}.pdf", f"policy_disclosure_{app_id}.pdf",
+                 f"annexure_j1_{app_id}.pdf"]
+    attachments = [folder / name for name in filenames]
+
+    def valid_pdf(path):
+        if not path.is_file():
+            return False
+        with path.open("rb") as file:
+            return file.read(4) == b"%PDF"
+
+    if not all(valid_pdf(path) for path in attachments):
+        flash("The complete signed document pack is not available. No office email was sent; ask an administrator to check the stored documents.", "danger")
+        return redirect(url_for("applications.view_application", app_id=app_id))
+
+    subject = f"Approved policy documents for office filing: {application.application_ref}"
+    body = (f"Approved policy {application.policy_number or application.application_ref} for "
+            f"{application.first_names or ''} {application.surname or ''}.\n\n"
+            "The signed application, welcome pack acknowledgement, POPIA consent, policy disclosure "
+            "and Annexure J.1 are attached for printing and secure office filing. "
+            "Please handle these documents as confidential client information.")
+    try:
+        sent = send_email(office_email, subject, body, [str(path) for path in attachments], application_id=app_id)
+    except Exception:
+        current_app.logger.exception("Office document delivery failed for application %s", app_id)
+        sent = False
+    db.session.add(AuditLog(user_id=current_user.id,
+                            action="Office signed pack sent" if sent else "Office signed pack failed",
+                            entity_type="ClientApplication", entity_id=str(app_id),
+                            details=f"Office recipient: {office_email}. Five PDF attachments. " +
+                                    ("Accepted by mail server." if sent else "Delivery failed.")))
+    db.session.commit()
+    flash("Signed document pack sent to the office." if sent else
+          "Office email failed. Check the address and mail service, then try again.",
+          "success" if sent else "danger")
+    return redirect(url_for("applications.view_application", app_id=app_id))
 
 
 @applications_bp.route("/<int:app_id>/send-supporting-link", methods=["POST"])

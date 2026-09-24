@@ -163,7 +163,7 @@ def review_application(app_id):
             from app.services.online_application import notify_activation
             sent=notify_activation(app)
             flash('Verification completed. Policy is active. '+('Confirmation email sent.' if sent else 'Confirmation email failed; retry from the application.'), 'success' if sent else 'warning')
-            return redirect(url_for('applications.view_application', app_id=app.id))
+            return redirect(url_for('applications.view_application', app_id=app.id, office_prompt=1 if sent else None))
         flash(f'{decision} saved with QA score {score}%.', 'success')
         return redirect(url_for('qa.qa_dashboard'))
 
@@ -211,4 +211,4 @@ def retry_confirmation(app_id):
     from app.services.online_application import notify_activation
     sent=notify_activation(app)
     flash('Confirmation email sent.' if sent else 'Email delivery failed. Check email settings and try again.','success' if sent else 'danger')
-    return redirect(url_for('applications.view_application',app_id=app.id))
+    return redirect(url_for('applications.view_application',app_id=app.id,office_prompt=1 if sent else None))
