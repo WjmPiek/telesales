@@ -357,6 +357,12 @@ def create_app():
     except Exception:
         pass
 
+    # Keep this small, new scheduling table available even when general
+    # AUTO_CREATE_TABLES is disabled on a production deployment.
+    with app.app_context():
+        from app.models import SupportingDocumentReminder
+        SupportingDocumentReminder.__table__.create(db.engine, checkfirst=True)
+
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, int(user_id))
@@ -376,6 +382,11 @@ def create_app():
         synced = sync_due_templates(limit=50)
         print({"jobs": stats, "templates_synced": synced})
 
+    @app.cli.command("process-document-reminders")
+    def process_document_reminders_command():
+        from app.services.document_reminders import process_document_reminders
+        print(process_document_reminders())
+
     # One-worker Render deployments can safely run this lightweight scheduler.
     # Set ENABLE_WHATSAPP_SCHEDULER=0 if a dedicated worker/cron service is used.
     if os.getenv("ENABLE_WHATSAPP_SCHEDULER", "1").lower() in {"1", "true", "yes"}:
@@ -392,6 +403,11 @@ def create_app():
                         process_scheduled_campaigns(limit=10)
                     except Exception:
                         app.logger.exception("Automatic WhatsApp template monitor failed")
+                    try:
+                        from app.services.document_reminders import process_document_reminders
+                        process_document_reminders(limit=25)
+                    except Exception:
+                        app.logger.exception("Automatic supporting-document reminders failed")
             scheduler.add_job(_whatsapp_tick, "interval", seconds=60, id="whatsapp_provider_monitor", replace_existing=True, max_instances=1, coalesce=True)
             scheduler.start()
             app.extensions["whatsapp_scheduler"] = scheduler

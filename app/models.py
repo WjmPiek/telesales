@@ -321,6 +321,17 @@ class ClientApplication(db.Model):
     lapsed_policy = db.relationship("LapsedPolicy")
     signatures = db.relationship("ApplicationSignature", backref="application", lazy=True)
 
+class SupportingDocumentReminder(db.Model):
+    __tablename__ = "supporting_document_reminders"
+    application_id = db.Column(db.Integer, db.ForeignKey("client_applications.id", ondelete="CASCADE"), primary_key=True)
+    started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    first_sent_at = db.Column(db.DateTime)
+    last_sent_at = db.Column(db.DateTime)
+    last_attempt_at = db.Column(db.DateTime)
+    cancelled_at = db.Column(db.DateTime)
+    application = db.relationship("ClientApplication")
+
+
 class ApplicationSignature(db.Model):
     __tablename__ = "application_signatures"
     id = db.Column(db.Integer, primary_key=True)

@@ -6,7 +6,7 @@ import os, base64, json, secrets, io
 from pypdf import PdfReader
 from PIL import Image, ImageChops
 from datetime import datetime
-from flask import Blueprint, render_template, request, current_app, abort, send_file, session, redirect, url_for, flash
+from flask import Blueprint, render_template, request, current_app, abort, send_file, session, redirect, url_for, flash, has_request_context
 from werkzeug.utils import secure_filename
 from app import db
 from sqlalchemy import MetaData, Table
@@ -605,6 +605,9 @@ def supporting_documents(token):
                 row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
                 required, received, outstanding, docs = _fica_status(app_obj)
                 app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
+                if not outstanding:
+                    from app.services.document_reminders import cancel_document_reminders
+                    cancel_document_reminders(app_obj.id)
                 from app.models import AuditLog
                 db.session.add(AuditLog(action="Supporting document submitted", entity_type="ClientApplication",
                                         entity_id=str(app_obj.id), details=f"Client uploaded {allowed[doc_type]} for staff review."))
@@ -617,6 +620,8 @@ def supporting_documents(token):
                     raise ValueError("Please upload every required document before submitting: " +
                                      ", ".join(allowed[key] for key in outstanding))
                 app_obj.status = "FICA Review"
+                from app.services.document_reminders import cancel_document_reminders
+                cancel_document_reminders(app_obj.id)
                 from app.models import AgentNotification, AuditLog
                 db.session.add(AuditLog(action="Supporting documents completed", entity_type="ClientApplication",
                                         entity_id=str(app_obj.id), details="Client submitted all member identity documents and proof of address for staff review."))
@@ -643,23 +648,37 @@ def supporting_documents(token):
                            received=received, outstanding=outstanding, latest=latest, error=error)
 
 
-def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False):
+def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, reminder_stage=None, commit=True):
     """Send the post-signing upload link and retain an auditable delivery result."""
     from app.models import AgentNotification, AuditLog
     from app.services.email_service import client_email_content, signing_email_html
     recipient = (app_obj.document_email or app_obj.email or "").strip()
     sent = False
     if recipient and app_obj.sign_token:
-        base_url = (current_app.config.get("BASE_URL") or request.url_root).rstrip("/")
-        upload_link = base_url + url_for("signing.supporting_documents", token=app_obj.sign_token)
+        base_url = (current_app.config.get("BASE_URL") or (request.url_root if has_request_context() else "")).rstrip("/")
+        if not base_url:
+            current_app.logger.error("BASE_URL is required for automated supporting document reminders")
+            return False
+        if has_request_context():
+            upload_path = url_for("signing.supporting_documents", token=app_obj.sign_token)
+        else:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(base_url)
+            adapter = current_app.url_map.bind(parsed.netloc, url_scheme=parsed.scheme)
+            upload_path = adapter.build("signing.supporting_documents", {"token": app_obj.sign_token})
+        upload_link = base_url + upload_path
         subject, body = client_email_content("supporting", app_obj, upload_link)
+        if reminder_stage:
+            subject = ("Final reminder" if reminder_stage == 2 else "Reminder") + ": upload documents for " + app_obj.application_ref
+            body = ("This is your final reminder.\n\n" if reminder_stage == 2 else "This is a reminder.\n\n") + body
         try:
             sent = send_email(recipient, subject, body, [],
                 html_body=signing_email_html(app_obj, upload_link, body, "Secure supporting document upload"),
                 application_id=app_obj.id)
         except Exception:
             current_app.logger.exception("Supporting upload email failed for application %s", app_obj.id)
-    action = "Supporting upload reminder" if reminder else "Supporting upload invitation"
+    action = (f"Automated supporting reminder {reminder_stage}" if reminder_stage else
+              "Supporting upload reminder" if reminder else "Supporting upload invitation")
     db.session.add(AuditLog(user_id=actor_id, action=action, entity_type="ClientApplication",
         entity_id=str(app_obj.id), details="Email accepted by mail server." if sent else "Email delivery failed or recipient missing."))
     if not sent and app_obj.agent_id:
@@ -667,7 +686,8 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False):
             title="Supporting document email needs attention",
             message=f"Application {app_obj.application_ref}: the secure upload email was not sent. Check the client's email and retry from the application page.",
             notification_type="application", entity_type="ClientApplication", entity_id=app_obj.id))
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return sent
 
 
@@ -746,6 +766,8 @@ def finish_application(app_obj, token):
     db.session.commit()
     session.pop(_unlocked_key(app_obj.id), None)
     upload_email_sent = send_supporting_upload_email(app_obj)
+    from app.services.document_reminders import schedule_document_reminders
+    schedule_document_reminders(app_obj)
     office_email = os.getenv("MAIL_DOCUMENTS_TO")
     from email.utils import parseaddr
     if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():

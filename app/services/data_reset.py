@@ -34,6 +34,7 @@ from app.models import (
     DocumentSignature,
     LapsedPolicy,
     RecoveryCallLog,
+    SupportingDocumentReminder,
     TelesalesScriptSession,
     WhatsAppAuditEvent,
     WhatsAppContact,
@@ -133,6 +134,7 @@ def reset_operational_data():
     ComplianceReview.query.delete(synchronize_session=False)
     TelesalesScriptSession.query.delete(synchronize_session=False)
     ClientCommunication.query.delete(synchronize_session=False)
+    SupportingDocumentReminder.query.delete(synchronize_session=False)
     ClientApplication.query.delete(synchronize_session=False)
 
     # Delivery/inbox history is removed. Template definitions, provider IDs and
