@@ -227,10 +227,59 @@ class CompanyManagementTests(unittest.TestCase):
         download = self.get('/static/templates/company_policy_import_blank_template.xlsx')
         self.assertEqual(download.status_code, 200)
         book = __import__('openpyxl').load_workbook(BytesIO(download.data), read_only=True, data_only=True)
-        self.assertEqual(book.sheetnames, ['READ_ME', 'CLIENTS', 'COVERED_MEMBERS'])
+        self.assertEqual(book.sheetnames, ['POLICY_IMPORT'])
         self.assertFalse(any(any(cell is not None for cell in row)
-                             for row in book['COVERED_MEMBERS'].iter_rows(min_row=2, values_only=True)))
+                             for row in book['POLICY_IMPORT'].iter_rows(min_row=2, values_only=True)))
         book.close()
+
+    def test_one_sheet_import_creates_one_policy_and_individual_member_covers(self):
+        from app.services.compliance_service import is_valid_sa_id
+        def valid_id(prefix):
+            return next(prefix + str(digit) for digit in range(10)
+                        if is_valid_sa_id(prefix + str(digit)))
+        principal = valid_id('800101500908')
+        child = valid_id('100101500908')
+        workbook = Workbook(); sheet = workbook.active; sheet.title = 'POLICY_IMPORT'
+        sheet.append(['Company', 'Branch', 'Region', 'Policy_Number', 'PolicyStatus',
+                      'ProductName', 'ProductCover', 'Principal_ID_Number', 'Surname', 'Initials',
+                      'Cell_Number', 'Email Address', 'Address', 'PremiumDue', 'Total',
+                      'PaymentMethod', 'LastDatePaid', 'Member_Relationship', 'Member_Name',
+                      'Member_ID_Number', 'MemberCover'])
+        base = ['Northcliff', 'NORTHCLIFF', 'Gauteng', 'POL-ONE', 'Active',
+                'Family Plan', 40000, principal, 'Example', 'A', '0821234567',
+                'a@example.com', 'Example Street', 300, 480, 'Cash', None]
+        sheet.append(base + ['Principal', 'A Example', principal, 40000])
+        sheet.append(base + ['Child', 'B Example', child, 10000])
+        output = BytesIO(); workbook.save(output); output.seek(0)
+        self.login(self.owner_id)
+        response = self.post('/recovery/import', data={'file': (output, 'one-sheet.xlsx')},
+                             content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(LapsedPolicy.query.filter_by(policy_number='POL-ONE').count(), 1)
+        covers = HistoricalMemberCover.query.order_by(HistoricalMemberCover.id).all()
+        self.assertEqual(len(covers), 2)
+        self.assertEqual({(row.relationship, int(row.cover_amount)) for row in covers},
+                         {('Principal', 40000), ('Child', 10000)})
+        self.assertTrue(all(row.region == 'Gauteng' and row.product_name == 'Family Plan'
+                            and int(row.product_cover_amount) == 40000 for row in covers))
+
+    def test_one_sheet_import_rejects_missing_principal_without_saving(self):
+        from app.services.compliance_service import is_valid_sa_id
+        principal = next('800101500908' + str(digit) for digit in range(10)
+                         if is_valid_sa_id('800101500908' + str(digit)))
+        workbook = Workbook(); sheet = workbook.active; sheet.title = 'POLICY_IMPORT'
+        sheet.append(['Company', 'Branch', 'Region', 'Policy_Number', 'PolicyStatus',
+                      'ProductName', 'ProductCover', 'Principal_ID_Number',
+                      'Member_Relationship', 'Member_Name', 'Member_ID_Number', 'MemberCover'])
+        sheet.append(['Northcliff', 'NORTHCLIFF', 'Gauteng', 'POL-BAD', 'Active',
+                      'Family Plan', 40000, principal, 'Child', 'B Example', principal, 10000])
+        output = BytesIO(); workbook.save(output); output.seek(0)
+        self.login(self.owner_id)
+        response = self.post('/recovery/import', data={'file': (output, 'invalid.xlsx')},
+                             content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(LapsedPolicy.query.filter_by(policy_number='POL-BAD').count(), 0)
+        self.assertEqual(HistoricalMemberCover.query.count(), 0)
 
 
 if __name__ == "__main__":

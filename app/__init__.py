@@ -403,6 +403,10 @@ def create_app():
             with db.engine.begin() as conn:
                 conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS relationship VARCHAR(80)"))
                 conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS product_name VARCHAR(150)"))
+                conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS member_name VARCHAR(180)"))
+                conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS principal_id_number VARCHAR(13)"))
+                conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS product_cover_amount NUMERIC(12, 2)"))
+                conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS region VARCHAR(120)"))
         from app.models import company_agent_assignments
         company_agent_assignments.create(db.engine, checkfirst=True)
         try:

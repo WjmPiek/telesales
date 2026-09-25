@@ -450,6 +450,8 @@ def import_lapsed():
         flash("Please choose an Excel file", "danger")
         return redirect(url_for("recovery.queue"))
     wb = load_workbook(file, data_only=True, read_only=True)
+    if "POLICY_IMPORT" in wb.sheetnames:
+        return _import_single_sheet_policies(wb)
     ws = wb["CLIENTS"] if "CLIENTS" in wb.sheetnames else wb.active
     headers = [c.value for c in ws[1]]
     # The payment Total in older imports is not an insured benefit. Only the
@@ -560,6 +562,141 @@ def import_lapsed():
         flash(f"Import complete. Call queue: {count}. Suspense: {suspense_count} clients missing ID number or contact number. Member benefit rows: {len(cover_rows)}.", "warning")
         return redirect(url_for("recovery.suspense"))
     flash(f"Imported {count} client policies and {len(cover_rows)} verified member benefit rows. Only Active benefits count toward cover limits.", "success")
+    return redirect(url_for("recovery.queue"))
+
+
+def _import_single_sheet_policies(workbook):
+    """Import one verified member per row, creating one lead per policy."""
+    from decimal import Decimal, InvalidOperation
+    from app.models import HistoricalMemberCover
+    from app.routes.auth import _is_user_management_owner
+    from app.services.company_groups import get_or_create_company
+    from app.services.compliance_service import is_valid_sa_id, only_digits
+
+    if not _is_user_management_owner(current_user):
+        abort(403)
+    if workbook.sheetnames != ["POLICY_IMPORT"]:
+        flash("The new policy import must contain only the POLICY_IMPORT worksheet.", "danger")
+        return redirect(url_for("recovery.queue"))
+    ws = workbook["POLICY_IMPORT"]
+    headers = [_norm_header(cell.value) for cell in ws[1]]
+    required = {"company", "branch", "region", "policynumber", "policystatus",
+                "productname", "productcover", "principalidnumber", "memberrelationship",
+                "membername", "memberidnumber", "membercover"}
+    if len(headers) != len(set(headers)) or not required.issubset(headers):
+        flash("The policy import headers are incomplete or duplicated. Download the current one-sheet template.", "danger")
+        return redirect(url_for("recovery.queue"))
+
+    def amount(value):
+        try:
+            result = Decimal(_clean_import_value(value).replace(",", "").replace("R", ""))
+            return result if result > 0 else None
+        except (InvalidOperation, ValueError):
+            return None
+
+    groups = {}
+    rows = []
+    seen = set()
+    allowed_relationships = {"Principal", "Spouse", "Child", "Extended", "Extra"}
+    allowed_statuses = {"Active", "Lapsed", "Cancelled"}
+    for row_number, values in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+        data = dict(zip(headers, values))
+        if not any(_clean_import_value(value) for value in values):
+            continue
+        company = _clean_import_value(data.get("company"))
+        branch = _clean_import_value(data.get("branch"))
+        region = _clean_import_value(data.get("region"))
+        policy = _clean_import_value(data.get("policynumber"))
+        status = _clean_import_value(data.get("policystatus")).title()
+        product = _clean_import_value(data.get("productname"))
+        product_cover = amount(data.get("productcover"))
+        member_cover = amount(data.get("membercover"))
+        principal_id = only_digits(_clean_import_value(data.get("principalidnumber")))
+        member_id = only_digits(_clean_import_value(data.get("memberidnumber")))
+        relationship = _clean_import_value(data.get("memberrelationship")).title()
+        member_name = _clean_import_value(data.get("membername"))
+        key = (company.casefold(), branch.casefold(), policy)
+        member_key = (*key, member_id)
+        if (not all((company, branch, region, policy, product, member_name)) or
+                len(policy) > 80 or len(product) > 150 or len(region) > 120 or
+                not is_valid_sa_id(principal_id) or not is_valid_sa_id(member_id) or
+                status not in allowed_statuses or relationship not in allowed_relationships or
+                product_cover is None or member_cover is None or member_key in seen):
+            flash(f"POLICY_IMPORT row {row_number}: check company, branch, region, policy, product, valid member IDs, unique member, status and positive per-person cover.", "danger")
+            return redirect(url_for("recovery.queue"))
+        if relationship == "Principal" and principal_id != member_id:
+            flash(f"POLICY_IMPORT row {row_number}: the principal row's Member_ID_Number must equal Principal_ID_Number.", "danger")
+            return redirect(url_for("recovery.queue"))
+        common = (principal_id, status, product, product_cover, region)
+        if key in groups and groups[key]["common"] != common:
+            flash(f"POLICY_IMPORT row {row_number}: repeated policy details do not match earlier rows.", "danger")
+            return redirect(url_for("recovery.queue"))
+        group = groups.setdefault(key, {"common": common, "principal_rows": 0, "data": data})
+        group["principal_rows"] += relationship == "Principal"
+        seen.add(member_key)
+        rows.append((key, member_id, member_name, relationship, member_cover))
+    if not rows or any(group["principal_rows"] != 1 for group in groups.values()):
+        flash("Enter at least one policy and exactly one Principal row for each policy.", "danger")
+        return redirect(url_for("recovery.queue"))
+
+    companies = {}
+    suspense_count = 0
+    for group_key, group in groups.items():
+        data = group["data"]
+        company_name = _clean_import_value(data.get("company"))
+        branch = _clean_import_value(data.get("branch"))
+        policy = _clean_import_value(data.get("policynumber"))
+        principal_id, status, product, product_cover, region = group["common"]
+        company = get_or_create_company(company_name, branch)
+        companies[group_key] = company
+        contact = _clean_import_value(data.get("cellnumber"))
+        email = _clean_import_value(data.get("emailaddress"))
+        missing = [] if re.sub(r"\D", "", contact) else ["contact number"]
+        existing = LapsedPolicy.query.filter_by(company_id=company.id, policy_number=policy).first()
+        if existing is None:
+            existing = LapsedPolicy(company_id=company.id, policy_number=policy)
+            db.session.add(existing)
+        existing.franchise = company_name
+        existing.company_name = company_name
+        existing.branch = branch
+        existing.id_number = principal_id
+        existing.cell_number = contact
+        existing.email_address = email
+        existing.surname = _clean_import_value(data.get("surname"))
+        existing.initials = _clean_import_value(data.get("initials"))
+        existing.address = _clean_import_value(data.get("address"))
+        existing.premium_due = data.get("premiumdue") or 0
+        existing.total = data.get("total") or 0  # Payment amount, never cover.
+        existing.payment_method = _clean_import_value(data.get("paymentmethod"))
+        existing.suspense_reason = ", ".join(missing)
+        existing.recovery_status = SUSPENSE_STATUS if missing else "Imported"
+        existing.assigned_agent_id = None if missing else current_user.id
+        existing.next_action_date = None if missing else date.today()
+        suspense_count += bool(missing)
+    for key, member_id, member_name, relationship, member_cover in rows:
+        company = companies[key]
+        principal_id, status, product, product_cover, region = groups[key]["common"]
+        policy = key[2]
+        entry = HistoricalMemberCover.query.filter_by(company_id=company.id,
+            policy_number=policy, id_number=member_id).first()
+        if entry is None:
+            entry = HistoricalMemberCover(company_id=company.id, policy_number=policy,
+                id_number=member_id, imported_by_id=current_user.id)
+            db.session.add(entry)
+        entry.cover_amount = member_cover
+        entry.status = status
+        entry.relationship = relationship
+        entry.member_name = member_name
+        entry.principal_id_number = principal_id
+        entry.product_name = product
+        entry.product_cover_amount = product_cover
+        entry.region = region
+    db.session.add(AuditLog(user_id=current_user.id, action="One-sheet policy import",
+        entity_type="HistoricalMemberCover", entity_id=None,
+        details=f"{len(groups)} policies and {len(rows)} member benefit rows imported or updated."))
+    db.session.commit()
+    flash(f"Imported or updated {len(groups)} policies and {len(rows)} covered members. "
+          f"{suspense_count} policies need a contact number. Only Active cover counts toward limits.", "success")
     return redirect(url_for("recovery.queue"))
 
 
