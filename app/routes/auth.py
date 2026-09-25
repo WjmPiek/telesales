@@ -558,6 +558,13 @@ def _reassign_user_history_to_super_admin(deleted_user):
 
 def _delete_user_row_permanently(user_id):
     from sqlalchemy import text
+    # The PostgreSQL row trigger only permits this exact id for the duration of
+    # the current transaction. The route above has already checked the owner.
+    if db.engine.dialect.name == "postgresql":
+        db.session.execute(
+            text("SELECT set_config('martins.authorized_user_delete_id', :target_id, true)"),
+            {"target_id": str(int(user_id))},
+        )
     result = db.session.execute(text('DELETE FROM users WHERE id = :old_id'), {"old_id": int(user_id)})
     db.session.flush()
     return result.rowcount

@@ -368,6 +368,13 @@ def create_app():
         except Exception:
             db.session.rollback()
             app.logger.exception("Protected Brokers branch correction failed")
+        try:
+            from app.services.user_delete_protection import ensure_scoped_user_delete_guard
+            if ensure_scoped_user_delete_guard():
+                app.logger.info("Installed scoped user-deletion guard; TRUNCATE protection remains active")
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Scoped user-deletion guard installation failed")
 
     @login_manager.user_loader
     def load_user(user_id):
