@@ -15,7 +15,7 @@ from app.models import (
     ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication,
     WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage,
     WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent, WhatsAppConversation, WhatsAppContact,
-    PolicyProduct, ApplicationJourney
+    PolicyProduct, ApplicationJourney, CompanyGroupState
 )
 from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
@@ -45,7 +45,7 @@ def _normalise_za_phone(value):
     return None
 
 
-def _get_or_create_manual_policy(first_name, surname, phone):
+def _get_or_create_manual_policy(first_name, surname, phone, company=None):
     """Create a lightweight lead for an individual campaign, or reuse an existing lead."""
     normalised = _normalise_za_phone(phone)
     if not normalised:
@@ -57,7 +57,10 @@ def _get_or_create_manual_policy(first_name, surname, phone):
             LapsedPolicy.cell_number == "0" + last_nine,
             LapsedPolicy.cell_number.ilike(f"%{last_nine}"),
         )
-    ).first()
+    )
+    if company:
+        policy = _company_leads(policy, company)
+    policy = policy.first()
     if policy:
         if first_name:
             policy.initials = first_name.strip()
@@ -70,7 +73,10 @@ def _get_or_create_manual_policy(first_name, surname, phone):
         initials=(first_name or "").strip(),
         surname=(surname or "").strip(),
         cell_number=normalised,
-        branch=(current_user.branch or "").strip() or None,
+        branch=company.branch if company else (current_user.branch or "").strip() or None,
+        company_name=company.company_name if company else None,
+        franchise=company.company_name if company else None,
+        company_id=company.id if company else None,
         assigned_agent_id=current_user.id,
         recovery_status="New",
         comments="Created from an individual WhatsApp campaign.",
@@ -121,6 +127,36 @@ def _is_manager():
     return role in {"admin", "super admin", "super_admin", "branch manager", "branch_manager", "manager", "supervisor"}
 
 
+def _available_companies():
+    q = CompanyGroupState.query.filter_by(status="Active")
+    if _is_manager():
+        if current_user.role and current_user.role.name.lower().replace("_", " ") not in {"admin", "super admin"}:
+            q = q.filter(CompanyGroupState.branch == current_user.branch)
+    else:
+        q = q.filter(CompanyGroupState.agents.any(id=current_user.id))
+    return q.order_by(CompanyGroupState.company_name, CompanyGroupState.branch).all()
+
+
+def _can_use_campaign(campaign):
+    if _is_manager():
+        role = current_user.role.name.lower().replace("_", " ") if current_user.role else ""
+        return role in {"admin", "super admin"} or campaign.branch == current_user.branch
+    return bool(campaign.company_id and campaign.company in _available_companies())
+
+
+def _company_leads(query, company):
+    from app.routes.main import _company_name_expr
+    legacy_match = db.and_(LapsedPolicy.company_id.is_(None),
+                           _company_name_expr() == company.company_name,
+                           db.func.coalesce(LapsedPolicy.branch, '') == company.branch)
+    return query.filter(db.or_(LapsedPolicy.company_id == company.id, legacy_match))
+
+
+@communications_bp.context_processor
+def _company_context():
+    return {"campaign_companies": _available_companies() if current_user.is_authenticated else []}
+
+
 def _event(recipient, event_type, channel=None, details=None):
     db.session.add(CommunicationEvent(
         campaign_id=recipient.campaign_id,
@@ -136,6 +172,13 @@ def _send_to_recipient(campaign, recipient, channel):
     if channel != "whatsapp":
         return False, "Campaigns support WhatsApp only"
     policy = recipient.policy
+    if campaign.company:
+        if campaign.company.status != "Active":
+            return False, "Company is not active"
+        if ((policy.company_id and policy.company_id != campaign.company_id) or
+                (not policy.company_id and (policy.branch != campaign.company.branch or
+                 (policy.company_name or policy.franchise or policy.branch or "Unknown Company") != campaign.company.company_name))):
+            return False, "Recipient does not belong to this company"
     pref = preference_for(policy)
     if pref.opted_out_all or is_suppressed(policy):
         _event(recipient, "suppressed", channel, "Contact is opted out or on suppression list")
@@ -216,18 +259,24 @@ def _send_to_recipient(campaign, recipient, channel):
 @communications_bp.route("/")
 @login_required
 def index():
-    if not _is_manager():
+    if not _is_manager() and not _available_companies():
         return redirect(url_for("communications.notifications"))
     show_archived = request.args.get("archived") == "1"
     query = CommunicationCampaign.query
+    if _is_manager() and current_user.role and current_user.role.name.lower().replace("_", " ") not in {"admin", "super admin"}:
+        query = query.filter(CommunicationCampaign.branch == current_user.branch)
+    elif not _is_manager():
+        query = query.filter(CommunicationCampaign.company_id.in_([company.id for company in _available_companies()]))
     if not show_archived:
         query = query.filter(CommunicationCampaign.status != "Archived")
     campaigns = query.order_by(CommunicationCampaign.created_at.desc()).all()
+    campaign_ids = [item.id for item in campaigns]
+    recipients_q = CampaignRecipient.query.filter(CampaignRecipient.campaign_id.in_(campaign_ids))
     summary = {
         "campaigns": len(campaigns),
-        "recipients": db.session.query(func.count(CampaignRecipient.id)).scalar() or 0,
-        "callbacks": CampaignRecipient.query.filter_by(response_type="callback").count(),
-        "opt_outs": CampaignRecipient.query.filter_by(response_type="opt_out").count(),
+        "recipients": recipients_q.count(),
+        "callbacks": recipients_q.filter_by(response_type="callback").count(),
+        "opt_outs": recipients_q.filter_by(response_type="opt_out").count(),
     }
     return render_template("communications/index.html", campaigns=campaigns, summary=summary)
 
@@ -265,8 +314,10 @@ def whatsapp_dashboard():
 @communications_bp.route("/templates")
 @login_required
 def template_library():
-    if not _is_manager(): abort(403)
+    if not _is_manager() and not _available_companies(): abort(403)
     query = WhatsAppTemplate.query.filter(WhatsAppTemplate.status != "Deleted")
+    if not _is_manager():
+        query = query.filter(WhatsAppTemplate.status == "Approved")
     status = (request.args.get("status") or "").strip()
     category = (request.args.get("category") or "").strip()
     search = (request.args.get("q") or "").strip()
@@ -282,7 +333,7 @@ def template_library():
         except Exception: components = []
         header = next((c for c in components if str(c.get("type", "")).upper() == "HEADER"), {})
         cards.append({"record": t, "buttons": buttons, "header": header})
-    return render_template("communications/templates.html", templates=templates, cards=cards, selected_status=status, selected_category=category, search=search)
+    return render_template("communications/templates.html", templates=templates, cards=cards, selected_status=status, selected_category=category, search=search, campaign_manager=_is_manager())
 
 
 @communications_bp.route("/templates/<int:template_id>/sync", methods=["POST"])
@@ -370,15 +421,26 @@ def sync_all_templates():
 @communications_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def create_campaign():
-    if not _is_manager(): abort(403)
+    companies = _available_companies()
+    if not _is_manager() and not companies: abort(403)
     products = PolicyProduct.query.filter_by(active=True).order_by(PolicyProduct.product_name, PolicyProduct.plan_name).all()
     selected_template = None
     template_id = request.args.get("template_id", type=int) or request.form.get("template_id", type=int)
     if template_id:
         selected_template = WhatsAppTemplate.query.get_or_404(template_id)
         if selected_template.status != "Approved":
-            flash("Only approved templates can be used for sending.", "warning")
+            abort(400, "Only approved templates can be used for sending.")
+    if not _is_manager() and not selected_template:
+        if request.method == "GET":
+            return redirect(url_for("communications.template_library"))
+        abort(403, "Agents may send approved templates only.")
     if request.method == "POST":
+        company_id = request.form.get("company_id", type=int)
+        company = db.session.get(CompanyGroupState, company_id) if company_id else None
+        if company_id and (not company or company.id not in {item.id for item in companies}):
+            abort(403)
+        if not _is_manager() and not company:
+            abort(400)
         image = request.files.get("campaign_image")
         image_filename = None
         image_url = None
@@ -460,7 +522,8 @@ def create_campaign():
             audience_type=(request.form.get("audience_type") or "group").strip().lower(),
             send_whatsapp=True,
             send_email=False,
-            branch=(request.form.get("branch") or current_user.branch or "").strip() or None,
+            branch=company.branch if company else (request.form.get("branch") or current_user.branch or "").strip() or None,
+            company_id=company.id if company else None,
             created_by_id=current_user.id,
             product_id=request.form.get("product_id", type=int),
             public_application_token=secrets.token_urlsafe(32),
@@ -509,6 +572,7 @@ def create_campaign():
                 request.form.get("individual_first_name"),
                 request.form.get("individual_surname"),
                 request.form.get("individual_phone"),
+                company=company,
             )
             if phone_error:
                 db.session.rollback()
@@ -559,8 +623,11 @@ def create_campaign():
 @login_required
 def view_campaign(campaign_id):
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     recipients = CampaignRecipient.query.filter_by(campaign_id=campaign.id).order_by(CampaignRecipient.id.desc()).all()
     leads_query = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
+    if campaign.company:
+        leads_query = _company_leads(leads_query, campaign.company)
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip()
     branch = (request.args.get("branch") or "").strip()
@@ -583,15 +650,15 @@ def view_campaign(campaign_id):
     branches = [row[0] for row in db.session.query(LapsedPolicy.branch).filter(LapsedPolicy.branch.isnot(None), LapsedPolicy.branch != "").distinct().order_by(LapsedPolicy.branch).all()]
     public_application_link = (url_for("join.campaign_application", token=campaign.public_application_token, _external=True)
                                if campaign.product_id and campaign.public_application_token else None)
-    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches,
+    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches, campaign_manager=_is_manager(),
                            public_application_link=public_application_link)
 
 
 @communications_bp.route("/<int:campaign_id>/application-qr.png")
 @login_required
 def campaign_application_qr(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     if not campaign.product_id or not campaign.public_application_token:
         abort(404)
     link = url_for("join.campaign_application", token=campaign.public_application_token, _external=True)
@@ -776,8 +843,8 @@ def update_template_status(campaign_id):
 @communications_bp.route("/<int:campaign_id>/template-status/check", methods=["POST"])
 @login_required
 def check_template_status(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     result = _refresh_template_status(campaign)
     template = result.template or {}
     components = template.get("components") if isinstance(template, dict) else None
@@ -894,15 +961,18 @@ def archive_campaign(campaign_id):
 @communications_bp.route("/<int:campaign_id>/add-recipients", methods=["POST"])
 @login_required
 def add_recipients(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     ids = [int(x) for x in request.form.getlist("policy_ids") if x.isdigit()]
     if campaign.audience_type == "individual" and len(ids) > 1:
         ids = ids[:1]
     if campaign.audience_type == "individual" and ids:
         CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
     added = 0
-    for policy in LapsedPolicy.query.filter(LapsedPolicy.id.in_(ids)).all():
+    policies_q = LapsedPolicy.query.filter(LapsedPolicy.id.in_(ids))
+    if campaign.company:
+        policies_q = _company_leads(policies_q, campaign.company)
+    for policy in policies_q.all():
         if is_suppressed(policy) or preference_for(policy).opted_out_all:
             continue
         exists = CampaignRecipient.query.filter_by(campaign_id=campaign.id, lapsed_policy_id=policy.id).first()
@@ -921,12 +991,14 @@ def add_recipients(campaign_id):
 @communications_bp.route("/<int:campaign_id>/add-filtered-group", methods=["POST"])
 @login_required
 def add_filtered_group(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     if campaign.audience_type != "group":
         flash("This campaign is configured for one individual client.", "warning")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     leads_query = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
+    if campaign.company:
+        leads_query = _company_leads(leads_query, campaign.company)
     q = (request.form.get("q") or "").strip()
     status = (request.form.get("status") or "").strip()
     branch = (request.form.get("branch") or "").strip()
@@ -958,8 +1030,11 @@ def add_filtered_group(campaign_id):
 @communications_bp.route("/<int:campaign_id>/send", methods=["POST"])
 @login_required
 def send_campaign(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
+    if campaign.company and campaign.company.status != "Active":
+        flash("This company is suspended or deleted. Campaign sending is blocked.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     if campaign.send_whatsapp:
         result = _refresh_template_status(campaign)
         if not result.ok or campaign.template_status != "Approved":
@@ -981,8 +1056,8 @@ def send_campaign(campaign_id):
 @communications_bp.route("/<int:campaign_id>/schedule-follow-up", methods=["POST"])
 @login_required
 def schedule_follow_up(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     days = max(1, min(30, int(request.form.get("days") or 3)))
     channel = "whatsapp"
     due_at = datetime.utcnow() + timedelta(days=days)
@@ -1001,8 +1076,8 @@ def schedule_follow_up(campaign_id):
 @communications_bp.route("/<int:campaign_id>/report")
 @login_required
 def campaign_report(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     recipients = campaign.recipients
     applications = (ClientApplication.query.join(ApplicationJourney)
                     .filter(ApplicationJourney.campaign_id == campaign.id).all())
@@ -1026,8 +1101,8 @@ def campaign_report(campaign_id):
 @communications_bp.route("/<int:campaign_id>/export.csv")
 @login_required
 def export_campaign(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
     output = io.StringIO(); writer = csv.writer(output)
     writer.writerow(["Client", "Cell", "Email", "WhatsApp", "Email status", "Response", "Channel", "Responded at"])
     for r in campaign.recipients:
@@ -1087,8 +1162,9 @@ def suppression_list():
 @communications_bp.route("/<int:campaign_id>/schedule", methods=["POST"])
 @login_required
 def schedule_campaign(campaign_id):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
+    if campaign.company and campaign.company.status != "Active": abort(403)
     raw = (request.form.get("scheduled_at") or "").strip()
     try:
         scheduled = datetime.fromisoformat(raw)
@@ -1110,8 +1186,9 @@ def schedule_campaign(campaign_id):
 @communications_bp.route("/<int:campaign_id>/queue/<action>", methods=["POST"])
 @login_required
 def campaign_queue_action(campaign_id, action):
-    if not _is_manager(): abort(403)
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
+    if action != "pause" and campaign.company and campaign.company.status != "Active": abort(403)
     if action == "pause":
         campaign.queue_status = "paused"; campaign.status = "Paused"
     elif action == "resume":

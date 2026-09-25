@@ -463,6 +463,8 @@ def import_lapsed():
         missing_fields, id_number, contact_number, email_address = _missing_contact_fields(data)
         branch = _row_value(data, ["CollectedatBranch", "Collected at Branch", "Branch", "Franchise"])
         company_name = _row_value(data, COMPANY_HEADERS) or branch or _row_value(data, ["Franchise"])
+        from app.services.company_groups import get_or_create_company
+        company = get_or_create_company(company_name, branch)
         comments = data.get("Comments")
         recovery_status = "Imported"
         next_action = date.today()
@@ -481,7 +483,7 @@ def import_lapsed():
             count += 1
 
         lp = LapsedPolicy(
-            franchise=company_name, company_name=company_name, id_number=id_number, email_address=email_address, suspense_reason=", ".join(missing_fields), member_id=str(data.get("Member_ID") or ""), policy_number=str(policy_number),
+            franchise=company_name, company_name=company_name, company_id=company.id, id_number=id_number, email_address=email_address, suspense_reason=", ".join(missing_fields), member_id=str(data.get("Member_ID") or ""), policy_number=str(policy_number),
             surname=data.get("Surname"), initials=data.get("Initials"), cell_number=contact_number or str(data.get("Cell_Number") or ""),
             home_tel=str(data.get("home_tel") or ""), address=data.get("Address"), premium_due=data.get("PremiumDue") or 0,
             total=data.get("Total") or 0, payment_method=data.get("PaymentMethod"), branch=branch,
@@ -502,6 +504,10 @@ def import_lapsed():
 def log_call(policy_id):
     p = LapsedPolicy.query.get_or_404(policy_id)
     ensure_branch_access(p, agent_attr="assigned_agent_id")
+    from app.services.company_groups import company_is_suspended
+    if company_is_suspended(p):
+        flash("This company is suspended. Calls cannot be logged until Wjm Piek reactivates it.", "warning")
+        return redirect(url_for("recovery.queue"))
     if telephone_blocked(p):
         flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))
@@ -1237,6 +1243,10 @@ def _script_score(answers, session=None):
 def start_script(policy_id):
     p = LapsedPolicy.query.filter_by(id=policy_id).with_for_update().first_or_404()
     ensure_branch_access(p, agent_attr="assigned_agent_id")
+    from app.services.company_groups import company_is_suspended
+    if company_is_suspended(p):
+        flash("This company is suspended. Calls cannot be started until Wjm Piek reactivates it.", "warning")
+        return redirect(url_for("recovery.queue"))
     if telephone_blocked(p):
         flash("This client has opted out of Insurance Sales contact.", "warning")
         return redirect(url_for("recovery.queue"))

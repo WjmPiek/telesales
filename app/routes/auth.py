@@ -491,6 +491,7 @@ def _reassign_user_history_to_super_admin(deleted_user):
     for stmt in (
         'DELETE FROM "qr_trusted_devices" WHERE user_id = :old_id',
         'DELETE FROM "qr_login_tokens" WHERE approved_user_id = :old_id',
+        'DELETE FROM "company_agent_assignments" WHERE user_id = :old_id',
     ):
         try:
             with db.session.begin_nested():
@@ -530,7 +531,7 @@ def _reassign_user_history_to_super_admin(deleted_user):
     for row in fk_rows:
         table_name = row.table_name
         column_name = row.column_name
-        if table_name in {"users", "qr_trusted_devices", "qr_login_tokens"}:
+        if table_name in {"users", "qr_trusted_devices", "qr_login_tokens", "company_agent_assignments"}:
             continue
         quoted_table = '"' + table_name.replace('"', '""') + '"'
         quoted_column = '"' + column_name.replace('"', '""') + '"'

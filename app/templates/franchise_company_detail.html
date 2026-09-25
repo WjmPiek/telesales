@@ -1,0 +1,40 @@
+{% extends 'base.html' %}{% block content %}
+<p><a href="{{ url_for('main.franchise_details') }}">← Company Details</a></p>
+<h1>{{ name }}</h1>
+<p>Parent: <strong>Martin's Brokers</strong> · Branch: <strong>{{ branch or 'Unassigned' }}</strong> · Status: <strong>{{ status }}</strong> · {{ policies|length }} linked policy{{ '' if policies|length == 1 else 's' }}</p>
+{% if status == 'Suspended' %}<div class="alert alert-warning">New recovery calls and scripts for this company are blocked while suspended. Existing policies are retained.</div>{% endif %}
+{% if owner %}
+<div class="card mb-3"><div class="card-body">
+  <h2 class="h5">Agents assigned to this company</h2>
+  <p class="text-muted small">Agents may work for more than one company. Campaigns and calls still use the central Martin's Brokers WhatsApp and call service.</p>
+  <form method="post" action="{{ url_for('main.franchise_company_agents') }}">
+    <input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="branch" value="{{ branch }}">
+    {% for agent in agents %}<label class="d-block mb-1"><input type="checkbox" name="agent_ids" value="{{ agent.id }}" {% if agent.id in assigned_agent_ids %}checked{% endif %}> {{ agent.name }} ({{ agent.email }})</label>{% else %}<p>No active agents found.</p>{% endfor %}
+    <button class="btn btn-primary mt-2">Save agent assignments</button>
+  </form>
+</div></div>
+<div class="card mb-3"><div class="card-body">
+  <h2 class="h5">Edit company name</h2>
+  <p class="text-muted small">This changes the company label on all policies in this branch. It does not move policies to another branch.</p>
+  <form method="post" action="{{ url_for('main.franchise_company_manage') }}" class="row g-2">
+    <input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="branch" value="{{ branch }}"><input type="hidden" name="action" value="rename">
+    <div class="col-md-6"><input class="form-control" name="new_name" maxlength="160" value="{{ name }}" aria-label="Company name" required></div>
+    <div class="col-auto"><button class="btn btn-primary">Save name</button></div>
+  </form>
+  <hr>
+  <div class="d-flex flex-wrap gap-2">
+    {% if status == 'Active' %}
+    <form method="post" action="{{ url_for('main.franchise_company_manage') }}"><input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="branch" value="{{ branch }}"><button class="btn btn-warning" name="action" value="suspend">Suspend company</button></form>
+    {% else %}
+    <form method="post" action="{{ url_for('main.franchise_company_manage') }}"><input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="branch" value="{{ branch }}"><button class="btn btn-success" name="action" value="{{ 'restore' if status == 'Deleted' else 'activate' }}">{{ 'Restore company' if status == 'Deleted' else 'Reactivate company' }}</button></form>
+    {% endif %}
+    {% if status != 'Deleted' %}<form method="post" action="{{ url_for('main.franchise_company_manage') }}" onsubmit="return confirm('Remove this company from the active list? Linked policies and client records will be kept.');"><input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="branch" value="{{ branch }}"><button class="btn btn-outline-danger" name="action" value="delete">Delete company listing</button></form>{% endif %}
+  </div>
+</div></div>
+{% endif %}
+<div class="card"><div class="card-body"><h2 class="h5">Linked policies</h2><div class="table-responsive"><table class="table table-striped"><thead><tr><th>Policy</th><th>Client</th><th>Status</th></tr></thead><tbody>
+{% for policy in policies %}<tr><td>{{ policy.policy_number or '—' }}</td><td>{{ (policy.initials or '') ~ ' ' ~ (policy.surname or '') }}</td><td>{{ policy.recovery_status or '—' }}</td></tr>{% endfor %}
+</tbody></table></div></div></div>
+<div class="row g-3 mt-1"><div class="col-md-6"><div class="card h-100"><div class="card-body"><h2 class="h5">Recent calls</h2>{% for call in recent_calls %}<p class="mb-1">Policy #{{ call.lapsed_policy_id }} — {{ call.outcome }}{% if call.created_at %} · {{ call.created_at.strftime('%Y-%m-%d') }}{% endif %}</p>{% else %}<p class="text-muted">No calls recorded.</p>{% endfor %}</div></div></div><div class="col-md-6"><div class="card h-100"><div class="card-body"><h2 class="h5">WhatsApp campaigns</h2>{% for campaign in campaigns %}<p class="mb-1"><a href="{{ url_for('communications.view_campaign', campaign_id=campaign.id) }}">{{ campaign.name }}</a> — {{ campaign.status }}</p>{% else %}<p class="text-muted">No company-linked campaigns.</p>{% endfor %}</div></div></div></div>
+{% if company_id %}<p class="mt-3"><a class="btn btn-outline-primary" href="{{ url_for('reports.index', company_id=company_id) }}">View company report</a> <a class="btn btn-outline-primary" href="{{ url_for('allocation.index', company_id=company_id) }}">Allocate company leads</a></p>{% endif %}
+{% endblock %}

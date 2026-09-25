@@ -45,7 +45,7 @@
                 <div class="col-md-2"><input name="phone" class="form-control form-control-sm" value="{{ u.work_tel or '' }}" placeholder="Phone"></div>
                 <div class="col-md-2">{% if owner_row %}<input class="form-control form-control-sm" value="Super Admin" readonly>{% else %}<select name="role_id" class="form-select form-select-sm" required>{% for role in allowed_roles %}<option value="{{ role.id }}" {% if u.role and u.role.id==role.id %}selected{% endif %}>{{ role.name }}</option>{% endfor %}</select>{% endif %}</div>
                 <div class="col-md-2"><input name="branch" class="form-control form-control-sm" {% if owner_row %}value="Brokers" readonly{% else %}list="branches" value="{{ u.branch or '' }}"{% endif %} required></div>
-                <div class="col-md-1">{% if owner_row %}<input class="form-control form-control-sm" value="Active" readonly>{% else %}<select name="active" class="form-select form-select-sm"><option value="1" {% if u.active %}selected{% endif %}>Active</option><option value="0" {% if not u.active %}selected{% endif %}>Inactive</option></select>{% endif %}</div>
+                <div class="col-md-1">{% if owner_row %}<input class="form-control form-control-sm" value="Active" readonly>{% else %}<select name="active" class="form-select form-select-sm"><option value="1" {% if u.active %}selected{% endif %}>Active</option><option value="0" {% if not u.active %}selected{% endif %}>Suspended</option></select>{% endif %}</div>
                 <div class="col-md-2"><input name="new_password" type="password" class="form-control form-control-sm" placeholder="New password"></div>
                 <div class="col-md-1"><button class="btn btn-success btn-sm w-100">Save</button></div>
               </form>

@@ -1,1 +1,17 @@
-{% extends "base.html" %}{% block content %}<h1>Lead Allocation</h1><p>Assign unallocated leads to active agents in a branch using round-robin distribution.</p><form method="get" class="row g-2 mb-3"><div class="col-md-4"><select name="branch" class="form-select"><option value="">All / My Branch</option>{% for b in branches %}<option value="{{b}}" {% if branch==b %}selected{% endif %}>{{b}}</option>{% endfor %}</select></div><div class="col"><button class="btn btn-outline-primary">Filter</button></div></form><div class="alert alert-info">Unassigned leads in scope: <b>{{unassigned_count}}</b></div><form method="post"><input type="hidden" name="branch" value="{{branch or ''}}"><div class="mb-3"><label>How many leads to allocate now</label><input class="form-control" type="number" name="limit" value="50"></div><h4>Agents</h4>{% for a in agents %}<div class="form-check"><input class="form-check-input" type="checkbox" name="agent_ids" value="{{a.id}}" checked><label class="form-check-label">{{a.name}} - {{a.branch}}</label></div>{% endfor %}<button class="btn btn-success mt-3">Allocate Leads</button></form>{% endblock %}
+{% extends "base.html" %}{% block content %}
+<h1>Lead Allocation</h1>
+<p>Assign unallocated leads to agents. Choose a company to keep its work and reports together under Martin's Brokers.</p>
+<form method="get" class="row g-2 mb-3">
+  <div class="col-md-4"><label class="form-label">Company</label><select name="company_id" class="form-select"><option value="">All / legacy branch view</option>{% for item in companies %}<option value="{{ item.id }}" {% if company and company.id == item.id %}selected{% endif %}>{{ item.company_name }} — {{ item.branch }}</option>{% endfor %}</select></div>
+  <div class="col-md-4"><label class="form-label">Branch</label><select name="branch" class="form-select"><option value="">All / My Branch</option>{% for b in branches %}<option value="{{ b }}" {% if branch == b %}selected{% endif %}>{{ b }}</option>{% endfor %}</select></div>
+  <div class="col-md-4 align-self-end"><button class="btn btn-outline-primary">Filter</button></div>
+</form>
+<div class="alert alert-info">Unassigned leads in scope: <b>{{ unassigned_count }}</b></div>
+{% if company and not agents %}<div class="alert alert-warning">No agents have been assigned to this company. Wjm Piek can assign them in Company Details.</div>{% endif %}
+<form method="post"><input type="hidden" name="branch" value="{{ branch or '' }}"><input type="hidden" name="company_id" value="{{ company.id if company else '' }}">
+  <div class="mb-3"><label class="form-label">How many leads to allocate now</label><input class="form-control" type="number" name="limit" min="1" max="2000" value="50"></div>
+  <h2 class="h4">Agents</h2>
+  {% for agent in agents %}<div class="form-check"><input class="form-check-input" type="checkbox" name="agent_ids" value="{{ agent.id }}" checked><label class="form-check-label">{{ agent.name }} — {{ agent.branch }}</label></div>{% endfor %}
+  <button class="btn btn-success mt-3" {% if not agents %}disabled{% endif %}>Allocate Leads</button>
+</form>
+{% endblock %}

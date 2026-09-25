@@ -220,7 +220,7 @@ def _normalise_phone(value):
 def campaign_application(token):
     campaign = CommunicationCampaign.query.filter_by(public_application_token=token).first_or_404()
     product = campaign.product
-    if not product or not product.active or campaign.deleted_at or campaign.status == "Archived":
+    if not product or not product.active or campaign.deleted_at or campaign.status == "Archived" or (campaign.company and campaign.company.status != "Active"):
         abort(404)
     from app.services.member_benefits import member_limits
     limits = member_limits(product)
@@ -268,6 +268,9 @@ def campaign_application(token):
                 member_id=f"QR-{datetime.utcnow():%Y%m%d%H%M%S}-{secrets.token_hex(3)}",
                 initials=values["first_names"], surname=values["surname"], id_number=values["id_number"],
                 cell_number=phone, email_address=values["email"], branch=campaign.branch,
+                company_name=campaign.company.company_name if campaign.company else None,
+                franchise=campaign.company.company_name if campaign.company else None,
+                company_id=campaign.company_id,
                 assigned_agent_id=campaign.created_by_id, recovery_status="Application Started",
                 comments=f"Created from QR campaign: {campaign.name}",
             )

@@ -1,8 +1,8 @@
 from datetime import date, datetime, time
-from flask import Blueprint, render_template, redirect, url_for, request
+from flask import Blueprint, render_template, redirect, url_for, request, flash, abort
 from flask_login import login_required, current_user
 from app import db
-from app.models import ClientApplication, LapsedPolicy, RecoveryCallLog, PolicyProduct, User, TelesalesScriptSession, ClientFicaDocument, ComplianceReview
+from app.models import ClientApplication, LapsedPolicy, RecoveryCallLog, PolicyProduct, User, TelesalesScriptSession, ClientFicaDocument, ComplianceReview, CompanyGroupState, AuditLog, CommunicationCampaign
 from app.services.branch_access import scope_by_branch, selected_branch_arg, branch_choices_from_model, can_view_all_branches, user_branch
 
 main_bp = Blueprint("main", __name__)
@@ -151,30 +151,160 @@ def _portal_guard():
 def franchise_details():
     blocked = _portal_guard()
     if blocked: return blocked
-    branch = selected_branch_arg() or user_branch() or "All branches"
-    q = scope_by_branch(LapsedPolicy.query, LapsedPolicy, selected_branch=selected_branch_arg())
-    company_expr = db.func.coalesce(db.func.nullif(LapsedPolicy.company_name, ''), db.func.nullif(LapsedPolicy.franchise, ''), db.func.nullif(LapsedPolicy.branch, ''), 'Unknown Company')
+    from app.routes.auth import _is_user_management_owner
+    branch = selected_branch_arg() or ("All branches" if can_view_all_branches() else user_branch())
+    company_expr = db.func.coalesce(CompanyGroupState.company_name, _company_name_expr())
+    branch_expr = db.func.coalesce(CompanyGroupState.branch, LapsedPolicy.branch)
     rows_q = db.session.query(
         company_expr.label('company'),
-        LapsedPolicy.branch.label('branch'),
+        branch_expr.label('branch'),
         db.func.count(LapsedPolicy.id).label('policies'),
         db.func.sum(db.case((LapsedPolicy.recovery_status == 'Suspense', 1), else_=0)).label('suspense'),
         db.func.sum(db.case((LapsedPolicy.recovery_status.notin_(['Suspense','Closed','Rejected']), 1), else_=0)).label('active_leads'),
-    )
+    ).outerjoin(CompanyGroupState, LapsedPolicy.company_id == CompanyGroupState.id)
     # Apply the same branch scope to company details.
     if can_view_all_branches() and selected_branch_arg():
         rows_q = rows_q.filter(LapsedPolicy.branch == selected_branch_arg())
     elif not can_view_all_branches() and user_branch():
         rows_q = rows_q.filter(LapsedPolicy.branch == user_branch())
-    rows_q = rows_q.group_by(company_expr, LapsedPolicy.branch).order_by(company_expr.asc()).all()
-    rows = [[r.company, r.branch or '', int(r.policies or 0), int(r.active_leads or 0), int(r.suspense or 0)] for r in rows_q]
+    rows_q = rows_q.group_by(company_expr, branch_expr).order_by(company_expr.asc()).all()
+    states = {(s.company_name, s.branch): s.status for s in CompanyGroupState.query.all()}
+    show_deleted = request.args.get("show_deleted") == "1"
+    rows = [{"company": r.company, "branch": r.branch or "", "policies": int(r.policies or 0),
+             "active_leads": int(r.active_leads or 0), "suspense": int(r.suspense or 0),
+             "status": states.get((r.company, r.branch or ""), "Active")}
+            for r in rows_q]
+    if not show_deleted:
+        rows = [r for r in rows if r["status"] != "Deleted"]
     cards = [
         {"label":"Scope","value":branch},
         {"label":"Companies","value":len(rows)},
-        {"label":"Policies","value":sum(r[2] for r in rows)},
-        {"label":"Suspense","value":sum(r[4] for r in rows)},
+        {"label":"Policies","value":sum(r["policies"] for r in rows)},
+        {"label":"Suspense","value":sum(r["suspense"] for r in rows)},
     ]
-    return render_template("franchise_page.html", title="Company Details", subtitle="Companies/business clients from imported data. Records stay separated by branch and company.", headers=["Company Name","Branch","Policies","Active Leads","Suspense"], rows=rows, cards=cards)
+    return render_template("franchise_companies.html", rows=rows, cards=cards,
+                           owner=_is_user_management_owner(current_user), show_deleted=show_deleted)
+
+
+def _company_name_expr():
+    return db.func.coalesce(db.func.nullif(LapsedPolicy.company_name, ''),
+                            db.func.nullif(LapsedPolicy.franchise, ''),
+                            db.func.nullif(LapsedPolicy.branch, ''), 'Unknown Company')
+
+
+def _company_policies(name, branch):
+    legacy_match = db.and_(_company_name_expr() == name,
+                           db.func.coalesce(LapsedPolicy.branch, '') == branch,
+                           LapsedPolicy.company_id.is_(None))
+    company = CompanyGroupState.query.filter_by(company_name=name, branch=branch).first()
+    return LapsedPolicy.query.filter(db.or_(LapsedPolicy.company_id == company.id, legacy_match)) if company else LapsedPolicy.query.filter(legacy_match)
+
+
+@main_bp.route("/franchise/details/company")
+@login_required
+def franchise_company_view():
+    blocked = _portal_guard()
+    if blocked: return blocked
+    from app.routes.auth import _is_user_management_owner
+    name = (request.args.get("name") or "").strip()
+    branch = (request.args.get("branch") or "").strip()
+    if not can_view_all_branches() and branch != user_branch():
+        abort(403)
+    policies = _company_policies(name, branch).order_by(LapsedPolicy.id).all()
+    if not name or not policies:
+        abort(404)
+    state = CompanyGroupState.query.filter_by(company_name=name, branch=branch).first()
+    agents = []
+    if _is_user_management_owner(current_user):
+        agents = [u for u in User.query.filter_by(active=True).order_by(User.name).all()
+                  if u.role and u.role.name.lower().replace("_", " ") in {"agent", "sales agent", "staff", "user"}]
+    policy_ids = [policy.id for policy in policies]
+    recent_calls = RecoveryCallLog.query.filter(RecoveryCallLog.lapsed_policy_id.in_(policy_ids)).order_by(RecoveryCallLog.id.desc()).limit(20).all()
+    campaigns = CommunicationCampaign.query.filter_by(company_id=state.id).order_by(CommunicationCampaign.id.desc()).limit(20).all() if state else []
+    return render_template("franchise_company_detail.html", name=name, branch=branch,
+                           policies=policies, status=state.status if state else "Active",
+                           owner=_is_user_management_owner(current_user), agents=agents,
+                           assigned_agent_ids={u.id for u in state.agents} if state else set(),
+                           recent_calls=recent_calls, campaigns=campaigns, company_id=state.id if state else None)
+
+
+@main_bp.route("/franchise/details/company/agents", methods=["POST"])
+@login_required
+def franchise_company_agents():
+    from app.routes.auth import _is_user_management_owner
+    from app.services.company_groups import get_or_create_company
+    if not _is_user_management_owner(current_user):
+        abort(403)
+    name = (request.form.get("name") or "").strip()
+    branch = (request.form.get("branch") or "").strip()
+    if not name or not _company_policies(name, branch).first():
+        abort(404)
+    company = get_or_create_company(name, branch)
+    for policy in _company_policies(name, branch).all():
+        if policy.company_id is None:
+            policy.company_id = company.id
+    ids = {int(value) for value in request.form.getlist("agent_ids") if value.isdigit()}
+    agents = User.query.filter(User.id.in_(ids), User.active.is_(True)).all() if ids else []
+    if len(agents) != len(ids) or any(not user.role or user.role.name.lower().replace("_", " ") not in
+                                      {"agent", "sales agent", "staff", "user"} for user in agents):
+        abort(400)
+    company.agents = agents
+    db.session.add(AuditLog(user_id=current_user.id, action="COMPANY_AGENTS_ASSIGNED",
+                            entity_type="CompanyGroup", entity_id=str(company.id),
+                            details=f"{name} ({branch}) assigned agent ids: {sorted(ids)}"))
+    db.session.commit()
+    flash("Company agent assignments saved.", "success")
+    return redirect(url_for("main.franchise_company_view", name=name, branch=branch))
+
+
+@main_bp.route("/franchise/details/company/manage", methods=["POST"])
+@login_required
+def franchise_company_manage():
+    from app.routes.auth import _is_user_management_owner
+    from app.services.company_groups import get_or_create_company
+    if not _is_user_management_owner(current_user):
+        abort(403)
+    name = (request.form.get("name") or "").strip()
+    branch = (request.form.get("branch") or "").strip()
+    action = (request.form.get("action") or "").strip()
+    policies = _company_policies(name, branch).all()
+    if not name or not policies:
+        abort(404)
+    state = CompanyGroupState.query.filter_by(company_name=name, branch=branch).first()
+    if action == "rename":
+        new_name = (request.form.get("new_name") or "").strip()
+        if not new_name or len(new_name) > 160:
+            flash("Enter a company name of up to 160 characters.", "danger")
+            return redirect(url_for("main.franchise_company_view", name=name, branch=branch))
+        if new_name != name and (_company_policies(new_name, branch).first() or
+                                 CompanyGroupState.query.filter_by(company_name=new_name, branch=branch).first()):
+            flash("That company already exists in this branch. Nothing was changed.", "danger")
+            return redirect(url_for("main.franchise_company_view", name=name, branch=branch))
+        state = state or get_or_create_company(name, branch)
+        for policy in policies:
+            policy.company_id = state.id
+            policy.company_name = new_name
+            policy.franchise = new_name
+        state.company_name = new_name
+        target_name = new_name
+        audit_action = "COMPANY_RENAMED"
+    elif action in {"suspend", "activate", "delete", "restore"}:
+        state = state or get_or_create_company(name, branch)
+        for policy in policies:
+            if policy.company_id is None:
+                policy.company_id = state.id
+        state.status = {"suspend": "Suspended", "activate": "Active",
+                        "delete": "Deleted", "restore": "Active"}[action]
+        target_name = name
+        audit_action = "COMPANY_" + action.upper()
+    else:
+        abort(400)
+    db.session.add(AuditLog(user_id=current_user.id, action=audit_action,
+                            entity_type="CompanyGroup", entity_id=f"{branch}/{name}",
+                            details=f"{name} ({branch}) action={action}; linked policies={len(policies)}; resulting name={target_name}. Linked policies retained."))
+    db.session.commit()
+    flash("Company updated. Linked policies and client records were retained.", "success")
+    return redirect(url_for("main.franchise_company_view", name=target_name, branch=branch))
 
 @main_bp.route("/franchise/employees")
 @login_required

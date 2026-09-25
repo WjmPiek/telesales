@@ -391,6 +391,8 @@ class LapsedPolicy(db.Model):
     payment_method = db.Column(db.String(50))
     branch = db.Column(db.String(120))
     company_name = db.Column(db.String(160))
+    company_id = db.Column(db.Integer, db.ForeignKey("company_group_states.id"), index=True)
+    company = db.relationship("CompanyGroupState")
     id_number = db.Column(db.String(30))
     email_address = db.Column(db.String(255))
     suspense_reason = db.Column(db.Text)
@@ -400,6 +402,24 @@ class LapsedPolicy(db.Model):
     callback_at = db.Column(db.DateTime)  # South Africa local time (Africa/Johannesburg)
     next_action_date = db.Column(db.Date, default=date.today)
     imported_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class CompanyGroupState(db.Model):
+    """A company managed under the Martin's Brokers parent account."""
+    __tablename__ = "company_group_states"
+    id = db.Column(db.Integer, primary_key=True)
+    company_name = db.Column(db.String(160), nullable=False)
+    branch = db.Column(db.String(120), nullable=False, default="")
+    status = db.Column(db.String(20), nullable=False, default="Active")
+    parent_company = db.Column(db.String(160), nullable=False, default="Martin's Brokers")
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    agents = db.relationship("User", secondary="company_agent_assignments", backref="assigned_companies")
+    __table_args__ = (db.UniqueConstraint("company_name", "branch", name="uq_company_group_name_branch"),)
+
+company_agent_assignments = db.Table(
+    "company_agent_assignments",
+    db.Column("company_id", db.Integer, db.ForeignKey("company_group_states.id"), primary_key=True),
+    db.Column("user_id", db.Integer, db.ForeignKey("users.id"), primary_key=True),
+)
 
 class RecoveryCallLog(db.Model):
     __tablename__ = "recovery_call_logs"
@@ -752,6 +772,7 @@ class CommunicationCampaign(db.Model):
     send_whatsapp = db.Column(db.Boolean, default=True, nullable=False)
     send_email = db.Column(db.Boolean, default=True, nullable=False)
     branch = db.Column(db.String(120))
+    company_id = db.Column(db.Integer, db.ForeignKey("company_group_states.id"), index=True)
     status = db.Column(db.String(40), default="Draft", nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -766,6 +787,7 @@ class CommunicationCampaign(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     template_approved_by = db.relationship("User", foreign_keys=[template_approved_by_id])
     product = db.relationship("PolicyProduct")
+    company = db.relationship("CompanyGroupState")
 
 class CampaignRecipient(db.Model):
     __tablename__ = "campaign_recipients"

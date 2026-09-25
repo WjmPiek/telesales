@@ -29,7 +29,7 @@
       {{ nav_link('WhatsApp settings', 'communications.whatsapp_settings') }}
     </div>
   </details>
-  {% else %}<a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp</span></a>{% endif %}
+  {% else %}<a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp</span></a><div class="side-submenu">{{ nav_link('My company campaigns', 'communications.index') }}</div>{% endif %}
   <details class="side-group"{% if request.blueprint in ['applications', 'documents', 'qa', 'signing'] %} open{% endif %}>
     <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Applications<small>Documents, signatures and review</small></span></summary>
     <div class="side-submenu">

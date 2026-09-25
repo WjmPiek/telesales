@@ -24,7 +24,7 @@ class OwnerUserManagementTests(unittest.TestCase):
         self.owner = User(name="Wjm Piek", email="wjm@martinsdirect.com", role=self.roles["Super Admin"],
                           branch="Brokers", active=True, password_hash="unused")
         self.admin = User(name="Lowhann Barkhuizen", email="lowhann@martinsdirect.com", role=self.roles["Admin"],
-                          branch="Head Office", active=False, password_hash="unused")
+                          branch="Head Office", active=True, password_hash="unused")
         self.agent = User(name="Example Agent", email="agent@example.com", role=self.roles["Agent"],
                           branch="Head Office", active=True, password_hash="unused")
         db.session.add_all([self.owner, self.admin, self.agent])
@@ -94,6 +94,15 @@ class OwnerUserManagementTests(unittest.TestCase):
         self.assertIsNone(db.session.get(User, self.admin_id))
         self.assertIsNotNone(db.session.get(User, self.owner_id))
         self.assertEqual(AuditLog.query.filter_by(action="USER_PERMANENTLY_DELETED").count(), 1)
+
+    def test_suspended_user_cannot_keep_using_an_existing_session(self):
+        self.login(self.agent_id)
+        self.assertEqual(self.get("/dashboard").status_code, 200)
+        db.session.get(User, self.agent_id).active = False
+        db.session.commit()
+        response = self.get("/dashboard")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/auth/login", response.location)
 
     def test_reported_qr_branch_and_campaign_are_corrected_once(self):
         owner = db.session.get(User, self.owner_id)

@@ -38,6 +38,32 @@ def _ensure_lapsed_policy_contact_columns(app):
             app.logger.exception("Could not ensure lapsed policy contact/suspense columns")
 
 
+def _ensure_company_registry(app):
+    """Upgrade existing PostgreSQL deployments without altering client records."""
+    from sqlalchemy import text
+    with app.app_context():
+        if not str(db.engine.url).startswith("postgresql"):
+            return
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE company_group_states ADD COLUMN IF NOT EXISTS parent_company VARCHAR(160) NOT NULL DEFAULT 'Martin''s Brokers'"))
+            conn.execute(text("ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES company_group_states(id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_communication_campaigns_company_id ON communication_campaigns (company_id)"))
+            conn.execute(text("ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES company_group_states(id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lapsed_policies_company_id ON lapsed_policies (company_id)"))
+            conn.execute(text("""INSERT INTO company_group_states (company_name, branch, status, parent_company)
+                SELECT DISTINCT COALESCE(NULLIF(company_name, ''), NULLIF(franchise, ''), NULLIF(branch, ''), 'Unknown Company'),
+                       COALESCE(branch, ''), 'Active', 'Martin''s Brokers'
+                FROM lapsed_policies
+                WHERE TRUE
+                ON CONFLICT (company_name, branch) DO NOTHING"""))
+            conn.execute(text("""UPDATE lapsed_policies AS policy
+                SET company_id = company.id
+                FROM company_group_states AS company
+                WHERE policy.company_id IS NULL
+                  AND company.company_name = COALESCE(NULLIF(policy.company_name, ''), NULLIF(policy.franchise, ''), NULLIF(policy.branch, ''), 'Unknown Company')
+                  AND company.branch = COALESCE(policy.branch, '')"""))
+
+
 def _ensure_communication_campaign_columns(app):
     """Keep existing Render databases compatible with image-template campaigns."""
     from sqlalchemy import text
@@ -360,8 +386,15 @@ def create_app():
     # Keep this small, new scheduling table available even when general
     # AUTO_CREATE_TABLES is disabled on a production deployment.
     with app.app_context():
-        from app.models import SupportingDocumentReminder
+        from app.models import SupportingDocumentReminder, CompanyGroupState
         SupportingDocumentReminder.__table__.create(db.engine, checkfirst=True)
+        CompanyGroupState.__table__.create(db.engine, checkfirst=True)
+        from app.models import company_agent_assignments
+        company_agent_assignments.create(db.engine, checkfirst=True)
+        try:
+            _ensure_company_registry(app)
+        except Exception:
+            app.logger.exception("Company registry upgrade failed")
         try:
             from app.services.brokers_branch import reconcile_brokers_branch
             reconcile_brokers_branch()
@@ -378,7 +411,8 @@ def create_app():
 
     @login_manager.user_loader
     def load_user(user_id):
-        return db.session.get(User, int(user_id))
+        user = db.session.get(User, int(user_id))
+        return user if user and user.active else None
 
 
     @app.teardown_request

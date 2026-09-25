@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% block content %}
+<h1>Company Details</h1>
+<p class="text-muted">All companies are managed under Martin's Brokers. Imported clients, agents, calls and campaigns can be viewed per company or together in the consolidated report. Matching names in different branches are separate records.</p>
+<div class="row g-3 mb-4">
+{% for card in cards %}<div class="col-md-3 col-sm-6"><div class="card h-100"><div class="card-body"><div class="text-muted">{{ card.label }}</div><div class="display-6 fw-bold">{{ card.value }}</div></div></div></div>{% endfor %}
+</div>
+{% if owner %}<p><a href="{{ url_for('main.franchise_details', show_deleted=0 if show_deleted else 1) }}">{{ 'Show active companies' if show_deleted else 'Show deleted company listings' }}</a></p>{% endif %}
+<div class="card"><div class="card-body">
+{% if rows %}<div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>Company name</th><th>Branch</th><th>Policies</th><th>Active leads</th><th>Suspense</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.company }}</td><td>{{ row.branch }}</td><td>{{ row.policies }}</td><td>{{ row.active_leads }}</td><td>{{ row.suspense }}</td><td>{{ row.status }}</td><td><a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.franchise_company_view', name=row.company, branch=row.branch) }}">View{{ ' / manage' if owner else '' }}</a></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="text-muted mb-0">No companies found in this view.</p>{% endif %}
+</div></div>
+{% endblock %}
