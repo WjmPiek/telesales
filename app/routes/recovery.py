@@ -449,9 +449,48 @@ def import_lapsed():
     if not file:
         flash("Please choose an Excel file", "danger")
         return redirect(url_for("recovery.queue"))
-    wb = load_workbook(file, data_only=True)
-    ws = wb.active
+    wb = load_workbook(file, data_only=True, read_only=True)
+    ws = wb["CLIENTS"] if "CLIENTS" in wb.sheetnames else wb.active
     headers = [c.value for c in ws[1]]
+    # The payment Total in older imports is not an insured benefit. Only the
+    # explicit, per-person COVERED_MEMBERS sheet may populate cover history.
+    cover_rows = []
+    if "COVERED_MEMBERS" in wb.sheetnames:
+        from decimal import Decimal, InvalidOperation
+        from app.services.compliance_service import is_valid_sa_id, only_digits
+        member_sheet = wb["COVERED_MEMBERS"]
+        member_headers = [_norm_header(cell.value) for cell in member_sheet[1]]
+        required = {"company", "branch", "policynumber", "idnumber", "coveramount", "status"}
+        if not required.issubset(set(member_headers)):
+            flash("COVERED_MEMBERS requires Company, Branch, Policy_Number, ID_Number, Cover_Amount and Status columns.", "danger")
+            return redirect(url_for("recovery.queue"))
+        seen = set()
+        for row_number, cells in enumerate(member_sheet.iter_rows(min_row=2, values_only=True), 2):
+            data = dict(zip(member_headers, cells))
+            if not any(_clean_import_value(value) for value in cells):
+                continue
+            company_name = _clean_import_value(data.get("company"))
+            branch = _clean_import_value(data.get("branch"))
+            policy = _clean_import_value(data.get("policynumber"))
+            identifier = only_digits(_clean_import_value(data.get("idnumber")))
+            status = _clean_import_value(data.get("status")).title()
+            try:
+                cover = Decimal(_clean_import_value(data.get("coveramount")).replace(",", "").replace("R", ""))
+            except (InvalidOperation, ValueError):
+                cover = Decimal(0)
+            key = (company_name.casefold(), branch.casefold(), policy, identifier)
+            if (not company_name or not branch or not policy or not is_valid_sa_id(identifier)
+                    or cover <= 0 or status not in {"Active", "Lapsed", "Cancelled"} or key in seen):
+                flash(f"COVERED_MEMBERS row {row_number} needs a unique company/branch/policy/member, valid SA ID, positive cover and Active, Lapsed or Cancelled status.", "danger")
+                return redirect(url_for("recovery.queue"))
+            seen.add(key)
+            cover_rows.append((company_name, branch, policy[:80], identifier, cover, status,
+                               _clean_import_value(data.get("relationship"))[:80],
+                               _clean_import_value(data.get("productname"))[:150]))
+    if cover_rows:
+        from app.routes.auth import _is_user_management_owner
+        if not _is_user_management_owner(current_user):
+            abort(403)
     count = 0
     suspense_count = 0
     for row in ws.iter_rows(min_row=2, values_only=True):
@@ -482,19 +521,45 @@ def import_lapsed():
         else:
             count += 1
 
+        raw_paid = _row_value(data, ["LastDatePaid", "Last Date Paid"])
+        last_paid = None
+        if raw_paid:
+            try:
+                last_paid = datetime.strptime(raw_paid[:10].replace("/", "-"), "%Y-%m-%d").date()
+            except ValueError:
+                pass
         lp = LapsedPolicy(
             franchise=company_name, company_name=company_name, company_id=company.id, id_number=id_number, email_address=email_address, suspense_reason=", ".join(missing_fields), member_id=str(data.get("Member_ID") or ""), policy_number=str(policy_number),
             surname=data.get("Surname"), initials=data.get("Initials"), cell_number=contact_number or str(data.get("Cell_Number") or ""),
-            home_tel=str(data.get("home_tel") or ""), address=data.get("Address"), premium_due=data.get("PremiumDue") or 0,
+            home_tel=str(data.get("home_tel") or ""), address=data.get("Address"), last_date_paid=last_paid,
+            premium_due=data.get("PremiumDue") or 0,
             total=data.get("Total") or 0, payment_method=data.get("PaymentMethod"), branch=branch,
             comments=comments, assigned_agent_id=assigned_agent, recovery_status=recovery_status, next_action_date=next_action
         )
         db.session.add(lp)
+    if cover_rows:
+        from app.models import HistoricalMemberCover
+        from app.services.company_groups import get_or_create_company
+        for company_name, branch, policy, identifier, cover, status, relationship, product_name in cover_rows:
+            company = get_or_create_company(company_name, branch)
+            entry = HistoricalMemberCover.query.filter_by(company_id=company.id,
+                policy_number=policy, id_number=identifier).first()
+            if entry is None:
+                entry = HistoricalMemberCover(company_id=company.id, policy_number=policy,
+                    id_number=identifier, imported_by_id=current_user.id)
+                db.session.add(entry)
+            entry.cover_amount = cover
+            entry.status = status
+            entry.relationship = relationship or None
+            entry.product_name = product_name or None
+        db.session.add(AuditLog(user_id=current_user.id, action="Company member cover imported",
+            entity_type="HistoricalMemberCover", entity_id=None,
+            details=f"{len(cover_rows)} verified member benefit rows imported or updated from client workbook."))
     db.session.commit()
     if suspense_count:
-        flash(f"Import complete. Call queue: {count}. Suspense: {suspense_count} clients missing ID number or contact number.", "warning")
+        flash(f"Import complete. Call queue: {count}. Suspense: {suspense_count} clients missing ID number or contact number. Member benefit rows: {len(cover_rows)}.", "warning")
         return redirect(url_for("recovery.suspense"))
-    flash(f"Imported {count} lapsed policies", "success")
+    flash(f"Imported {count} client policies and {len(cover_rows)} verified member benefit rows. Only Active benefits count toward cover limits.", "success")
     return redirect(url_for("recovery.queue"))
 
 
@@ -1657,6 +1722,7 @@ def start_application(policy_id):
             application_ref=application_ref,
             product_id=prod.id,
             branch=p.branch or current_user.branch,
+            company_id=p.company_id,
             agent_id=current_user.id,
             application_type=label,
             lapsed_policy_id=p.id,

@@ -17,6 +17,15 @@ join_bp = Blueprint("join", __name__, url_prefix="/join")
 COVER_OPTIONS = (10000, 20000, 30000, 40000)
 
 
+def _principal_cover_errors(product, identifier):
+    """Check the same cross-company active-policy ledger as staff QA."""
+    from app.services.cover_eligibility import coverage_errors
+    proposal = ClientApplication(product=product, id_number=identifier,
+                                 cover_amount=product.cover_amount,
+                                 date_of_birth=dob_from_sa_id(identifier))
+    return coverage_errors(proposal)
+
+
 def _recipient(token):
     recipient = CampaignRecipient.query.filter_by(secure_token=token).first_or_404()
     if not recipient.policy:
@@ -52,6 +61,8 @@ def _product_choices(qualification):
     # A single applicant must never be offered a family or Member+ package.
     candidates = [p for p in age_eligible if _product_capacity(p) == 1] if total_members == 1 else [
         p for p in age_eligible if _product_capacity(p) >= total_members]
+    if qualification.get("id_number"):
+        candidates = [p for p in candidates if not _principal_cover_errors(p, qualification["id_number"])]
     # Prefer the package that advertises precisely the requested member count.
     # Only fall back to a larger family package if there is no such package.
     matching_count = [p for p in candidates if _product_capacity(p) == total_members]
@@ -109,6 +120,8 @@ def qualify(token):
             error = "Total members must be between 1 and 11, including the main member."
         elif fixed_product and (not fixed_product.active or not (fixed_product.min_age is None or fixed_product.min_age <= age_from_dob(dob_from_sa_id(values["id_number"]))) or not (fixed_product.max_age is None or fixed_product.max_age >= age_from_dob(dob_from_sa_id(values["id_number"])))):
             error = "The main member's age does not qualify for this policy. Please ask an agent for assistance."
+        elif fixed_product and (cover_errors := _principal_cover_errors(fixed_product, values["id_number"])):
+            error = "This product would exceed the cover available for this member: " + "; ".join(cover_errors)
         elif not fixed_product and cover_amount not in COVER_OPTIONS:
             error = "Select one of the available cover amounts."
         else:
@@ -151,6 +164,11 @@ def application(token, product_id):
     product = products.get(product_id)
     if not product:
         abort(400)
+    cover_errors = _principal_cover_errors(product, qualification["id_number"])
+    if cover_errors:
+        return render_template("join/products.html", recipient=recipient, qualification=qualification,
+                               products=[], alternatives=False, product_capacity=_product_capacity,
+                               error="This product is not available: " + "; ".join(cover_errors))
 
     policy = recipient.policy
     agent = db.session.get(User, policy.assigned_agent_id) if policy.assigned_agent_id else recipient.campaign.created_by
@@ -162,6 +180,7 @@ def application(token, product_id):
         agent_id=getattr(agent, "id", None),
         agent_name=getattr(agent, "name", None) or "Self-service",
         branch=policy.branch,
+        company_id=policy.company_id,
         lapsed_policy_id=policy.id,
         first_names=policy.initials,
         surname=policy.surname,
@@ -263,6 +282,8 @@ def campaign_application(token):
             error = f"Total members must be between 1 and {maximum_members}, including the main member."
         elif (product.min_age is not None and age < product.min_age) or (product.max_age is not None and age > product.max_age):
             error = "The main member's age does not qualify for this policy. Please ask an agent for assistance."
+        elif (cover_errors := _principal_cover_errors(product, values["id_number"])):
+            error = "This product would exceed the cover available for this member: " + "; ".join(cover_errors)
         else:
             lead = LapsedPolicy(
                 member_id=f"QR-{datetime.utcnow():%Y%m%d%H%M%S}-{secrets.token_hex(3)}",
@@ -284,6 +305,7 @@ def campaign_application(token):
                 application_ref="QR-" + datetime.utcnow().strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper(),
                 product=product, agent_id=campaign.created_by_id,
                 agent_name=getattr(agent, "name", None) or "Self-service", branch=campaign.branch,
+                company_id=campaign.company_id,
                 lapsed_policy_id=lead.id, first_names=values["first_names"], surname=values["surname"],
                 id_number="".join(ch for ch in values["id_number"] if ch.isdigit()), date_of_birth=dob,
                 cell_number=phone, email=values["email"], document_email=values["email"], status="Draft",

@@ -32,6 +32,7 @@ from app.models import (
     ContactCommunicationPreference,
     ContactSuppression,
     DocumentSignature,
+    HistoricalMemberCover,
     LapsedPolicy,
     RecoveryCallLog,
     SupportingDocumentReminder,
@@ -52,6 +53,7 @@ RESET_COUNTS = {
     "applications": ClientApplication,
     "application_files": ClientStoredFile,
     "imported_clients": LapsedPolicy,
+    "historical_member_covers": HistoricalMemberCover,
     "call_records": RecoveryCallLog,
     "script_sessions": TelesalesScriptSession,
     "campaign_recipients": CampaignRecipient,
@@ -161,6 +163,7 @@ def reset_operational_data():
     CallRecording.query.delete(synchronize_session=False)
     RecoveryCallLog.query.delete(synchronize_session=False)
     ContactCommunicationPreference.query.delete(synchronize_session=False)
+    HistoricalMemberCover.query.delete(synchronize_session=False)
     LapsedPolicy.query.delete(synchronize_session=False)
 
     operational_entities = {

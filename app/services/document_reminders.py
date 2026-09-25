@@ -9,10 +9,15 @@ def schedule_document_reminders(application):
     """Enroll only a newly submitted, signed application."""
     if not application.signed_at:
         return
-    if db.session.get(SupportingDocumentReminder, application.id):
-        return
-    db.session.add(SupportingDocumentReminder(
-        application_id=application.id, started_at=application.signed_at))
+    row = db.session.get(SupportingDocumentReminder, application.id)
+    if row:
+        if row.cancelled_at is None:
+            return
+        row.started_at = application.signed_at
+        row.first_sent_at = row.last_sent_at = row.last_attempt_at = row.cancelled_at = None
+    else:
+        db.session.add(SupportingDocumentReminder(
+            application_id=application.id, started_at=application.signed_at))
     db.session.add(AuditLog(action="Supporting reminders scheduled", entity_type="ClientApplication",
                             entity_id=str(application.id), details="First reminder after 24 hours; final reminder 24 hours later if documents remain outstanding."))
     db.session.commit()
@@ -69,7 +74,8 @@ def process_document_reminders(*, now=None, limit=50):
                 stats["cancelled"] += 1
                 continue
             required, received, outstanding, docs = _fica_status(application)
-            if not outstanding:
+            from app.services.cover_eligibility import missing_member_ids
+            if not outstanding and not missing_member_ids(application):
                 cancel_document_reminders(row.application_id, now=now)
                 db.session.commit()
                 stats["cancelled"] += 1

@@ -59,6 +59,8 @@
       {{ nav_link('System settings', 'settings.index') }}
       {{ nav_link('Email templates', 'settings.email_templates') }}
       {{ nav_link('Bank confirmation letters', 'settings.bank_confirmation_letters') }}
+      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Company client documents', 'settings.company_documents') }}{% endif %}
+      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Member cover checks', 'settings.cover_checks') }}{% endif %}
       {{ nav_link('Script Setup', 'recovery.admin_script_questions') }}
       {% else %}{{ nav_link('Employees', 'main.franchise_employees') }}{% endif %}
     </div>

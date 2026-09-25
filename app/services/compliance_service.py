@@ -9,7 +9,9 @@ def only_digits(value):
 
 def dob_from_sa_id(id_number):
     digits = only_digits(id_number)
-    if len(digits) < 6:
+    # An ISO birth date (YYYY-MM-DD) has eight digits and must never be
+    # misread as the YYMMDD prefix of a South African ID number.
+    if len(digits) not in {6, 13}:
         return ''
     yy = int(digits[:2])
     mm = digits[2:4]
@@ -201,6 +203,15 @@ def validate_application_rules(app_obj):
         for label, value in required_bank:
             if not str(value or '').strip():
                 errors.append(f'{label} is required because payment method is Debit Order.')
+    # A policy may span companies, so this check deliberately has no branch
+    # filter. Only active policies contribute to existing cover.
+    if product and is_valid_sa_id(id_number):
+        from flask import has_app_context
+        if has_app_context():
+            from app.models import ClientApplication
+            if isinstance(app_obj, ClientApplication):
+                from app.services.cover_eligibility import coverage_errors
+                errors.extend(coverage_errors(app_obj))
     return errors
 
 

@@ -6,3 +6,6 @@ uploads/
 *.pyc
 *.sqlite
 .browsers/
+node_modules/
+*.inspect.ndjson
+app/static/templates/--no-previews

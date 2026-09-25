@@ -35,7 +35,7 @@ def prepare(recipient_id):
         if not product or not product.active:abort(400)
         from app.services.compliance_service import classify_product_template, dob_from_sa_id, assert_application_rules
         a=ClientApplication(application_ref='WA-'+secrets.token_hex(6).upper(),product=product,agent_id=current_user.id,
-          branch=policy.branch,lapsed_policy_id=policy.id,first_names=policy.initials,surname=policy.surname,
+          branch=policy.branch,company_id=policy.company_id,lapsed_policy_id=policy.id,first_names=policy.initials,surname=policy.surname,
           id_number=policy.id_number,cell_number=policy.cell_number,email=policy.email_address,
           date_of_birth=dob_from_sa_id(policy.id_number),status='Draft',payment_method='Cash',
           address=policy.address,residential_address=policy.address,form_template=classify_product_template(product),

@@ -50,6 +50,8 @@ def _ensure_company_registry(app):
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_communication_campaigns_company_id ON communication_campaigns (company_id)"))
             conn.execute(text("ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES company_group_states(id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lapsed_policies_company_id ON lapsed_policies (company_id)"))
+            conn.execute(text("ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES company_group_states(id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_client_applications_company_id ON client_applications (company_id)"))
             conn.execute(text("""INSERT INTO company_group_states (company_name, branch, status, parent_company)
                 SELECT DISTINCT COALESCE(NULLIF(company_name, ''), NULLIF(franchise, ''), NULLIF(branch, ''), 'Unknown Company'),
                        COALESCE(branch, ''), 'Active', 'Martin''s Brokers'
@@ -62,6 +64,11 @@ def _ensure_company_registry(app):
                 WHERE policy.company_id IS NULL
                   AND company.company_name = COALESCE(NULLIF(policy.company_name, ''), NULLIF(policy.franchise, ''), NULLIF(policy.branch, ''), 'Unknown Company')
                   AND company.branch = COALESCE(policy.branch, '')"""))
+            conn.execute(text("""UPDATE client_applications AS application
+                SET company_id = policy.company_id
+                FROM lapsed_policies AS policy
+                WHERE application.company_id IS NULL AND application.lapsed_policy_id = policy.id
+                  AND policy.company_id IS NOT NULL"""))
 
 
 def _ensure_communication_campaign_columns(app):
@@ -386,9 +393,16 @@ def create_app():
     # Keep this small, new scheduling table available even when general
     # AUTO_CREATE_TABLES is disabled on a production deployment.
     with app.app_context():
-        from app.models import SupportingDocumentReminder, CompanyGroupState
+        from app.models import SupportingDocumentReminder, CompanyGroupState, CompanyDocument, HistoricalMemberCover
         SupportingDocumentReminder.__table__.create(db.engine, checkfirst=True)
         CompanyGroupState.__table__.create(db.engine, checkfirst=True)
+        CompanyDocument.__table__.create(db.engine, checkfirst=True)
+        HistoricalMemberCover.__table__.create(db.engine, checkfirst=True)
+        if str(db.engine.url).startswith("postgresql"):
+            from sqlalchemy import text
+            with db.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS relationship VARCHAR(80)"))
+                conn.execute(text("ALTER TABLE historical_member_covers ADD COLUMN IF NOT EXISTS product_name VARCHAR(150)"))
         from app.models import company_agent_assignments
         company_agent_assignments.create(db.engine, checkfirst=True)
         try:

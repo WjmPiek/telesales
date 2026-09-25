@@ -9,7 +9,7 @@ os.environ["ENABLE_WHATSAPP_SCHEDULER"] = "0"
 os.environ["AUTO_CREATE_TABLES"] = "1"
 
 from app import create_app, db
-from app.models import AuditLog, CampaignRecipient, ClientApplication, CommunicationCampaign, CompanyGroupState, LapsedPolicy, RecoveryCallLog, Role, User
+from app.models import AuditLog, CampaignRecipient, ClientApplication, CommunicationCampaign, CompanyDocument, CompanyGroupState, HistoricalMemberCover, LapsedPolicy, RecoveryCallLog, Role, User
 from app.services.company_groups import company_is_suspended, get_or_create_company
 from app.routes.communications import _send_to_recipient
 
@@ -48,13 +48,39 @@ class CompanyManagementTests(unittest.TestCase):
             session["_user_id"] = str(user_id)
             session["_fresh"] = True
 
-    def post(self, path, data):
+    def post(self, path, data, **kwargs):
         g.pop("_login_user", None)
-        return self.client.post(path, data=data)
+        return self.client.post(path, data=data, **kwargs)
 
     def get(self, path):
         g.pop("_login_user", None)
         return self.client.get(path)
+
+    def test_owner_can_import_active_member_cover_and_upload_company_pdf(self):
+        from pypdf import PdfWriter
+        self.login(self.owner_id)
+        company = CompanyGroupState(company_name='Brokers', branch='Brokers')
+        db.session.add(company); db.session.commit()
+        company_id = company.id
+        pdf = BytesIO(); writer = PdfWriter(); writer.add_blank_page(width=500, height=700); writer.write(pdf)
+        response = self.post('/settings/company-documents', data={
+            'company_id': str(company_id),
+            'category': 'additional',
+            'document': (BytesIO(pdf.getvalue()), 'current.pdf')}, content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(CompanyDocument.query.filter_by(company_id=company_id, category='additional', active=True).count(), 1)
+        from app.services.compliance_service import is_valid_sa_id
+        identifier = next('800101500908' + str(digit) for digit in range(10)
+                          if is_valid_sa_id('800101500908' + str(digit)))
+        csv_data = f'policy_number,id_number,cover_amount,status\nOFFICE-1,{identifier},12000,Active\n'
+        response = self.post('/settings/cover-checks/import', data={
+            'company_id': str(company_id), 'file': (BytesIO(csv_data.encode()), 'cover.csv')},
+            content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(HistoricalMemberCover.query.filter_by(company_id=company_id, status='Active').count(), 1)
+        self.login(self.agent_id)
+        self.assertEqual(self.get('/settings/company-documents').status_code, 403)
+        self.assertEqual(self.get('/settings/cover-checks').status_code, 403)
 
     def test_distinct_branches_and_owner_only_mutation(self):
         self.login(self.owner_id)
@@ -156,6 +182,55 @@ class CompanyManagementTests(unittest.TestCase):
         self.assertEqual(company.parent_company, "Martin's Brokers")
         policy = LapsedPolicy.query.filter_by(policy_number="IMPORTED-1").one()
         self.assertEqual((policy.company_name, policy.company_id), (company.company_name, company.id))
+
+    def test_client_workbook_imports_only_explicit_active_member_benefits(self):
+        from app.services.compliance_service import is_valid_sa_id
+        identifier = next('800101500908' + str(digit) for digit in range(10)
+                          if is_valid_sa_id('800101500908' + str(digit)))
+        workbook = Workbook()
+        clients = workbook.active
+        clients.title = 'CLIENTS'
+        clients.append(['Policy_Number', 'Company', 'Branch', 'ID_Number', 'Cell_Number', 'Total'])
+        clients.append(['HISTORY-1', 'Northcliff', 'NORTHCLIFF', identifier, '0821234567', 480])
+        members = workbook.create_sheet('COVERED_MEMBERS')
+        members.append(['Company', 'Branch', 'Policy_Number', 'ID_Number', 'Cover_Amount', 'Status'])
+        members.append(['Northcliff', 'NORTHCLIFF', 'HISTORY-1', identifier, 20000, 'Active'])
+        output = BytesIO(); workbook.save(output); output.seek(0)
+        self.login(self.owner_id)
+        response = self.post('/recovery/import', data={'file': (output, 'clients.xlsx')},
+                             content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        cover = HistoricalMemberCover.query.one()
+        self.assertEqual((cover.status, int(cover.cover_amount)), ('Active', 20000))
+        self.assertEqual(int(LapsedPolicy.query.filter_by(policy_number='HISTORY-1').one().total), 480)
+
+    def test_client_workbook_rejects_invalid_cover_sheet_without_importing_clients(self):
+        workbook = Workbook()
+        clients = workbook.active; clients.title = 'CLIENTS'
+        clients.append(['Policy_Number', 'Company', 'Branch', 'ID_Number', 'Cell_Number'])
+        clients.append(['HISTORY-2', 'Northcliff', 'NORTHCLIFF', '8001015009087', '0821234567'])
+        members = workbook.create_sheet('COVERED_MEMBERS')
+        members.append(['Company', 'Branch', 'Policy_Number', 'ID_Number', 'Cover_Amount', 'Status'])
+        members.append(['Northcliff', 'NORTHCLIFF', 'HISTORY-2', 'not-an-id', 20000, 'Active'])
+        output = BytesIO(); workbook.save(output); output.seek(0)
+        self.login(self.owner_id)
+        response = self.post('/recovery/import', data={'file': (output, 'clients.xlsx')},
+                             content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(LapsedPolicy.query.filter_by(policy_number='HISTORY-2').count(), 0)
+        self.assertEqual(HistoricalMemberCover.query.count(), 0)
+
+    def test_blank_company_import_template_is_downloadable(self):
+        self.login(self.owner_id)
+        page = self.get('/recovery/')
+        self.assertIn(b'Download blank import template', page.data)
+        download = self.get('/static/templates/company_policy_import_blank_template.xlsx')
+        self.assertEqual(download.status_code, 200)
+        book = __import__('openpyxl').load_workbook(BytesIO(download.data), read_only=True, data_only=True)
+        self.assertEqual(book.sheetnames, ['READ_ME', 'CLIENTS', 'COVERED_MEMBERS'])
+        self.assertFalse(any(any(cell is not None for cell in row)
+                             for row in book['COVERED_MEMBERS'].iter_rows(min_row=2, values_only=True)))
+        book.close()
 
 
 if __name__ == "__main__":

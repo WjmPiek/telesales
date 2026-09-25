@@ -595,9 +595,39 @@ def supporting_documents(token):
     if not session.get(_unlocked_key(app_obj.id)):
         return render_template("sign/supporting_unlock.html", app=app_obj, token=token, error=error)
 
+    nonce_key = f"member_id_nonce_{app_obj.id}"
+    session.setdefault(nonce_key, secrets.token_urlsafe(24))
+
     if request.method == "POST":
         try:
             action = request.form.get("action")
+            if action == "update_member_ids":
+                if not secrets.compare_digest(session[nonce_key], request.form.get("nonce", "")):
+                    raise ValueError("This secure form expired. Reload the page and try again.")
+                if app_obj.status == "Active":
+                    raise ValueError("An active policy cannot be changed here. Contact staff.")
+                from app.services.cover_eligibility import replace_missing_member_ids, coverage_errors
+                changed = replace_missing_member_ids(app_obj, request.form)
+                errors = coverage_errors(app_obj)
+                if errors:
+                    raise ValueError("; ".join(errors))
+                from app.services.compliance_service import assert_application_rules
+                ok, errors = assert_application_rules(app_obj)
+                if not ok:
+                    raise ValueError("; ".join(errors))
+                if app_obj.signed_at:
+                    _reopen_changed_application_for_signature(app_obj, changed)
+                    db.session.commit()
+                    sent = _send_corrected_application_link(app_obj)
+                    flash("Member ID saved. The changed application must be signed again. " +
+                          ("A fresh secure signing link was emailed to you." if sent else "Ask your agent to resend the secure signing link."), "success" if sent else "warning")
+                    return redirect(url_for("signing.supporting_documents", token=app_obj.sign_token))
+                from app.models import AuditLog
+                db.session.add(AuditLog(action="Outstanding member ID supplied", entity_type="ClientApplication",
+                    entity_id=str(app_obj.id), details="Client provided a valid ID matching the recorded birth date; application not yet signed."))
+                db.session.commit()
+                flash("Member ID saved. Please complete the application and signatures.", "success")
+                return redirect(url_for("signing.supporting_documents", token=token))
             if action == "upload":
                 doc_type = request.form.get("document_type")
                 if doc_type not in allowed:
@@ -605,7 +635,8 @@ def supporting_documents(token):
                 row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
                 required, received, outstanding, docs = _fica_status(app_obj)
                 app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
-                if not outstanding:
+                from app.services.cover_eligibility import missing_member_ids
+                if not outstanding and not missing_member_ids(app_obj):
                     from app.services.document_reminders import cancel_document_reminders
                     cancel_document_reminders(app_obj.id)
                 from app.models import AuditLog
@@ -620,8 +651,10 @@ def supporting_documents(token):
                     raise ValueError("Please upload every required document before submitting: " +
                                      ", ".join(allowed[key] for key in outstanding))
                 app_obj.status = "FICA Review"
-                from app.services.document_reminders import cancel_document_reminders
-                cancel_document_reminders(app_obj.id)
+                from app.services.cover_eligibility import missing_member_ids
+                if not missing_member_ids(app_obj):
+                    from app.services.document_reminders import cancel_document_reminders
+                    cancel_document_reminders(app_obj.id)
                 from app.models import AgentNotification, AuditLog
                 db.session.add(AuditLog(action="Supporting documents completed", entity_type="ClientApplication",
                                         entity_id=str(app_obj.id), details="Client submitted all member identity documents and proof of address for staff review."))
@@ -644,8 +677,85 @@ def supporting_documents(token):
     for doc in sorted(docs, key=lambda item: item.uploaded_at or datetime.min, reverse=True):
         if doc.status != "Replaced":
             latest.setdefault(doc.document_type, doc)
+    from app.services.cover_eligibility import _rows, missing_member_ids
+    from app.services.compliance_service import is_valid_sa_id, only_digits
+    member_rows = []
+    for index, row in enumerate(_rows(app_obj.product_dependents_json)):
+        if not isinstance(row, dict) or not any(row.get(key) for key in ("full_name", "id_or_dob", "id_number")):
+            continue
+        if not is_valid_sa_id(only_digits(row.get("id_or_dob") or row.get("id_number"))):
+            member_rows.append({"index": index, "name": row.get("full_name") or f"Member {index + 1}",
+                                "dob": row.get("date_of_birth") or row.get("id_or_dob")})
     return render_template("sign/supporting_documents.html", app=app_obj, token=token, requirements=requirements,
-                           received=received, outstanding=outstanding, latest=latest, error=error)
+                           received=received, outstanding=outstanding, latest=latest, error=error,
+                           missing_id_rows=member_rows, missing_ids=missing_member_ids(app_obj), member_id_nonce=session[nonce_key])
+
+
+def _reopen_changed_application_for_signature(app_obj, changed):
+    """Retain the signed original, then invalidate only the changed application form."""
+    import secrets
+    from app.models import AuditLog, AgentNotification, ClientStoredFile
+    from app.services.client_storage import application_folder
+    from pathlib import Path
+    from datetime import datetime
+
+    original = ClientStoredFile.query.filter_by(application_id=app_obj.id,
+        relative_path=f"signed_application_{app_obj.id}.pdf").first()
+    if original is None:
+        application_folder(app_obj)
+        path = Path(app_obj.signed_pdf_path or "")
+        if path.is_file():
+            content = path.read_bytes()
+        else:
+            raise ValueError("The signed original could not be archived. Contact staff before changing the application.")
+    else:
+        content = original.content
+    archive_name = f"revisions/signed_application_{app_obj.id}_{datetime.utcnow():%Y%m%d%H%M%S%f}.pdf"
+    db.session.add(ClientStoredFile(application_id=app_obj.id, relative_path=archive_name, content=content))
+    old_signatures = DocumentSignature.query.filter(
+        DocumentSignature.application_id == app_obj.id,
+        DocumentSignature.document_type.like("application:%")).all()
+    previous_signature_summary = ", ".join(f"{row.document_type} at {row.signed_at}" for row in old_signatures)
+    for row in old_signatures:
+        db.session.delete(row)
+    app_obj.signed_at = None
+    app_obj.signed_pdf_path = None
+    app_obj.sign_token = secrets.token_urlsafe(32)
+    app_obj.sign_token_created_at = datetime.utcnow()
+    app_obj.sign_token_used_at = None
+    app_obj.sign_token_revoked = False
+    app_obj.status = "Signature Sent"
+    if app_obj.whatsapp_journey:
+        app_obj.whatsapp_journey.signed_bundle_at = None
+    db.session.add(AuditLog(action="Application reopened for ID correction", entity_type="ClientApplication",
+        entity_id=str(app_obj.id), details=f"Original PDF preserved as {archive_name}; previous signature evidence: {previous_signature_summary}. Updated application requires a new client signature. Changed members: {', '.join(changed)}."))
+    if app_obj.agent_id:
+        db.session.add(AgentNotification(user_id=app_obj.agent_id, title="Application needs re-signing",
+            message=f"Application {app_obj.application_ref}: client supplied an outstanding ID. Original signed PDF archived; updated form must be signed before QA approval.",
+            notification_type="application", entity_type="ClientApplication", entity_id=app_obj.id))
+
+
+def _send_corrected_application_link(app_obj):
+    from app.models import AuditLog
+    from app.services.email_service import signing_email_html
+    recipient = (app_obj.document_email or app_obj.email or "").strip()
+    base = (current_app.config.get("BASE_URL") or "").rstrip("/")
+    if not recipient or not base:
+        return False
+    link = base + url_for("signing.sign_application", token=app_obj.sign_token)
+    body = ("Your outstanding member ID has been added to the application. Because the application changed after signing, "
+            "please open the secure link, review the updated application form, and sign it again. "
+            "Your earlier signed PDF is retained in our records.\n\n" + link)
+    try:
+        sent = send_email(recipient, "Please re-sign your updated Martin's Funerals application", body, [],
+            html_body=signing_email_html(app_obj, link, body, "Re-sign updated application"), application_id=app_obj.id)
+    except Exception:
+        current_app.logger.exception("Corrected application link failed for %s", app_obj.id)
+        sent = False
+    db.session.add(AuditLog(action="Corrected application signing link", entity_type="ClientApplication",
+        entity_id=str(app_obj.id), details="Email accepted by mail server." if sent else "Email delivery failed; staff must resend."))
+    db.session.commit()
+    return sent
 
 
 def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, reminder_stage=None, commit=True):
@@ -668,6 +778,13 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, remi
             upload_path = adapter.build("signing.supporting_documents", {"token": app_obj.sign_token})
         upload_link = base_url + upload_path
         subject, body = client_email_content("supporting", app_obj, upload_link)
+        from app.services.cover_eligibility import missing_member_ids
+        missing_ids = missing_member_ids(app_obj)
+        if missing_ids:
+            body += ("\n\nYour policy remains pending because valid South African ID numbers are "
+                     "outstanding for: " + ", ".join(missing_ids) +
+                     ". Open the secure link above to enter those ID numbers. "
+                     "The updated application must be signed again before activation.")
         if reminder_stage:
             subject = ("Final reminder" if reminder_stage == 2 else "Reminder") + ": upload documents for " + app_obj.application_ref
             body = ("This is your final reminder.\n\n" if reminder_stage == 2 else "This is a reminder.\n\n") + body
@@ -694,18 +811,15 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, remi
 def finish_application(app_obj, token):
     from app.services.delivery_preferences import receipt_address
     from app.services.email_service import business_bank_confirmation_attachment
+    from app.services.company_documents import active_company_documents
     recipient = receipt_address(request.form, app_obj)
-    cash_bank_letter = None
-    if str(app_obj.payment_method or '').strip().lower() == 'cash':
+    company_bank = any(row.category == 'bank_confirmation' for row in active_company_documents(app_obj, include_bank=True))
+    if str(app_obj.payment_method or '').strip().lower() == 'cash' and not company_bank:
         cash_bank_letter = business_bank_confirmation_attachment()
         if not cash_bank_letter:
-            raise ValueError(
-                "The official Martin's Funerals business bank confirmation letter has not been configured. "
-                "Please ask staff to upload it under Settings > Client email templates, then submit again."
-            )
+            raise ValueError("The business bank confirmation letter for this application has not been configured.")
         import shutil
         shutil.rmtree(os.path.dirname(cash_bank_letter), ignore_errors=True)
-        cash_bank_letter = None
     ok, errors = assert_application_rules(app_obj)
     if not ok:
         raise ValueError("Application blocked: " + "; ".join(errors))

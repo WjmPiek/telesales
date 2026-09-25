@@ -1,0 +1,16 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Company client documents</h2>
+<p class="text-muted">Standard application documents stay unchanged. Choose the company for each bank confirmation letter or additional agreement. A company-specific bank letter replaces the global bank letter for that company's cash-payment email; other companies keep their current letter.</p>
+<div class="card card-body mb-4">
+  <h3 class="h5">Upload a PDF</h3>
+  <form method="post" enctype="multipart/form-data" class="row g-3">
+    <div class="col-md-4"><label class="form-label" for="company-id">Company</label><select class="form-select" id="company-id" name="company_id" required><option value="">Select company</option>{% for company in companies %}<option value="{{ company.id }}">{{ company.company_name }} — {{ company.branch }}</option>{% endfor %}</select></div>
+    <div class="col-md-4"><label class="form-label" for="category">Document type</label><select class="form-select" id="category" name="category" required><option value="bank_confirmation">Bank confirmation letter</option><option value="additional">Additional agreement or document</option></select></div>
+    <div class="col-md-4"><label class="form-label" for="document">PDF (max 5 MB)</label><input class="form-control" id="document" name="document" type="file" accept="application/pdf,.pdf" required></div>
+    <div class="col-12"><button class="btn btn-primary">Save document</button></div>
+  </form>
+</div>
+<div class="card card-body"><h3 class="h5">Saved documents</h3><div class="table-responsive"><table class="table align-middle"><thead><tr><th>Company</th><th>Type</th><th>File</th><th>Status</th><th>Uploaded</th><th>Actions</th></tr></thead><tbody>
+{% for document in documents %}<tr><td>{{ document.company.company_name }} — {{ document.company.branch }}</td><td>{{ 'Bank confirmation' if document.category == 'bank_confirmation' else 'Additional agreement/document' }}</td><td>{{ document.original_filename }}</td><td>{{ 'Active' if document.active else 'Removed from future emails' }}</td><td>{{ document.uploaded_at.strftime('%Y-%m-%d %H:%M') if document.uploaded_at else '' }}</td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('settings.download_company_document', document_id=document.id) }}">Download</a><form class="d-inline" method="post" action="{{ url_for('settings.toggle_company_document', document_id=document.id) }}"><button class="btn btn-sm btn-outline-secondary">{{ 'Remove' if document.active else 'Restore' }}</button></form></td></tr>{% else %}<tr><td colspan="6">No company documents yet.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

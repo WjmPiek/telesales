@@ -8,7 +8,8 @@ from unittest.mock import patch
 import test_application_flow as fixtures
 from app import db
 from app.models import (AgentNotification, AuditLog, CommunicationCampaign, CommunicationEvent, ApplicationJourney, ClientApplication,
-                        ClientFicaDocument, DocumentSignature, PolicyProductRule, SystemSetting)
+                        ClientFicaDocument, ClientStoredFile, CompanyDocument, CompanyGroupState, DocumentSignature, HistoricalMemberCover,
+                        PolicyProduct, PolicyProductRule, SystemSetting)
 from app.services.client_storage import application_folder, store_document
 from app.services.cdd_service import FIELDS as CDD_FIELDS
 from app.services.signature_fields import application_fields
@@ -18,6 +19,105 @@ class OnlineApplicationTests(unittest.TestCase):
     tearDown=fixtures.ApplicationFlowTests.tearDown
     record=fixtures.ApplicationFlowTests.record
     upload_screening=fixtures.ApplicationFlowTests.upload_screening
+
+    @staticmethod
+    def valid_id(prefix12):
+        from app.services.compliance_service import is_valid_sa_id
+        return next(prefix12 + str(digit) for digit in range(10) if is_valid_sa_id(prefix12 + str(digit)))
+
+    def test_missing_member_id_reopens_signed_application_and_preserves_original(self):
+        import json
+        from app.services.cover_eligibility import missing_member_ids
+        from app.services.compliance_service import dob_from_sa_id
+        client, nonce = self.prepare()
+        data = self.save(client, nonce)
+        data.update(child_1_full_name='Example Child', child_1_relationship='Child',
+                    child_1_id_or_dob='2009-08-15')
+        self.assertEqual(client.post('/online-application/fictional-online-test', data=data).status_code, 302)
+        self.assertEqual(json.loads(self.record.product_dependents_json)[0]['date_of_birth'], '15/08/2009')
+        self.assertTrue(missing_member_ids(self.record))
+        self.record.signed_at = datetime.utcnow()
+        self.record.sign_token_used_at = datetime.utcnow()
+        self.record.sign_token_revoked = True
+        self.record.status = 'Signed'
+        self.record.whatsapp_journey.signed_bundle_at = datetime.utcnow()
+        db.session.add(ClientStoredFile(application_id=self.record_id,
+            relative_path=f'signed_application_{self.record_id}.pdf', content=b'%PDF-1.4\noriginal signed form'))
+        db.session.add(DocumentSignature(application_id=self.record_id, document_type='application:principal',
+            typed_name='Fictional Test', signature_image_path='old-signature.png'))
+        db.session.commit()
+
+        member_id = self.valid_id('090815532108')
+        self.assertEqual(dob_from_sa_id(member_id), '15/08/2009')
+        client.get('/sign/fictional-online-test/supporting-documents')
+        with client.session_transaction() as session:
+            member_id_nonce = session[f'member_id_nonce_{self.record_id}']
+        with patch('app.routes.signing.send_email', return_value=True):
+            response = client.post('/sign/fictional-online-test/supporting-documents',
+                data={'action': 'update_member_ids', 'member_id_0': member_id, 'nonce': member_id_nonce})
+        self.assertEqual(response.status_code, 302, response.data[:300])
+        self.assertNotEqual(self.record.sign_token, 'fictional-online-test')
+        self.assertIsNone(self.record.signed_at)
+        self.assertIsNone(self.record.whatsapp_journey.signed_bundle_at)
+        self.assertFalse(missing_member_ids(self.record))
+        self.assertEqual(json.loads(self.record.product_dependents_json)[0]['id_or_dob'], member_id)
+        self.assertEqual(DocumentSignature.query.filter_by(application_id=self.record_id,
+            document_type='application:principal').count(), 0)
+        archive = ClientStoredFile.query.filter(ClientStoredFile.application_id == self.record_id,
+            ClientStoredFile.relative_path.like('revisions/%')).one()
+        self.assertEqual(archive.content, b'%PDF-1.4\noriginal signed form')
+        self.assertEqual(client.get('/sign/fictional-online-test').status_code, 404)
+        self.assertEqual(client.get(f'/online-application/{self.record.sign_token}').status_code, 200)
+        self.assertEqual(client.get(f'/sign/{self.record.sign_token}/review/application').status_code, 200)
+
+    def test_cover_check_uses_active_policies_across_companies_and_office_imports(self):
+        from decimal import Decimal
+        from app.services.cover_eligibility import coverage_report, cover_limit
+        self.assertEqual(cover_limit(6), Decimal('10000'))
+        self.assertEqual(cover_limit(65), Decimal('50000'))
+        self.assertEqual(cover_limit(66), Decimal('20000'))
+        active_product = PolicyProduct(product_name='Existing cover', plan_name='Active',
+                                       monthly_premium=100, cover_amount=40000)
+        company = CompanyGroupState(company_name='Other office', branch='Other office')
+        db.session.add_all([active_product, company]); db.session.flush()
+        active = ClientApplication(application_ref='EXISTING-ACTIVE', id_number=self.record.id_number,
+            product=active_product, company_id=company.id, branch='Other office', status='Active')
+        pending = ClientApplication(application_ref='NOT-ACTIVE', id_number=self.record.id_number,
+            product=active_product, company_id=company.id, branch='Other office', status='Signed')
+        db.session.add_all([active, pending]); db.session.commit()
+        report = coverage_report(self.record)
+        self.assertEqual(report['members'][0]['existing_cover'], Decimal('40000'))
+        self.assertEqual(report['members'][0]['total_cover'], Decimal('50000'))
+        self.assertFalse(report['blocked'])
+        db.session.add(HistoricalMemberCover(company_id=company.id, policy_number='OFFICE-ONLY',
+            id_number=self.record.id_number, cover_amount=5000, status='Active', imported_by_id=self.user_id))
+        db.session.commit()
+        report = coverage_report(self.record)
+        self.assertEqual(report['members'][0]['existing_cover'], Decimal('45000'))
+        self.assertTrue(report['blocked'])
+
+    def test_optional_company_documents_are_isolated(self):
+        import shutil
+        from app.services.company_documents import materialise_company_documents
+        north = CompanyGroupState(company_name='Northcliff', branch='Northcliff')
+        brokers = CompanyGroupState(company_name='Brokers', branch='Brokers')
+        db.session.add_all([north, brokers]); db.session.flush()
+        self.record.company_id = north.id
+        db.session.add(CompanyDocument(company_id=brokers.id, category='additional',
+            original_filename='brokers.pdf', file_data=b'%PDF-brokers', file_size=12,
+            checksum_sha256='a' * 64, uploaded_by_id=self.user_id))
+        db.session.commit()
+        self.assertEqual(materialise_company_documents(self.record), ([], None))
+        db.session.add(CompanyDocument(company_id=north.id, category='additional',
+            original_filename='northcliff.pdf', file_data=b'%PDF-northcliff', file_size=14,
+            checksum_sha256='b' * 64, uploaded_by_id=self.user_id))
+        db.session.commit()
+        paths, folder = materialise_company_documents(self.record)
+        try:
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(Path(paths[0]).read_bytes(), b'%PDF-northcliff')
+        finally:
+            shutil.rmtree(folder)
 
     def prepare(self):
         import json
@@ -141,7 +241,7 @@ class OnlineApplicationTests(unittest.TestCase):
         data=self.save(client,nonce)
         data.update(spouse_1_full_name='Example Spouse',spouse_1_relationship='Spouse',spouse_1_id_or_dob='1985-01-01',
           child_1_full_name='Example Child',child_1_relationship='Child',child_1_id_or_dob='2018-01-01',
-          extended_1_full_name='Example Parent',extended_1_relationship='Parent',extended_1_id_or_dob='1960-01-01')
+          extended_1_full_name='Example Parent',extended_1_relationship='Parent',extended_1_id_or_dob='1961-01-01')
         response=client.post('/online-application/fictional-online-test?edit=1',data=data)
         self.assertEqual(response.status_code,302,response.data[:400])
         child=__import__('json').loads(self.record.dependents_json)[0]
@@ -413,6 +513,26 @@ class OnlineApplicationTests(unittest.TestCase):
         self.assertEqual(qr.status_code,200)
         self.assertEqual(qr.mimetype,'image/png')
         self.assertGreater(len(qr.data),100)
+
+    def test_qr_application_blocks_existing_active_cover_across_companies(self):
+        active_product = PolicyProduct(product_name='Issued elsewhere', plan_name='Active',
+                                       monthly_premium=100, cover_amount=50000)
+        other_company = CompanyGroupState(company_name='Other company', branch='Other branch')
+        db.session.add_all([active_product, other_company]); db.session.flush()
+        db.session.add(ClientApplication(application_ref='ACTIVE-OTHER-COMPANY',
+            id_number=self.record.id_number, product=active_product, cover_amount=50000,
+            company_id=other_company.id, branch='Other branch', status='Active'))
+        campaign = CommunicationCampaign(name='Cover check flyer', message_body='Apply',
+            created_by_id=self.user_id, product_id=self.record.product_id,
+            public_application_token='cover-check-flyer')
+        db.session.add(campaign); db.session.commit()
+        public = self.app.test_client()
+        response = public.post('/join/campaign/cover-check-flyer', data={
+            'first_names': 'QR', 'surname': 'Applicant', 'id_number': self.record.id_number,
+            'cell_number': '0821234567', 'email': 'qr@example.test', 'total_members': '1'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'exceed the cover available', response.data)
+        self.assertEqual(ClientApplication.query.filter_by(application_type='New Policy - QR Campaign').count(), 0)
 
     def test_recipient_campaign_with_product_skips_product_selection(self):
         from app.models import CampaignRecipient, LapsedPolicy

@@ -109,14 +109,22 @@ def notify_activation(a):
     from app.services.cdd_service import generate_cdd_pdf
     from app.services.client_storage import application_folder
     from app.services.email_service import business_bank_confirmation_attachment, client_email_content, send_email
+    from app.services.company_documents import active_company_documents, materialise_company_documents
+    from app.services.cover_eligibility import coverage_report
     from app.services.pdf_service import (generate_application_pdf, generate_disclosure_pdf,
                                           generate_popia_pdf, generate_welcome_pack)
     journey=ApplicationJourney.query.filter_by(application_id=a.id).with_for_update().populate_existing().one()
+    eligibility = coverage_report(a)
+    valid_rules, rule_errors = assert_application_rules(a)
+    if eligibility['missing_ids'] or eligibility['blocked'] or not valid_rules:
+        logging.getLogger(__name__).error('Activation notice blocked by member ID or cover validation for application %s', a.id)
+        return False
     if not journey.activated_at or journey.notice_status in {'Sent','Sending'}:
         return journey.notice_status=='Sent'
     journey.notice_status='Sending'
     db.session.commit()
     bank_letter = None
+    company_folder = None
     sent = False
     try:
         signatures = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=a.id).all()}
@@ -139,11 +147,16 @@ def notify_activation(a):
         a.popia_pdf_path = paths['popia']; a.disclosure_pdf_path = paths['disclosure']
         db.session.commit()
         attachments = list(paths.values())
-        if str(a.payment_method or '').strip().lower() == 'cash':
+        cash = str(a.payment_method or '').strip().lower() == 'cash'
+        company_rows = active_company_documents(a, include_bank=cash)
+        company_has_bank = any(row.category == 'bank_confirmation' for row in company_rows)
+        if cash and not company_has_bank:
             bank_letter = business_bank_confirmation_attachment()
             if not bank_letter:
                 raise ValueError('The current business bank confirmation letter is not configured.')
             attachments.append(bank_letter)
+        company_paths, company_folder = materialise_company_documents(a, include_bank=cash)
+        attachments.extend(company_paths)
         subject,body=client_email_content('activation',a)
         sent=send_email(a.document_email or a.email,subject,body,attachments,application_id=a.id)
     except Exception as exc:
@@ -152,6 +165,8 @@ def notify_activation(a):
     finally:
         if bank_letter:
             shutil.rmtree(os.path.dirname(bank_letter), ignore_errors=True)
+        if company_folder:
+            shutil.rmtree(company_folder, ignore_errors=True)
     journey.notice_status='Sent' if sent else 'Failed'
     if sent:journey.notice_sent_at=datetime.utcnow()
     db.session.commit()

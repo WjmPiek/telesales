@@ -222,6 +222,7 @@ class ClientApplication(db.Model):
     application_ref = db.Column(db.String(50), unique=True, nullable=False)
     policy_number = db.Column(db.String(80))
     product_id = db.Column(db.Integer, db.ForeignKey("policy_products.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("company_group_states.id"), index=True)
     branch = db.Column(db.String(120))
     agent_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     status = db.Column(db.String(50), default="Draft")
@@ -317,6 +318,7 @@ class ClientApplication(db.Model):
     disclosure_pdf_path = db.Column(db.String(500))
 
     product = db.relationship("PolicyProduct")
+    company = db.relationship("CompanyGroupState")
     agent = db.relationship("User")
     lapsed_policy = db.relationship("LapsedPolicy")
     signatures = db.relationship("ApplicationSignature", backref="application", lazy=True)
@@ -660,6 +662,41 @@ class BankConfirmationLetter(db.Model):
     uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     uploaded_by = db.relationship("User")
+
+
+class CompanyDocument(db.Model):
+    """Approved PDF attachment owned by one company under Martin's Brokers."""
+    __tablename__ = "company_documents"
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("company_group_states.id"), nullable=False, index=True)
+    category = db.Column(db.String(40), nullable=False, default="additional")  # bank_confirmation or additional
+    original_filename = db.Column(db.String(255), nullable=False)
+    file_data = db.Column(db.LargeBinary, nullable=False)
+    file_size = db.Column(db.Integer, nullable=False)
+    checksum_sha256 = db.Column(db.String(64), nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    company = db.relationship("CompanyGroupState")
+    uploaded_by = db.relationship("User")
+
+
+class HistoricalMemberCover(db.Model):
+    """Verified active-policy member benefit imported for cross-company checks."""
+    __tablename__ = "historical_member_covers"
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("company_group_states.id"), nullable=False, index=True)
+    policy_number = db.Column(db.String(80), nullable=False, index=True)
+    id_number = db.Column(db.String(13), nullable=False, index=True)
+    cover_amount = db.Column(db.Numeric(12, 2), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="Active")
+    relationship = db.Column(db.String(80))
+    product_name = db.Column(db.String(150))
+    imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    imported_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    company = db.relationship("CompanyGroupState")
+    __table_args__ = (db.UniqueConstraint("company_id", "policy_number", "id_number",
+                                         name="uq_historical_member_cover"),)
 
 class LoginAttempt(db.Model):
     __tablename__ = "login_attempts"

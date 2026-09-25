@@ -4,6 +4,7 @@
 <form method="post" class="row g-2">
   {% if lead %}<input type="hidden" name="lapsed_policy_id" value="{{ lead.id }}"><div class="alert alert-info">Application started from callback lead {{ lead.policy_number or lead.id }}.</div>{% endif %}
   <h5>Policy / Agent</h5>
+  {% if companies and not lead %}<div class="col-md-5"><label>Company</label><select class="form-control" name="company_id" required><option value="">Select company</option>{% for company in companies %}<option value="{{ company.id }}">{{ company.company_name }} — {{ company.branch }}</option>{% endfor %}</select></div>{% endif %}
   <div class="col-md-5"><label>Product</label><select class="form-control" name="product_id" id="product_id" onchange="policyChanged()">
       {% for p in products %}
       <option value="{{p.id}}"

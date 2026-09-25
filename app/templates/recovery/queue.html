@@ -10,6 +10,8 @@
 <form class="mb-3" method="post" action="{{url_for('recovery.import_lapsed')}}" enctype="multipart/form-data">
   <input type="file" name="file" accept=".xlsx" required>
   <button class="btn btn-primary btn-sm">Import Lapsed Policies</button>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('static', filename='templates/company_policy_import_blank_template.xlsx') }}" download>Download blank import template</a>
+  <small class="text-muted d-block">The optional COVERED_MEMBERS sheet imports verified per-person policy cover across companies. Enter actual insured cover and Active/Lapsed/Cancelled status; the client sheet's Total is a payment amount.</small>
 </form>
 
 <div class="mb-3">

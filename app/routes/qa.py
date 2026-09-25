@@ -120,6 +120,22 @@ def review_application(app_id):
             return redirect(url_for('qa.review_application', app_id=app.id))
 
         if decision in {'QA Approved', 'Compliance Approved'}:
+            from app.services.cover_eligibility import coverage_report, coverage_errors, lock_member_approvals
+            lock_member_approvals(app)
+            cover_report = coverage_report(app)
+            if cover_report['missing_ids']:
+                flash('Approval blocked: valid South African ID numbers are still required for ' +
+                      ', '.join(cover_report['missing_ids']) + '. The policy remains pending.', 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            cover_errors = coverage_errors(app, cover_report)
+            if cover_errors:
+                flash('Approval blocked: ' + '; '.join(cover_errors), 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            from app.services.compliance_service import assert_application_rules
+            valid, rule_errors = assert_application_rules(app)
+            if not valid:
+                flash('Approval blocked: ' + '; '.join(rule_errors), 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
             summary = document_summary(app)
             screened, errors = ensure_screened(app)
             if not summary['complete'] or not screened:

@@ -12,7 +12,7 @@ from app.security import permission_required
 from app.services.email_service import send_email, signing_email_html
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.pdf_service import generate_application_pdf, generate_welcome_pack, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
-from app.services.compliance_service import only_digits, format_dob, dob_from_sa_id, is_valid_sa_id, validate_age_limit, classify_product_template, assert_application_rules
+from app.services.compliance_service import only_digits, format_dob, dob_from_sa_id, is_valid_sa_id, validate_age_limit, validate_member_age, classify_product_template, assert_application_rules
 from app.services.document_status_service import document_summary
 from app.services.branch_access import scope_by_branch, ensure_branch_access
 from email_validator import EmailNotValidError, validate_email
@@ -51,6 +51,8 @@ def list_applications():
 @permission_required("applications.create")
 def new_application():
     products = PolicyProduct.query.filter_by(active=True).order_by(PolicyProduct.product_name, PolicyProduct.plan_name).all()
+    from app.routes.communications import _available_companies
+    available_companies = _available_companies()
     if request.method == "POST":
         prod = PolicyProduct.query.get(request.form.get("product_id")) if request.form.get("product_id") else None
         ref = "APP-" + datetime.now().strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper()
@@ -72,8 +74,10 @@ def new_application():
             rows = []
             for i in range(1, count + 1):
                 row = {f: val(f"{prefix}_{i}_{f}") for f in fields}
+                # Keep the actual ID for cross-policy checks and later FICA.
+                # Converting it to a birth date loses the only stable identity.
                 if "id_or_dob" in row:
-                    row["id_or_dob"] = format_dob(dob_from_sa_id(row["id_or_dob"]) or row["id_or_dob"])
+                    row["id_or_dob"] = str(row["id_or_dob"] or "").strip()
                 if any(str(v).strip() for v in row.values()):
                     rows.append(row)
             return json.dumps(rows)
@@ -116,7 +120,7 @@ def new_application():
 
         validate_age_limit("Principal member", principal_dob, prod, errors)
         if spouse_dob:
-            validate_age_limit("Spouse", spouse_dob, prod, errors)
+            validate_member_age("Spouse", spouse_dob, "spouse", prod, errors)
 
         if "debit" in val("payment_method").lower():
             for label, field in [("Bank Name", "bank_name"), ("Branch Code", "branch_code"), ("Account Number", "account_number"), ("Account Type", "account_type"), ("Account Holder", "account_holder")]:
@@ -125,24 +129,37 @@ def new_application():
 
         rows_to_check = []
         if is_member_product:
-            rows_to_check.extend(json.loads(build_rows("productdep", limits["productdep"], ["full_name", "relationship", "id_or_dob"])))
+            rows_to_check.extend(("productdep", row) for row in json.loads(build_rows("productdep", limits["productdep"], ["full_name", "relationship", "id_or_dob"])))
         else:
-            rows_to_check.extend(json.loads(build_rows("child", limits["child"], ["full_name", "relationship", "id_or_dob"])))
-            rows_to_check.extend(json.loads(build_rows("extended", limits["extended"], ["full_name", "relationship", "id_or_dob", "cover", "premium"])))
-        for idx, row in enumerate(rows_to_check, start=1):
+            rows_to_check.extend(("child", row) for row in json.loads(build_rows("child", limits["child"], ["full_name", "relationship", "id_or_dob"])))
+            rows_to_check.extend(("extended", row) for row in json.loads(build_rows("extended", limits["extended"], ["full_name", "relationship", "id_or_dob", "cover", "premium"])))
+        for idx, (kind, row) in enumerate(rows_to_check, start=1):
             id_or_dob = row.get("id_or_dob")
             if only_digits(id_or_dob) and len(only_digits(id_or_dob)) == 13 and not is_valid_sa_id(id_or_dob):
                 errors.append(f"Dependent {idx} ID number is not valid.")
-            validate_age_limit(f"Dependent {idx}", dob_from_sa_id(id_or_dob) or id_or_dob, prod, errors)
+            validate_member_age(f"Dependent {idx}", dob_from_sa_id(id_or_dob) or id_or_dob, kind, prod, errors)
 
         if errors:
             for error in errors:
                 flash(error, "danger")
-            return render_template("applications/form.html", products=products, google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
-
+            return render_template("applications/form.html", products=products, companies=available_companies,
+                                   google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
+        source_lead = db.session.get(LapsedPolicy, int(val("lapsed_policy_id"))) if val("lapsed_policy_id").isdigit() else None
+        if source_lead:
+            ensure_branch_access(source_lead, agent_attr="assigned_agent_id")
+        chosen_company_id = source_lead.company_id if source_lead else val("company_id")
+        if chosen_company_id and (not str(chosen_company_id).isdigit() or int(chosen_company_id) not in {company.id for company in available_companies}):
+            abort(403)
+        if not chosen_company_id and len(available_companies) == 1:
+            chosen_company_id = available_companies[0].id
+        if not chosen_company_id and available_companies:
+            flash('Select the company for this application.', 'danger')
+            return render_template("applications/form.html", products=products, companies=available_companies,
+                                   google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
         a = ClientApplication(
             application_ref=ref,
             product_id=prod.id if prod else None,
+            company_id=int(chosen_company_id) if chosen_company_id else None,
             policy_number=val("policy_number"),
             branch=val("branch") or current_user.branch,
             agent_id=current_user.id,
@@ -232,7 +249,8 @@ def new_application():
     lead_id = request.args.get("lapsed_policy_id", type=int)
     if lead_id:
         lead = LapsedPolicy.query.get(lead_id)
-    return render_template("applications/form.html", products=products, lead=lead, google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
+    return render_template("applications/form.html", products=products, lead=lead, companies=available_companies,
+                           google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", ""))
 
 
 @applications_bp.route("/<int:app_id>")
