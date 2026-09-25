@@ -362,6 +362,12 @@ def create_app():
     with app.app_context():
         from app.models import SupportingDocumentReminder
         SupportingDocumentReminder.__table__.create(db.engine, checkfirst=True)
+        try:
+            from app.services.brokers_branch import reconcile_brokers_branch
+            reconcile_brokers_branch()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Protected Brokers branch correction failed")
 
     @login_manager.user_loader
     def load_user(user_id):

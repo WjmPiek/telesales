@@ -85,6 +85,11 @@ def _is_super_admin_user(user):
     role_name = (user.role.name if getattr(user, "role", None) else "").lower().strip()
     return email == SUPER_ADMIN_EMAIL or role_name in {"super admin", "super_admin"}
 
+def _is_user_management_owner(user):
+    """Only the protected Wjm Piek account can change or remove users."""
+    return ((getattr(user, "email", "") or "").lower().strip() == SUPER_ADMIN_EMAIL
+            and (getattr(getattr(user, "role", None), "name", "") or "").lower().replace("_", " ").strip() == "super admin")
+
 def _admin_required():
     if not current_user.is_authenticated or not _is_admin_user(current_user):
         flash("Admin access required.", "danger")
@@ -184,10 +189,11 @@ def martins_launch():
     if not email:
         return "Launch token does not contain an email address.", 400
 
-    admin_launch = bool(payload.get("is_admin")) or email == SUPER_ADMIN_EMAIL
-    role = _ensure_role("Admin" if admin_launch else "Agent")
+    owner_launch = email == SUPER_ADMIN_EMAIL
+    admin_launch = bool(payload.get("is_admin")) or owner_launch
+    role = _ensure_role("Super Admin" if owner_launch else "Admin" if admin_launch else "Agent")
     franchises = [str(item).strip() for item in payload.get("franchises", []) if str(item).strip()]
-    branch = franchises[0] if franchises else "Head Office"
+    branch = "Brokers" if owner_launch else franchises[0] if franchises else "Head Office"
 
     user = User.query.filter(db.func.lower(User.email) == email).first()
     if user is None:
@@ -276,54 +282,17 @@ def admin_branch_manager_approvals():
 @auth_bp.route("/admin/branch-manager-approvals/<int:user_id>/approve", methods=["POST"])
 @login_required
 def admin_approve_branch_manager(user_id):
-    blocked = _admin_required()
-    if blocked:
-        return blocked
-    from app.models import Role
-    user = db.session.get(User, user_id)
-    if not user:
-        flash("User not found.", "warning")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    if (user.role.name if getattr(user, "role", None) else "").lower().strip() == "admin":
-        flash("Admin users are protected and cannot be edited.", "danger")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    role_id = request.form.get("role_id", type=int)
-    role = db.session.get(Role, role_id) if role_id else None
-    if not role or role.name not in {"Branch Manager", "Agent"}:
-        flash("Please select Branch Manager or Agent before approving this user.", "danger")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    branch = (request.form.get("branch") or user.branch or "").strip()
-    if not branch and role.name in {"Branch Manager", "Agent"}:
-        flash("Please assign a branch before saving an Agent or Branch Manager.", "danger")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    user.role = role
-    user.branch = branch
-    user.active = True
-    db.session.commit()
-    _audit(current_user.id, "USER_BRANCH_ACCESS_SAVED", f"Saved user {user.email} as {role.name}; branch={branch}")
-    flash(f"{user.name} saved as {role.name} for branch {branch}.", "success")
-    return redirect(url_for("auth.admin_branch_manager_approvals"))
+    # The old approval URL must not bypass the owner-only user editor.
+    flash("Edit this user from User / Agent Management.", "info")
+    return redirect(url_for("auth.users_manage"))
 
 
 @auth_bp.route("/admin/branch-manager-approvals/<int:user_id>/reject", methods=["POST"])
 @login_required
 def admin_reject_branch_manager(user_id):
-    blocked = _admin_required()
-    if blocked:
-        return blocked
-    user = db.session.get(User, user_id)
-    if not user:
-        flash("User not found.", "warning")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    if (user.role.name if getattr(user, "role", None) else "").lower().strip() == "admin":
-        flash("Admin users are protected and cannot be deleted.", "danger")
-        return redirect(url_for("auth.admin_branch_manager_approvals"))
-    email = user.email
-    db.session.delete(user)
-    db.session.commit()
-    _audit(current_user.id, "USER_REJECTED", f"Rejected/deleted user registration {email}")
-    flash("Registration rejected and removed.", "info")
-    return redirect(url_for("auth.admin_branch_manager_approvals"))
+    # Keep every permanent user deletion on the audited owner-only route.
+    flash("Use User / Agent Management to delete this user.", "info")
+    return redirect(url_for("auth.users_manage"))
 
 
 
@@ -361,17 +330,9 @@ def _branch_choices():
 def _can_manage_target(target):
     if not target:
         return False, "User not found."
-    if _is_protected_admin(target):
-        return False, "Admin and Super Admin users are protected and cannot be edited or deleted."
-    if _is_admin_user(current_user):
-        return True, ""
-    if _is_branch_manager_user(current_user):
-        if _role_name(target) != "agent":
-            return False, "Branch Managers can only manage Agent users."
-        if (target.branch or "") != (current_user.branch or ""):
-            return False, "Branch Managers can only manage agents in their own branch."
-        return True, ""
-    return False, "You do not have permission to manage users."
+    if not _is_user_management_owner(current_user):
+        return False, "Only Wjm Piek can edit or permanently delete users."
+    return True, ""
 
 def _allowed_manage_roles():
     from app.models import Role
@@ -455,7 +416,12 @@ def users_update(user_id):
     from app.models import Role
     role = db.session.get(Role, role_id) if role_id else user.role
     allowed_names = {r.name for r in _allowed_manage_roles()}
-    if not role or role.name not in allowed_names:
+    owner_target = (user.email or "").lower().strip() == SUPER_ADMIN_EMAIL
+    if owner_target:
+        role = _ensure_role("Super Admin", "Protected Super Admin account")
+        branch = "Brokers"
+        active = True
+    elif not role or role.name not in allowed_names:
         flash("You cannot assign that role.", "danger")
         return redirect(url_for("auth.users_manage"))
     if _is_branch_manager_user(current_user) and not _is_admin_user(current_user):
@@ -492,9 +458,10 @@ def _ensure_super_admin_account():
         db.session.add(role)
         db.session.flush()
     user = User.query.filter(db.func.lower(User.email) == SUPER_ADMIN_EMAIL).first()
-    if user and (not user.role or user.role.name != "Super Admin" or not user.active):
+    if user and (not user.role or user.role.name != "Super Admin" or not user.active or user.branch != "Brokers"):
         user.role = role
         user.active = True
+        user.branch = "Brokers"
         db.session.commit()
     else:
         db.session.commit()
@@ -609,8 +576,8 @@ def users_delete(user_id):
     if user.id == current_user.id:
         flash("You cannot delete your own account while logged in.", "danger")
         return redirect(url_for("auth.users_manage"))
-    if not _is_admin_user(current_user):
-        flash("Only Admin/Super Admin can permanently delete users.", "danger")
+    if not _is_user_management_owner(current_user):
+        flash("Only Wjm Piek can permanently delete users.", "danger")
         return redirect(url_for("auth.users_manage"))
 
     email = user.email

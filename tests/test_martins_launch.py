@@ -65,13 +65,20 @@ class MartinsLaunchTests(unittest.TestCase):
         wrong = self._token(module="claims")
         self.assertEqual(self.client.get(f"/auth/launch?token={wrong}").status_code, 401)
 
-    def test_protected_admin_launch_gets_admin_role(self):
+    def test_protected_admin_launch_gets_super_admin_role_and_brokers_branch(self):
         token = self._token(
             email="wjm@martinsdirect.com", name="WJM Piek", is_admin=True
         )
         self.assertEqual(self.client.get(f"/auth/launch?token={token}").status_code, 302)
         user = User.query.filter_by(email="wjm@martinsdirect.com").one()
-        self.assertEqual(user.role.name, "Admin")
+        self.assertEqual(user.role.name, "Super Admin")
+        self.assertEqual(user.branch, "Brokers")
+        user_id = user.id
+        # A later launch carrying the old Alberton franchise must not undo it.
+        second = self._token(email="wjm@martinsdirect.com", name="WJM Piek",
+                             is_admin=True, franchises=["Alberton"])
+        self.client.get(f"/auth/launch?token={second}")
+        self.assertEqual(db.session.get(User, user_id).branch, "Brokers")
 
 
 if __name__ == "__main__":
