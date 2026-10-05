@@ -322,6 +322,14 @@ def create_app():
 
     from app.models import User
 
+    # Deliberately leave existing non-owner accounts unapproved until the owner reviews them.
+    with app.app_context():
+        from sqlalchemy import text
+        from sqlalchemy import inspect
+        if db.engine.dialect.name == 'postgresql' and inspect(db.engine).has_table('users'):
+            with db.engine.begin() as conn:
+                conn.execute(text('ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_approved_at TIMESTAMP'))
+
     # Auto-create missing tables for small Render deployments. This keeps new
     # helper tables, such as QR login tokens, from breaking existing databases.
     # Proper Flask migrations can still be added later.
@@ -432,7 +440,8 @@ def create_app():
     @login_manager.user_loader
     def load_user(user_id):
         user = db.session.get(User, int(user_id))
-        return user if user and user.active else None
+        from app.services.account_access import can_login
+        return user if can_login(user) else None
 
 
     @app.teardown_request
