@@ -225,6 +225,7 @@ class ClientApplication(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("policy_products.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("company_group_states.id"), index=True)
     branch = db.Column(db.String(120))
+    filing_branch = db.Column(db.String(120))
     agent_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     status = db.Column(db.String(50), default="Draft")
     application_type = db.Column(db.String(50), default="New Policy")  # New Policy, Reinstatement, Lapsed New Policy
@@ -1165,3 +1166,33 @@ class ApplicationJourney(db.Model):
     notice_status = db.Column(db.String(20))
     notice_sent_at = db.Column(db.DateTime)
     application = db.relationship("ClientApplication", backref=db.backref("whatsapp_journey", uselist=False, cascade="all, delete-orphan"))
+
+
+class BranchFilingOffice(db.Model):
+    __tablename__ = 'branch_filing_offices'
+    id = db.Column(db.Integer, primary_key=True)
+    branch_key = db.Column(db.String(120), unique=True, nullable=False)
+    contact_first_name = db.Column(db.String(120), default='')
+    contact_surname = db.Column(db.String(120), default='')
+    is_default = db.Column(db.Boolean, default=False, nullable=False)
+    branch_name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ApplicationFilingDelivery(db.Model):
+    __tablename__ = 'application_filing_deliveries'
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey('client_applications.id'), nullable=False, index=True)
+    branch_name = db.Column(db.String(120))
+    recipient_email = db.Column(db.String(255))
+    contact_name = db.Column(db.String(255), default='')
+    status = db.Column(db.String(40), nullable=False)
+    details = db.Column(db.Text)
+    attachments_json = db.Column(db.Text, default='[]')
+    actor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    attempted_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    accepted_at = db.Column(db.DateTime)
+    application = db.relationship('ClientApplication', backref='filing_deliveries')
+    actor = db.relationship('User')

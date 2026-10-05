@@ -120,6 +120,17 @@ def review_application(app_id):
             return redirect(url_for('qa.review_application', app_id=app.id))
 
         if decision in {'QA Approved', 'Compliance Approved'}:
+            from app.models import BranchFilingOffice
+            from app.services.branch_filing import filing_branch
+            selected = (request.form.get('filing_branch') or filing_branch(app)).strip()
+            office = BranchFilingOffice.query.filter_by(branch_key=selected.lower(), active=True).first()
+            if not office:
+                flash('Approval blocked: choose a filing branch with a saved email address. The owner can add it under Branch filing directory.', 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            if not app.signed_at:
+                flash('Approval blocked: the client must sign the application first.', 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
+            app.filing_branch = office.branch_name
             from app.services.cover_eligibility import coverage_report, coverage_errors, lock_member_approvals
             lock_member_approvals(app)
             cover_report = coverage_report(app)
@@ -178,8 +189,15 @@ def review_application(app_id):
         if app.whatsapp_journey and app.whatsapp_journey.activated_at:
             from app.services.online_application import notify_activation
             sent=notify_activation(app)
+            from app.services.branch_filing import send_branch_pack
+            delivery = send_branch_pack(app.id, actor_id=current_user.id)
+            flash(f'Branch filing: {delivery.branch_name}; {delivery.recipient_email or "email not configured"}; {delivery.status}.', 'info')
             flash('Verification completed. Policy is active. '+('Confirmation email sent.' if sent else 'Confirmation email failed; retry from the application.'), 'success' if sent else 'warning')
             return redirect(url_for('applications.view_application', app_id=app.id, office_prompt=1 if sent else None))
+        if decision in {'QA Approved', 'Compliance Approved'}:
+            from app.services.branch_filing import send_branch_pack
+            delivery = send_branch_pack(app.id, actor_id=current_user.id)
+            flash(f'Branch filing: {delivery.branch_name}; {delivery.recipient_email or "email not configured"}; {delivery.status}.', 'info')
         flash(f'{decision} saved with QA score {score}%.', 'success')
         return redirect(url_for('qa.qa_dashboard'))
 
@@ -193,7 +211,9 @@ def review_application(app_id):
     if script and script.status == 'Completed':
         for key in ['popia_confirmed', 'product_explained', 'premium_confirmed', 'waiting_periods', 'debit_order', 'contact_details']:
             checklist_defaults[key] = True
-    return render_template('qa/review_application.html', app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
+    from app.models import BranchFilingOffice
+    from app.services.branch_filing import filing_branch
+    return render_template('qa/review_application.html', default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
 
 @qa_bp.route('/fica/<int:doc_id>/<decision>', methods=['POST'])
 @login_required
@@ -226,5 +246,7 @@ def retry_confirmation(app_id):
     if not app.whatsapp_journey or app.whatsapp_journey.notice_status!='Failed':abort(409)
     from app.services.online_application import notify_activation
     sent=notify_activation(app)
+    from app.services.branch_filing import send_branch_pack
+    send_branch_pack(app.id, actor_id=current_user.id)
     flash('Confirmation email sent.' if sent else 'Email delivery failed. Check email settings and try again.','success' if sent else 'danger')
     return redirect(url_for('applications.view_application',app_id=app.id,office_prompt=1 if sent else None))

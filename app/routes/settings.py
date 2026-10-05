@@ -343,3 +343,59 @@ def data_reset():
             'success')
         return redirect(url_for('settings.data_reset'))
     return render_template('settings/data_reset.html', counts=reset_preview())
+
+
+@settings_bp.route('/branch-filing', methods=['GET', 'POST'])
+@login_required
+def branch_filing_directory():
+    import secrets
+    from flask import session
+    from email_validator import validate_email, EmailNotValidError
+    from app.models import BranchFilingOffice
+    from app.services.account_access import is_owner
+    if not is_owner(current_user):
+        abort(403)
+    session.setdefault('branch_filing_csrf', secrets.token_urlsafe(32))
+    if request.method == 'POST':
+        if not secrets.compare_digest(session['branch_filing_csrf'], request.form.get('branch_filing_csrf', '')):
+            abort(400)
+        office_id = request.form.get('office_id', type=int)
+        office = db.session.get(BranchFilingOffice, office_id) if office_id else None
+        if office_id and not office:
+            abort(404)
+        if request.form.get('action') == 'delete':
+            if not office: abort(400)
+            db.session.add(AuditLog(user_id=current_user.id, action='BRANCH_FILING_DIRECTORY_DELETED', entity_type='BranchFilingOffice', entity_id=str(office.id), details=f'Branch={office.branch_name}; email={office.email}; past delivery records retained'))
+            db.session.delete(office)
+        else:
+            first_name = request.form.get('contact_first_name', '').strip()
+            surname = request.form.get('contact_surname', '').strip()
+            if len(first_name) > 120 or len(surname) > 120:
+                flash('Contact name and surname must each be 120 characters or fewer.', 'danger')
+                return redirect(url_for('settings.branch_filing_directory'))
+            branch = (request.form.get('branch_name') or '').strip()
+            if not branch or len(branch) > 120:
+                flash('Enter a branch name of 120 characters or fewer.', 'danger')
+                return redirect(url_for('settings.branch_filing_directory'))
+            try:
+                email = validate_email(request.form.get('email', '').strip(), check_deliverability=False).normalized
+            except EmailNotValidError:
+                flash('Enter a valid branch filing email address.', 'danger')
+                return redirect(url_for('settings.branch_filing_directory'))
+            duplicate = BranchFilingOffice.query.filter_by(branch_key=branch.lower()).first()
+            if duplicate and (not office or duplicate.id != office.id):
+                flash('This branch is already listed. Edit its existing row.', 'danger')
+                return redirect(url_for('settings.branch_filing_directory'))
+            before = f'{office.branch_name} / {office.email}' if office else 'New branch'
+            office = office or BranchFilingOffice()
+            if request.form.get('is_default') == '1':
+                BranchFilingOffice.query.filter_by(is_default=True).update({'is_default': False})
+            office.is_default = request.form.get('is_default') == '1'
+            office.contact_first_name = first_name; office.contact_surname = surname
+            office.branch_key = branch.lower(); office.branch_name = branch; office.email = email; office.active = True
+            db.session.add(office); db.session.flush()
+            db.session.add(AuditLog(user_id=current_user.id, action='BRANCH_FILING_DIRECTORY_SAVED', entity_type='BranchFilingOffice', entity_id=str(office.id), details=f'{before} -> {branch} / {first_name} {surname} / {email}; default={office.is_default}'))
+        db.session.commit()
+        flash('Branch filing directory updated. Existing delivery history is unchanged.', 'success')
+        return redirect(url_for('settings.branch_filing_directory'))
+    return render_template('settings/branch_filing.html', offices=BranchFilingOffice.query.order_by(BranchFilingOffice.branch_name).all())

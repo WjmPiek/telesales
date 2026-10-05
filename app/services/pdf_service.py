@@ -681,9 +681,10 @@ def generate_welcome_pack(app_obj, out_path, signature_path_override=None):
     y = _section(c, "Claims Procedure", 32, y)
     claims = [
         "Step 1 - Notify Martin's Funerals or the insurer as soon as possible.",
-        "Step 2 - Submit certified ID copy of claimant, certified ID copy of deceased, death certificate, BI-1663 form where applicable, proof of banking details and any additional documents requested.",
-        "Step 3 - The claim will be assessed by the insurer.",
-        "Step 4 - If approved, payment will be processed to the nominated beneficiary.",
+        "Step 2 - Martin's Funerals will send you a claim form that needs to be filled in and sent back to the branch with the necessary documents.",
+        "Step 3 - Submit a certified copy of the Main Member ID (front and back if an ID card), a certified copy of the deceased's ID (front and back if an ID card), a certified copy of the beneficiary ID (front and back if an ID card), Death Certificate, DHA-1663 form where applicable, proof of banking details and any additional documents requested.",
+        "Step 4 - The claim will be assessed by the insurer.",
+        "Step 5 - If approved, payment will be processed to the nominated beneficiary.",
     ]
     for item in claims:
         y = _draw_paragraph(c, item, 42, y, max_chars=105, leading=12, size=8.3)

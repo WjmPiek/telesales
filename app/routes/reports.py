@@ -91,3 +91,37 @@ def export_csv():
     rows=query.group_by(User.id,User.name,User.branch).all()
     for r in rows: w.writerow([r[0],r[1] or '', int(r[2] or 0), int(r[3] or 0)])
     return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition':'attachment; filename=telesales_report.csv'})
+
+
+@reports_bp.route('/branch-filing')
+@login_required
+def branch_filing_report():
+    from flask import abort
+    from app.models import ApplicationFilingDelivery
+    from app.services.branch_filing import APPROVED_STATUSES, filing_branch, filing_office
+    if not is_manager(): abort(403)
+    latest_id = db.session.query(db.func.max(ApplicationFilingDelivery.id)).filter(ApplicationFilingDelivery.application_id == ClientApplication.id).correlate(ClientApplication).scalar_subquery()
+    query = scope_by_branch(ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id, selected_branch=selected_branch_arg())
+    query = query.filter(ClientApplication.status.in_(APPROVED_STATUSES)).outerjoin(ApplicationFilingDelivery, ApplicationFilingDelivery.id == latest_id)
+    search = (request.args.get('q') or '').strip()[:255]
+    status = request.args.get('status', '')
+    if search:
+        pattern = '%' + search + '%'
+        query = query.filter(db.or_(ClientApplication.application_ref.ilike(pattern), ClientApplication.policy_number.ilike(pattern), ClientApplication.first_names.ilike(pattern), ClientApplication.surname.ilike(pattern), ClientApplication.filing_branch.ilike(pattern), ApplicationFilingDelivery.branch_name.ilike(pattern), ApplicationFilingDelivery.recipient_email.ilike(pattern)))
+    if status == 'Not attempted': query = query.filter(ApplicationFilingDelivery.id.is_(None))
+    elif status: query = query.filter(ApplicationFilingDelivery.status == status)
+    query = query.with_entities(ClientApplication, ApplicationFilingDelivery).order_by(ClientApplication.created_at.desc(), ClientApplication.id.desc())
+    def row(application, delivery):
+        office = filing_office(application) if not delivery else None
+        return dict(application=application, delivery=delivery, branch=delivery.branch_name if delivery else filing_branch(application), email=delivery.recipient_email if delivery else office.email if office else 'Not configured', status=delivery.status if delivery else 'Not attempted')
+    if request.args.get('export') == 'csv':
+        output=StringIO(); writer=csv.writer(output); writer.writerow(['Application','Policy','Filing branch','Contact','Recipient email','Result','Attempted (SAST)','Accepted (SAST)','Details'])
+        def safe(value):
+            value=str(value or '')
+            return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
+        for application, delivery in query.yield_per(500):
+            item=row(application,delivery)
+            writer.writerow([safe(value) for value in (application.application_ref,application.policy_number,item['branch'],delivery.contact_name if delivery else '',item['email'],item['status'],(delivery.attempted_at+timedelta(hours=2)).isoformat(sep=' ',timespec='seconds') if delivery else '',(delivery.accepted_at+timedelta(hours=2)).isoformat(sep=' ',timespec='seconds') if delivery and delivery.accepted_at else '',delivery.details if delivery else 'No tracked branch filing send.')])
+        return Response(output.getvalue(),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename=branch-filing-report.csv'})
+    pagination=query.paginate(page=max(request.args.get('page',1,type=int) or 1,1),per_page=50,error_out=False)
+    return render_template('reports/branch_filing.html',rows=[row(a,d) for a,d in pagination.items],pagination=pagination,search=search,status=status,timedelta=timedelta)
