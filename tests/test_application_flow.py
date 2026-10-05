@@ -159,7 +159,7 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertIn(b'Back to call scripts', self.client.get(f'/recovery/script/{call_id}/complete').data)
         self.assertNotEqual(self.client.post(f'/recovery/script/{call_id}/members',data={}).status_code,200)
 
-    def test_photo_optimization_and_duplicate_retry(self):
+    def test_original_photo_quality_and_duplicate_retry(self):
         from app.services.upload_guard import reject_duplicate
         from app.services.client_storage import application_folder, store_document
         from werkzeug.datastructures import FileStorage
@@ -170,15 +170,38 @@ class ApplicationFlowTests(unittest.TestCase):
         upload=FileStorage(stream=io.BytesIO(original),filename='test-id.png')
         reject_duplicate(self.record,upload,'id_copy')
         content=upload.stream.read()
-        self.assertLess(len(content),len(original)//3)
-        self.assertLessEqual(max(Image.open(io.BytesIO(content)).size),2000)
+        self.assertEqual(content,original)
+        self.assertEqual(Image.open(io.BytesIO(content)).size,(2400,1800))
+        self.assertEqual(upload.filename,'test-id.png')
         path=os.path.join(application_folder(self.record),upload.filename)
         Path(path).write_bytes(content);store_document(self.record,path);db.session.commit()
         retry=FileStorage(stream=io.BytesIO(original),filename='renamed.png')
         with self.assertRaisesRegex(ValueError,'Duplicate upload rejected'):
             reject_duplicate(self.record,retry,'id_copy')
-        with self.assertRaisesRegex(ValueError,'8 MB'):
-            reject_duplicate(self.record,FileStorage(stream=io.BytesIO(b'x'*(8*1024*1024+1)),filename='large.pdf'),'proof_of_address')
+        pdf = b'%PDF-' + b'x' * (8*1024*1024)
+        large = FileStorage(stream=io.BytesIO(pdf),filename='large.pdf')
+        reject_duplicate(self.record,large,'proof_of_address')
+        self.assertEqual(large.stream.read(),pdf)
+        with self.assertRaisesRegex(ValueError,'25 MB'):
+            reject_duplicate(self.record,FileStorage(stream=io.BytesIO(b'x'*(25*1024*1024+1)),filename='too-large.pdf'),'proof_of_address')
+
+    def test_staff_upload_download_preserves_original_photo(self):
+        from PIL import Image
+        image = Image.new('RGB',(3200,2400),'white')
+        raw = io.BytesIO(); image.save(raw,format='JPEG',quality=98)
+        original = raw.getvalue()
+        response = self.client.post(f'/documents/application/{self.record_id}',data={
+            'document_type':'id_copy','file':(io.BytesIO(original),'original-id.jpg')},
+            content_type='multipart/form-data')
+        self.assertEqual(response.status_code,302)
+        from app.models import ClientFicaDocument
+        doc = ClientFicaDocument.query.filter_by(application_id=self.record_id,document_type='id_copy').one()
+        self.assertEqual(Path(doc.file_path).read_bytes(),original)
+        self.assertTrue(any(item.content == original for item in ClientStoredFile.query.filter_by(application_id=self.record_id)))
+        download = self.client.get(f'/documents/fica/{doc.id}/download')
+        self.assertEqual(download.status_code,200)
+        self.assertEqual(download.data,original)
+        download.close()
 
     @property
     def record(self):
