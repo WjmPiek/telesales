@@ -22,4 +22,3 @@ Use the existing production `BASE_URL` and WhatsApp provider configuration. The 
 `python -m unittest discover -s tests -p test_prospect_import.py -v`
 
 The tests cover template download, name/phone-only import, phone normalization, duplicate handling, atomic validation, import permissions, suspense checks, company/recipient filtering, WhatsApp invitation parameters, public application submission, consultant notifications and preserved marketing opt-outs.
-
