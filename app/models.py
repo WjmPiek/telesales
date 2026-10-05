@@ -31,6 +31,7 @@ class User(UserMixin, db.Model):
     role_id = db.Column(db.Integer, db.ForeignKey("roles.id"), nullable=False)
     branch = db.Column(db.String(120))
     active = db.Column(db.Boolean, default=True)
+    owner_approved_at = db.Column(db.DateTime)
 
     # Full application form fields
     agent_name = db.Column(db.String(150))
@@ -495,6 +496,7 @@ class AuditLog(db.Model):
     __tablename__ = "audit_logs"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user = db.relationship("User", foreign_keys=[user_id])
     action = db.Column(db.String(150))
     entity_type = db.Column(db.String(100))
     entity_id = db.Column(db.String(100))

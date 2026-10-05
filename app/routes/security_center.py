@@ -142,3 +142,44 @@ def reset_checklist_item(key):
     db.session.commit()
     flash('Security checklist item reset.', 'info')
     return redirect(url_for('security_center.index'))
+
+
+@security_center_bp.route('/audit')
+@login_required
+def audit_reports():
+    from app.services.account_access import is_owner
+    from flask import abort, Response
+    import csv
+    from io import StringIO
+    if not is_owner(current_user):
+        abort(403)
+    query = AuditLog.query.outerjoin(User, AuditLog.user_id == User.id)
+    search = (request.args.get('q') or '').strip()[:255]
+    action = (request.args.get('action') or '').strip()[:150]
+    if search:
+        pattern = '%' + search + '%'
+        query = query.filter(db.or_(AuditLog.details.ilike(pattern), User.name.ilike(pattern), User.email.ilike(pattern), AuditLog.entity_id.ilike(pattern)))
+    if action:
+        query = query.filter(AuditLog.action == action)
+    for key in ('start', 'end'):
+        value = request.args.get(key, '')
+        if value:
+            try:
+                bound = datetime.strptime(value, '%Y-%m-%d') - timedelta(hours=2)
+            except ValueError:
+                abort(400, 'Use dates in YYYY-MM-DD format.')
+            query = query.filter(AuditLog.created_at >= bound) if key == 'start' else query.filter(AuditLog.created_at < bound + timedelta(days=1))
+    query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+    if request.args.get('export') == 'csv':
+        output = StringIO(); writer = csv.writer(output)
+        writer.writerow(['Time (SAST)', 'Action', 'Actor', 'Actor email', 'Entity', 'Details'])
+        def safe(value):
+            value = str(value or '')
+            return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
+        for event in query.yield_per(500):
+            writer.writerow([safe(value) for value in ((event.created_at + timedelta(hours=2)).isoformat(sep=' ', timespec='seconds'), event.action, event.user.name if event.user else 'System / unauthenticated', event.user.email if event.user else '', f'{event.entity_type} #{event.entity_id}', event.details)])
+        return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=audit-report.csv'})
+    page = max(request.args.get('page', 1, type=int) or 1, 1)
+    pagination = query.paginate(page=page, per_page=50, error_out=False)
+    actions = [row[0] for row in db.session.query(AuditLog.action).distinct().order_by(AuditLog.action).all() if row[0]]
+    return render_template('security_center/audit.html', pagination=pagination, actions=actions, search=search, action=action, timedelta=timedelta)

@@ -4,7 +4,7 @@ import csv
 from flask import Blueprint, render_template, request, Response, redirect, url_for
 from flask_login import login_required, current_user
 from app import db
-from app.models import ClientApplication, LapsedPolicy, RecoveryCallLog, User, ClientFicaDocument, DocumentSignature, CompanyGroupState, CommunicationCampaign
+from app.models import ClientApplication, LapsedPolicy, RecoveryCallLog, User, Role, ClientFicaDocument, DocumentSignature, CompanyGroupState, CommunicationCampaign
 from app.services.branch_access import scope_by_branch, selected_branch_arg, can_view_all_branches, user_branch
 
 reports_bp = Blueprint('reports', __name__, url_prefix='/reports')
@@ -67,6 +67,7 @@ def index():
     }
     stats['conversion_rate']=round((stats['signed']/stats['calls']*100),1) if stats['calls'] else 0
     agent_query=db.session.query(User.name, User.branch, db.func.count(RecoveryCallLog.id).label('calls'), db.func.sum(db.case((RecoveryCallLog.outcome.in_(['Wants Reinstatement','Wants New Policy','Application Started','Signature Sent']),1), else_=0)).label('positive')).outerjoin(RecoveryCallLog, db.and_(RecoveryCallLog.agent_id==User.id, RecoveryCallLog.created_at>=start, RecoveryCallLog.created_at<=end))
+    agent_query=agent_query.filter(User.active.is_(True), db.or_(User.owner_approved_at.isnot(None), db.func.lower(User.email) == 'wjm@martinsdirect.com'), User.role.has(db.and_(Role.name != "Pending")))
     if company: agent_query=agent_query.filter(db.or_(RecoveryCallLog.lapsed_policy_id.in_(policy_ids), RecoveryCallLog.id.is_(None)))
     if can_view_all_branches() and branch: agent_query=agent_query.filter(User.branch==branch)
     elif not can_view_all_branches() and user_branch(): agent_query=agent_query.filter(User.branch==user_branch())
@@ -84,6 +85,7 @@ def export_csv():
     output=StringIO(); w=csv.writer(output)
     w.writerow(['Agent','Branch','Calls','Positive Outcomes'])
     query=db.session.query(User.name, User.branch, db.func.count(RecoveryCallLog.id), db.func.sum(db.case((RecoveryCallLog.outcome.in_(['Wants Reinstatement','Wants New Policy','Application Started','Signature Sent']),1), else_=0))).outerjoin(RecoveryCallLog, db.and_(RecoveryCallLog.agent_id==User.id, RecoveryCallLog.created_at>=start, RecoveryCallLog.created_at<=end))
+    query=query.filter(User.active.is_(True), db.or_(User.owner_approved_at.isnot(None), db.func.lower(User.email) == 'wjm@martinsdirect.com'), User.role.has(Role.name != "Pending"))
     if company: query=query.filter(db.or_(RecoveryCallLog.lapsed_policy_id.in_(_company_policy_ids(company)), RecoveryCallLog.id.is_(None)))
     if not can_view_all_branches() and user_branch(): query=query.filter(User.branch==user_branch())
     rows=query.group_by(User.id,User.name,User.branch).all()

@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <h3>User / Agent Management</h3>
-<p class="text-muted">Wjm Piek (wjm@martinsdirect.com) is the protected Super Admin for Brokers. Only Wjm Piek can edit or permanently delete users, including Admin users such as Lowhann. Other Admins and Branch Managers can still create and view users within their existing access.</p>
+<p class="text-muted">Wjm Piek (wjm@martinsdirect.com) is the protected Super Admin for Brokers. Only Wjm Piek can edit or permanently delete users, including Admin users such as Lowhann. Only Wjm Piek can create and approve accounts. Other managers may view users within their existing access.</p>
 <div class="alert alert-warning small mb-3"><strong>Protected rule:</strong> Wjm Piek's Super Admin role and Brokers branch cannot be downgraded, deactivated or deleted. Only Wjm Piek can edit or delete other Admin accounts. Permanent deletes reassign linked history to the protected Super Admin.</div>
 
+{% if current_user.email|lower == 'wjm@martinsdirect.com' %}
 <div class="card shadow-sm mb-4">
   <div class="card-header fw-bold">Create new user</div>
   <div class="card-body">
     <form method="post" action="{{ url_for('auth.users_create') }}" class="row g-3">
+      <input type="hidden" name="user_management_csrf" value="{{session.get('user_management_csrf','')}}">
       <div class="col-md-2"><label class="form-label">Name</label><input class="form-control" name="name" required></div>
       <div class="col-md-3"><label class="form-label">Email</label><input class="form-control" type="email" name="email" required></div>
       <div class="col-md-2"><label class="form-label">Phone</label><input class="form-control" name="phone"></div>
@@ -19,6 +21,7 @@
   </div>
 </div>
 
+{% endif %}
 <datalist id="branches">{% for branch in branches %}<option value="{{ branch }}">{% endfor %}</datalist>
 
 <div class="card shadow-sm">
@@ -37,20 +40,22 @@
           <td>{{ u.email }}</td>
           <td>{{ u.branch or '' }}</td>
           <td>{% if protected %}<span class="badge bg-dark">{{ 'Super Admin' if u.email|lower == 'wjm@martinsdirect.com' else 'Admin' }} - protected</span>{% else %}{{ u.role.name if u.role else 'Pending' }}{% endif %}</td>
-          <td>{% if u.active %}<span class="badge bg-success">Active</span>{% else %}<span class="badge bg-warning text-dark">Inactive/Pending</span>{% endif %}</td>
+          <td>{% if u.active and (u.owner_approved_at or u.email|lower == 'wjm@martinsdirect.com') %}<span class="badge bg-success">Approved / Active</span>{% else %}<span class="badge bg-warning text-dark">Awaiting approval / Suspended</span>{% endif %}</td>
           <td style="min-width:620px">
             {% if owner %}
               <form method="post" action="{{ url_for('auth.users_update', user_id=u.id) }}" class="row g-2 align-items-center">
+                <input type="hidden" name="user_management_csrf" value="{{session.get('user_management_csrf','')}}">
                 <div class="col-md-2"><input name="name" class="form-control form-control-sm" value="{{ u.name }}" required></div>
                 <div class="col-md-2"><input name="phone" class="form-control form-control-sm" value="{{ u.work_tel or '' }}" placeholder="Phone"></div>
-                <div class="col-md-2">{% if owner_row %}<input class="form-control form-control-sm" value="Super Admin" readonly>{% else %}<select name="role_id" class="form-select form-select-sm" required>{% for role in allowed_roles %}<option value="{{ role.id }}" {% if u.role and u.role.id==role.id %}selected{% endif %}>{{ role.name }}</option>{% endfor %}</select>{% endif %}</div>
+                <div class="col-md-2">{% if owner_row %}<input class="form-control form-control-sm" value="Super Admin" readonly>{% else %}<select name="role_id" class="form-select form-select-sm" required>{% if urole == 'pending' %}<option value="" selected>Select approved role</option>{% endif %}{% for role in allowed_roles %}<option value="{{ role.id }}" {% if u.role and u.role.id==role.id %}selected{% endif %}>{{ role.name }}</option>{% endfor %}</select>{% endif %}</div>
                 <div class="col-md-2"><input name="branch" class="form-control form-control-sm" {% if owner_row %}value="Brokers" readonly{% else %}list="branches" value="{{ u.branch or '' }}"{% endif %} required></div>
                 <div class="col-md-1">{% if owner_row %}<input class="form-control form-control-sm" value="Active" readonly>{% else %}<select name="active" class="form-select form-select-sm"><option value="1" {% if u.active %}selected{% endif %}>Active</option><option value="0" {% if not u.active %}selected{% endif %}>Suspended</option></select>{% endif %}</div>
                 <div class="col-md-2"><input name="new_password" type="password" class="form-control form-control-sm" placeholder="New password"></div>
-                <div class="col-md-1"><button class="btn btn-success btn-sm w-100">Save</button></div>
+                <div class="col-md-1"><button class="btn btn-success btn-sm w-100">{{ 'Approve & save' if not u.owner_approved_at and not owner_row else 'Save' }}</button></div>
               </form>
               {% if not owner_row %}
               <form method="post" action="{{ url_for('auth.users_delete', user_id=u.id) }}" class="d-inline" onsubmit="return confirm('Permanently delete this user? This cannot be undone. All linked history will move to Super Admin.')">
+                <input type="hidden" name="user_management_csrf" value="{{session.get('user_management_csrf','')}}">
                 <button class="btn btn-outline-danger btn-sm mt-2">Permanent delete</button>
               </form>
               {% endif %}

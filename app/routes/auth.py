@@ -6,11 +6,12 @@ import os
 import secrets
 
 import qrcode
-from flask import Blueprint, current_app, jsonify, render_template, request, redirect, url_for, flash, make_response
+from flask import session, abort, Blueprint, current_app, jsonify, render_template, request, redirect, url_for, flash, make_response
 from flask_login import login_user, logout_user, login_required, current_user
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from app import db
 from app.models import AuditLog, QRLoginToken, QRTrustedDevice, User
+from app.services.account_access import can_login, is_owner
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -118,7 +119,7 @@ def _trusted_device_from_cookie():
     if not device or device.is_expired:
         return None
     user = db.session.get(User, device.user_id)
-    if not user or not user.active or not _role_allowed(user):
+    if not can_login(user) or not _role_allowed(user):
         return None
     return device
 
@@ -152,12 +153,14 @@ def login():
             flash("Too many failed login attempts. Please wait a few minutes and try again.", "danger")
             return render_template("auth/login.html"), 429
         user = User.query.filter_by(email=request.form.get("email", "").lower().strip()).first()
-        if user and user.check_password(request.form.get("password", "")) and user.active:
+        if user and user.check_password(request.form.get("password", "")) and can_login(user):
             _clear_bad_logins()
             login_user(user)
+            _audit(user.id, "LOGIN_SUCCESS", f"Password login from IP {_client_ip()}; browser={_user_agent()}")
             return redirect(url_for("recovery.callbacks"))
         _record_bad_login()
-        flash("Invalid login details", "danger")
+        _audit(None, "LOGIN_DENIED", f"Email={request.form.get('email', '')[:255]}; IP={_client_ip()}; invalid credentials or owner approval required")
+        flash("Invalid login details or account awaiting Wjm Piek approval.", "danger")
     return render_template("auth/login.html")
 
 
@@ -185,35 +188,13 @@ def martins_launch():
         return "Invalid launch module.", 401
 
     email = str(payload.get("email") or "").strip().lower()
-    name = str(payload.get("name") or email).strip()
     if not email:
         return "Launch token does not contain an email address.", 400
-
-    owner_launch = email == SUPER_ADMIN_EMAIL
-    admin_launch = bool(payload.get("is_admin")) or owner_launch
-    role = _ensure_role("Super Admin" if owner_launch else "Admin" if admin_launch else "Agent")
-    franchises = [str(item).strip() for item in payload.get("franchises", []) if str(item).strip()]
-    branch = "Brokers" if owner_launch else franchises[0] if franchises else "Head Office"
-
     user = User.query.filter(db.func.lower(User.email) == email).first()
-    if user is None:
-        user = User(
-            name=name,
-            email=email,
-            role=role,
-            branch=branch,
-            active=True,
-        )
-        user.set_password(secrets.token_urlsafe(32))
-        db.session.add(user)
-    else:
-        user.name = name or user.name
-        user.branch = branch or user.branch
-        user.active = True
-        if admin_launch:
-            user.role = role
-    db.session.commit()
-
+    if not can_login(user):
+        _audit(None, "SSO_LOGIN_DENIED", f"Email={email}; IP={_client_ip()}; owner approval required")
+        return "Access requires an existing account approved by wjm@martinsdirect.com.", 403
+    # SSO authenticates approved users; it cannot create, activate or promote them.
     login_user(user)
     _audit(user.id, "MARTINS_SSO_LOGIN", "Signed in from the Martins main system")
     return redirect(url_for("role_portals.home"))
@@ -223,46 +204,12 @@ def martins_launch():
 
 @auth_bp.route("/register", methods=["GET", "POST"])
 def register():
-    """Public user registration. New users stay inactive until Admin assigns a role."""
+    # Public registration is closed, including direct POST requests.
+    if current_user.is_authenticated and _is_user_management_owner(current_user):
+        return redirect(url_for("auth.users_manage"))
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        email = request.form.get("email", "").lower().strip()
-        branch = request.form.get("branch", "").strip()
-        phone = request.form.get("phone", "").strip()
-        password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
-
-        if not name or not email or not password:
-            flash("Please complete name, email and password.", "danger")
-            return render_template("auth/register.html")
-        if password != confirm_password:
-            flash("Passwords do not match.", "danger")
-            return render_template("auth/register.html")
-        if len(password) < 8:
-            flash("Password must be at least 8 characters.", "danger")
-            return render_template("auth/register.html")
-        if User.query.filter_by(email=email).first():
-            flash("This email is already registered. Please login or contact Admin.", "warning")
-            return render_template("auth/register.html")
-
-        from app.models import Role
-        role = Role.query.filter_by(name="Pending").first()
-        if not role:
-            role = Role(name="Pending", description="Registered user pending Admin role assignment")
-            db.session.add(role)
-            db.session.flush()
-
-        user = User(name=name, email=email, branch=branch, work_tel=phone, role=role, active=False)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-        _audit(user.id, "USER_REGISTERED", f"User registration pending Admin role assignment for {email} / {branch}")
-        flash("Registration received. Admin must approve your account and assign your role before you can login or link your phone.", "success")
-        return redirect(url_for("auth.login"))
-
-    return render_template("auth/register.html")
-
-
+        _audit(None, "REGISTRATION_DENIED", f"Public registration blocked; email={request.form.get('email', '')[:255]}; IP={_client_ip()}; browser={_user_agent()}")
+    return "Registration is closed. Only wjm@martinsdirect.com can create and approve accounts.", 403
 def _ensure_role(name, description=None):
     from app.models import Role
     role = Role.query.filter_by(name=name).first()
@@ -355,11 +302,14 @@ def users_manage():
         users = User.query.order_by(User.active.asc(), User.branch.asc(), User.name.asc()).all()
     else:
         users = User.query.filter(User.branch == current_user.branch).order_by(User.active.asc(), User.name.asc()).all()
+    session.setdefault("user_management_csrf", secrets.token_urlsafe(32))
     return render_template("auth/user_management.html", users=users, allowed_roles=allowed_roles, branches=branches)
 
 @auth_bp.route("/users/create", methods=["POST"])
 @login_required
 def users_create():
+    if not _is_user_management_owner(current_user):
+        abort(403)
     blocked = _manager_or_admin_required()
     if blocked:
         return blocked
@@ -389,11 +339,12 @@ def users_create():
     if not branch:
         flash("Please select/enter a branch.", "danger")
         return redirect(url_for("auth.users_manage"))
-    user = User(name=name, email=email, branch=branch, work_tel=phone, role=role, active=True)
+    user = User(name=name, email=email, branch=branch, work_tel=phone, role=role, active=True, owner_approved_at=datetime.utcnow())
     user.set_password(password)
     db.session.add(user)
+    db.session.flush()
+    db.session.add(AuditLog(user_id=current_user.id, action="USER_CREATED", entity_type="User", entity_id=str(user.id), details=f"Created and approved {name} / {email}; role={role.name}; branch={branch}; IP={_client_ip()}"))
     db.session.commit()
-    _audit(current_user.id, "USER_CREATED", f"Created {role.name} {email}; branch={branch}")
     flash(f"{role.name} created and allocated to {branch}.", "success")
     return redirect(url_for("auth.users_manage"))
 
@@ -430,20 +381,23 @@ def users_update(user_id):
     if not branch:
         flash("Branch is required.", "danger")
         return redirect(url_for("auth.users_manage"))
-    old = f"role={user.role.name if user.role else ''}; branch={user.branch}; active={user.active}"
+    approval_needed = not user.owner_approved_at and not is_owner(user)
+    old = f"name={user.name}; role={user.role.name if user.role else ''}; branch={user.branch}; active={user.active}"
     user.name = name
     user.branch = branch
     user.work_tel = phone
     user.role = role
     user.active = active
+    if active and not is_owner(user):
+        user.owner_approved_at = datetime.utcnow()
     new_password = request.form.get("new_password") or ""
     if new_password:
         if len(new_password) < 8:
             flash("New password must be at least 8 characters.", "danger")
             return redirect(url_for("auth.users_manage"))
         user.set_password(new_password)
+    db.session.add(AuditLog(user_id=current_user.id, action="USER_APPROVED" if approval_needed and active else "USER_UPDATED", entity_type="User", entity_id=str(user.id), details=f"Updated {user.email}: {old} -> name={name}; role={role.name}; branch={branch}; active={active}; IP={_client_ip()}"))
     db.session.commit()
-    _audit(current_user.id, "USER_UPDATED", f"Updated {user.email}: {old} -> role={role.name}; branch={branch}; active={active}")
     flash("User saved.", "success")
     return redirect(url_for("auth.users_manage"))
 
@@ -679,7 +633,7 @@ def qr_status(token):
 
     if qr_token.status == "approved":
         user = db.session.get(User, qr_token.approved_user_id)
-        if not user or not user.active or not _role_allowed(user):
+        if not can_login(user) or not _role_allowed(user):
             qr_token.status = "rejected"
             db.session.commit()
             return jsonify({"status": "rejected"})
@@ -723,7 +677,7 @@ def qr_approve(token):
         email = request.form.get("email", "").lower().strip()
         password = request.form.get("password", "")
         user = User.query.filter_by(email=email).first()
-        if not user or not user.check_password(password) or not user.active or not _role_allowed(user):
+        if not can_login(user) or not user.check_password(password) or not _role_allowed(user):
             flash("Access denied. Use an active Insurance Sales user account.", "danger")
             return render_template("auth/qr_approve.html", state="pair_required", token=qr_token)
 
@@ -833,3 +787,14 @@ def admin_force_repair_user_devices(user_id):
     _audit(current_user.id, "QR_TRUSTED_USER_FORCE_REPAIR", f"Admin forced re-pairing for all trusted devices for user {user_id}; count={len(devices)}")
     flash(f"Force re-pairing applied to {len(devices)} active device(s) for this user.", "success")
     return redirect(url_for("auth.admin_trusted_devices"))
+
+
+@auth_bp.before_request
+def protect_user_management_changes():
+    if request.method == 'POST' and request.endpoint in {'auth.users_create', 'auth.users_update', 'auth.users_delete'}:
+        if not current_user.is_authenticated or not _is_user_management_owner(current_user):
+            abort(403)
+        expected = session.get('user_management_csrf', '')
+        supplied = request.form.get('user_management_csrf', '')
+        if not expected or not secrets.compare_digest(expected, supplied):
+            abort(400, 'Refresh User / Agent Management before submitting changes.')
