@@ -172,12 +172,12 @@ def audit_reports():
     query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
     if request.args.get('export') == 'csv':
         output = StringIO(); writer = csv.writer(output)
-        writer.writerow(['Time (SAST)', 'Action', 'Actor', 'Actor email', 'Entity', 'Details'])
+        writer.writerow(['Time (SAST)', 'Action', 'Linked account (may be reassigned after deletion)', 'Linked account email', 'Entity', 'Details'])
         def safe(value):
             value = str(value or '')
             return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
         for event in query.yield_per(500):
-            writer.writerow([safe(value) for value in ((event.created_at + timedelta(hours=2)).isoformat(sep=' ', timespec='seconds'), event.action, event.user.name if event.user else 'System / unauthenticated', event.user.email if event.user else '', f'{event.entity_type} #{event.entity_id}', event.details)])
+            writer.writerow([safe(value) for value in ((event.created_at + timedelta(hours=2)).isoformat(sep=' ', timespec='seconds'), event.action, 'Public registrant' if event.action == 'USER_REGISTERED' else event.user.name if event.user else 'System / unauthenticated', event.user.email if event.user and event.action != 'USER_REGISTERED' else '', f'{event.entity_type} #{event.entity_id}', event.details)])
         return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=audit-report.csv'})
     page = max(request.args.get('page', 1, type=int) or 1, 1)
     pagination = query.paginate(page=page, per_page=50, error_out=False)

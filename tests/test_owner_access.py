@@ -97,3 +97,10 @@ class OwnerAccessTests(fixture.OwnerUserManagementTests):
         self.login(self.owner_id)
         self.assertNotIn(b'Example Agent', self.get('/reports/').data)
         self.assertNotIn(b'Example Agent', self.get('/reports/export.csv').data)
+
+    def test_public_registration_is_not_attributed_to_reassigned_owner(self):
+        db.session.add(AuditLog(user_id=self.owner_id,action='USER_REGISTERED',details='User registration pending Admin role assignment for original@example.test / Test'))
+        db.session.commit();self.login(self.owner_id)
+        page=self.get('/security-center/audit?q=original@example.test')
+        self.assertIn(b'Public registrant',page.data)
+        self.assertIn(b'Public registrant',self.get('/security-center/audit?q=original@example.test&export=csv').data)
