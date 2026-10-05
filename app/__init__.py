@@ -330,6 +330,12 @@ def create_app():
             with db.engine.begin() as conn:
                 conn.execute(text('ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_approved_at TIMESTAMP'))
 
+    with app.app_context():
+        from sqlalchemy import inspect, text
+        if db.engine.dialect.name == 'postgresql' and inspect(db.engine).has_table('client_applications'):
+            with db.engine.begin() as conn:
+                conn.execute(text('ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS filing_branch VARCHAR(120)'))
+
     # Auto-create missing tables for small Render deployments. This keeps new
     # helper tables, such as QR login tokens, from breaking existing databases.
     # Proper Flask migrations can still be added later.
@@ -404,6 +410,11 @@ def create_app():
     # AUTO_CREATE_TABLES is disabled on a production deployment.
     with app.app_context():
         from app.models import SupportingDocumentReminder, CompanyGroupState, CompanyDocument, HistoricalMemberCover
+        from app.models import BranchFilingOffice, ApplicationFilingDelivery
+        BranchFilingOffice.__table__.create(db.engine, checkfirst=True)
+        ApplicationFilingDelivery.__table__.create(db.engine, checkfirst=True)
+        from app.services.branch_filing import seed_default_office
+        seed_default_office()
         SupportingDocumentReminder.__table__.create(db.engine, checkfirst=True)
         CompanyGroupState.__table__.create(db.engine, checkfirst=True)
         CompanyDocument.__table__.create(db.engine, checkfirst=True)

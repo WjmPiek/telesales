@@ -18,7 +18,7 @@
     </div>
   </details>
   {% if admin_role or manager_role %}
-  <details class="side-group"{% if request.blueprint in ['communications', 'whatsapp'] and endpoint != 'communications.notifications' %} open{% endif %}>
+  <details class="side-group"{% if request.blueprint in ['communications', 'whatsapp'] and endpoint not in ['communications.notifications', 'communications.whatsapp_analytics', 'communications.whatsapp_audit'] %} open{% endif %}>
     <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp<small>Campaigns and conversations</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Overview', 'communications.whatsapp_dashboard') }}
@@ -39,20 +39,26 @@
     </div>
   </details>
   {% if admin_role or manager_role %}
-  <details class="side-group"{% if request.blueprint in ['reports', 'wallboard', 'targets'] %} open{% endif %}>
-    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">R</span><span>Reports<small>Performance and sales results</small></span></summary>
+  <details class="side-group"{% if request.blueprint in ['reports', 'wallboard', 'targets', 'analytics'] or endpoint in ['security_center.audit_reports', 'settings.cover_checks', 'communications.whatsapp_analytics', 'communications.whatsapp_audit'] %} open{% endif %}>
+    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">R</span><span>Reports<small>Performance, filing and audits</small></span></summary>
     <div class="side-submenu">
-      {{ nav_link('Reports', 'reports.index') }}
+      {{ nav_link('Performance reports', 'reports.index') }}
+      {{ nav_link('Branch filing report', 'reports.branch_filing_report') }}
+      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Audit reports', 'security_center.audit_reports') }}{% endif %}
+      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Member cover checks', 'settings.cover_checks') }}{% endif %}
+      {{ nav_link('WhatsApp analytics', 'communications.whatsapp_analytics') }}
+      {{ nav_link('WhatsApp audit', 'communications.whatsapp_audit') }}
+      {{ nav_link('Call analytics', 'analytics.index') }}
       {% if admin_role %}{{ nav_link('Live team performance', 'wallboard.index') }}{{ nav_link('Sales targets', 'targets.index') }}{% endif %}
     </div>
   </details>
-  <details class="side-group"{% if request.blueprint in ['auth', 'policies', 'settings', 'security_center', 'role_portals'] or endpoint in ['main.franchise_details', 'main.franchise_employees'] %} open{% endif %}>
+  <details class="side-group"{% if (request.blueprint in ['auth', 'policies', 'settings', 'security_center', 'role_portals'] or endpoint in ['main.franchise_details', 'main.franchise_employees']) and endpoint not in ['security_center.audit_reports', 'settings.cover_checks'] %} open{% endif %}>
     <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Administration<small>People, policies and settings</small></span></summary>
     <div class="side-submenu">
       {{ nav_link('Company details', 'main.franchise_details') }}
       {% if admin_role %}
       {{ nav_link('Admin Portal', 'role_portals.admin_home') }}
-      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Audit reports', 'security_center.audit_reports') }}{% endif %}
+
       {{ nav_link('Users & employees', 'auth.users_manage') }}
       {{ nav_link('Roles & permissions', 'auth.users_roles') }}
       {{ nav_link('Policy products', 'policies.list_products') }}
@@ -60,9 +66,10 @@
       {{ nav_link('Security', 'security_center.index') }}
       {{ nav_link('System settings', 'settings.index') }}
       {{ nav_link('Email templates', 'settings.email_templates') }}
+      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Branch filing directory', 'settings.branch_filing_directory') }}{% endif %}
       {{ nav_link('Bank confirmation letters', 'settings.bank_confirmation_letters') }}
       {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Company client documents', 'settings.company_documents') }}{% endif %}
-      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Member cover checks', 'settings.cover_checks') }}{% endif %}
+
       {{ nav_link('Script Setup', 'recovery.admin_script_questions') }}
       {% else %}{{ nav_link('Employees', 'main.franchise_employees') }}{% endif %}
     </div>

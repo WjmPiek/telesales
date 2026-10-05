@@ -270,71 +270,50 @@ def view_application(app_id):
     office_email_event = (AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(a.id),
                                                    action="Office signed pack sent")
                           .order_by(AuditLog.id.desc()).first())
+    from app.models import BranchFilingOffice, ApplicationFilingDelivery
+    from app.services.branch_filing import filing_branch, filing_office, latest_delivery
+    from flask import session
+    import secrets
+    session.setdefault('branch_filing_csrf', secrets.token_urlsafe(32))
     return render_template("applications/view.html", app=a, member_benefits=member_benefits,
                            document_summary=document_summary(a), screening=latest_screening(a),
                            upload_email_event=upload_email_event, office_email_event=office_email_event,
-                           office_prompt=request.args.get("office_prompt") == "1")
+                           office_prompt=False, filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(),
+                           filing_destination=filing_branch(a), filing_email=(filing_office(a).email if filing_office(a) else None), filing_delivery=latest_delivery(a), filing_history=ApplicationFilingDelivery.query.filter_by(application_id=a.id).order_by(ApplicationFilingDelivery.id.desc()).all())
 
 
 @applications_bp.route("/<int:app_id>/send-office-documents", methods=["POST"])
 @login_required
 @permission_required("applications.view")
 def send_office_documents(app_id):
-    """Send the already-issued, signed policy pack to a staff-entered office address."""
-    from pathlib import Path
-    from app.models import AuditLog
-
+    from flask import session, abort
+    import secrets
+    from app.models import BranchFilingOffice
+    from app.services.branch_filing import send_branch_pack
     application = ClientApplication.query.get_or_404(app_id)
     ensure_branch_access(application, agent_attr="agent_id")
-    journey = application.whatsapp_journey
-    if not journey or not journey.activated_at or journey.notice_status != "Sent" or application.status != "Active":
-        flash("Send the final approved policy email to the client before sending an office copy.", "danger")
-        return redirect(url_for("applications.view_application", app_id=app_id))
-
-    entered = (request.form.get("office_email") or "").strip()
-    try:
-        office_email = validate_email(entered, check_deliverability=False).normalized
-    except EmailNotValidError:
-        flash("Enter a valid office email address before sending the documents.", "danger")
-        return redirect(url_for("applications.view_application", app_id=app_id, office_prompt=1))
-
-    folder = Path(application_folder(application))
-    filenames = [f"signed_application_{app_id}.pdf", f"welcome_pack_{app_id}.pdf",
-                 f"popia_consent_{app_id}.pdf", f"policy_disclosure_{app_id}.pdf",
-                 f"annexure_j1_{app_id}.pdf"]
-    attachments = [folder / name for name in filenames]
-
-    def valid_pdf(path):
-        if not path.is_file():
-            return False
-        with path.open("rb") as file:
-            return file.read(4) == b"%PDF"
-
-    if not all(valid_pdf(path) for path in attachments):
-        flash("The complete signed document pack is not available. No office email was sent; ask an administrator to check the stored documents.", "danger")
-        return redirect(url_for("applications.view_application", app_id=app_id))
-
-    subject = f"Approved policy documents for office filing: {application.application_ref}"
-    body = (f"Approved policy {application.policy_number or application.application_ref} for "
-            f"{application.first_names or ''} {application.surname or ''}.\n\n"
-            "The signed application, welcome pack acknowledgement, POPIA consent, policy disclosure "
-            "and Annexure J.1 are attached for printing and secure office filing. "
-            "Please handle these documents as confidential client information.")
-    try:
-        sent = send_email(office_email, subject, body, [str(path) for path in attachments], application_id=app_id)
-    except Exception:
-        current_app.logger.exception("Office document delivery failed for application %s", app_id)
-        sent = False
-    db.session.add(AuditLog(user_id=current_user.id,
-                            action="Office signed pack sent" if sent else "Office signed pack failed",
-                            entity_type="ClientApplication", entity_id=str(app_id),
-                            details=f"Office recipient: {office_email}. Five PDF attachments. " +
-                                    ("Accepted by mail server." if sent else "Delivery failed.")))
+    supplied = request.form.get('branch_filing_csrf', '')
+    if not supplied or not secrets.compare_digest(session.get('branch_filing_csrf', ''), supplied):
+        abort(400, 'Refresh the application before sending documents.')
+    selected = (request.form.get('filing_branch') or '').strip()
+    office = BranchFilingOffice.query.filter_by(branch_key=selected.lower(), active=True).first()
+    if not office:
+        flash('Choose a branch with a configured filing email address.', 'danger')
+        return redirect(url_for('applications.view_application', app_id=app_id))
+    old = application.filing_branch or "Not selected"
+    application.filing_branch = office.branch_name
+    from app.models import AuditLog
+    db.session.add(AuditLog(user_id=current_user.id, action='BRANCH_FILING_DESTINATION', entity_type='ClientApplication', entity_id=str(app_id), details=f'{old} -> {office.branch_name}; filing email={office.email}'))
     db.session.commit()
-    flash("Signed document pack sent to the office." if sent else
-          "Office email failed. Check the address and mail service, then try again.",
-          "success" if sent else "danger")
-    return redirect(url_for("applications.view_application", app_id=app_id))
+    if request.form.get('save_destination') == '1':
+        flash(f'Filing branch saved: {office.branch_name}; {office.email}.', 'success')
+        return redirect(url_for('applications.view_application', app_id=app_id))
+    try:
+        result = send_branch_pack(app_id, actor_id=current_user.id, resend=request.form.get('resend') == '1')
+        flash(f'Branch: {result.branch_name}; email: {result.recipient_email or "Not configured"}; result: {result.status}. {result.details or ""}', 'success' if result.status == 'Accepted by mail server' else 'warning')
+    except ValueError as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for('applications.view_application', app_id=app_id))
 
 
 @applications_bp.route("/<int:app_id>/send-supporting-link", methods=["POST"])

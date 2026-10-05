@@ -13,6 +13,7 @@ from app.models import (
     AgentNotification,
     ApplicationCDD,
     ApplicationJourney,
+    ApplicationFilingDelivery,
     ApplicationMarketingConsent,
     ApplicationScreening,
     ApplicationSignature,
@@ -125,6 +126,7 @@ def reset_operational_data():
     counts = reset_preview()
     _preserve_opt_outs()
 
+    ApplicationFilingDelivery.query.delete(synchronize_session=False)
     ApplicationJourney.query.delete(synchronize_session=False)
     ApplicationScreening.query.delete(synchronize_session=False)
     ApplicationCDD.query.delete(synchronize_session=False)
