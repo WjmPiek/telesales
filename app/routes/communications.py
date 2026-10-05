@@ -69,6 +69,7 @@ def _get_or_create_manual_policy(first_name, surname, phone, company=None):
         policy.cell_number = normalised
         return policy, None
     policy = LapsedPolicy(
+        lead_type="prospect",
         member_id=f"MANUAL-{datetime.utcnow():%Y%m%d%H%M%S}-{secrets.token_hex(3)}",
         initials=(first_name or "").strip(),
         surname=(surname or "").strip(),
@@ -638,6 +639,9 @@ def view_campaign(campaign_id):
         leads_query = leads_query.filter(LapsedPolicy.recovery_status == status)
     if branch:
         leads_query = leads_query.filter(LapsedPolicy.branch == branch)
+    lead_type = request.args.get("lead_type", "")
+    if lead_type in {"prospect", "policy"}:
+        leads_query = leads_query.filter(LapsedPolicy.lead_type == lead_type)
     leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(500).all()
     metrics = {
         "total": len(recipients),
@@ -1009,6 +1013,9 @@ def add_filtered_group(campaign_id):
         leads_query = leads_query.filter(LapsedPolicy.recovery_status == status)
     if branch:
         leads_query = leads_query.filter(LapsedPolicy.branch == branch)
+    lead_type = request.form.get("lead_type", "")
+    if lead_type in {"prospect", "policy"}:
+        leads_query = leads_query.filter(LapsedPolicy.lead_type == lead_type)
     policies = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(2000).all()
     added = skipped = 0
     for policy in policies:
@@ -1024,7 +1031,7 @@ def add_filtered_group(campaign_id):
         added += 1
     db.session.commit()
     flash(f"Group selection complete: {added} added, {skipped} excluded or already selected.", "success")
-    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, q=q, status=status, branch=branch))
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, q=q, status=status, branch=branch, lead_type=lead_type))
 
 
 @communications_bp.route("/<int:campaign_id>/send", methods=["POST"])

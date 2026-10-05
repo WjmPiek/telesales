@@ -378,6 +378,7 @@ class DocumentSignature(db.Model):
 
 class LapsedPolicy(db.Model):
     __tablename__ = "lapsed_policies"
+    lead_type = db.Column(db.String(20), nullable=False, default="policy", server_default="policy", index=True)
     id = db.Column(db.Integer, primary_key=True)
     franchise = db.Column(db.String(160))
     member_id = db.Column(db.String(50))

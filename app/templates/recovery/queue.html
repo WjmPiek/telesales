@@ -14,6 +14,17 @@
   <small class="text-muted d-block">One worksheet, one row per covered person. Repeat policy details for the principal, spouse, each child and extended member. MemberCover is that person's insured benefit; Total is a payment amount, not cover. Only Active policies count toward cover limits.</small>
 </form>
 
+<form class="mb-3" method="post" action="{{ url_for('prospects.import_contacts') }}" enctype="multipart/form-data">
+  <label class="d-block fw-bold">Individual clients: name and cell number only</label>
+  <input type="file" name="file" accept=".xlsx" required>
+  <select name="company_id" aria-label="Company for individual clients" class="form-select form-select-sm d-inline-block" style="width:auto">
+    <option value="">Individual Clients group</option>
+    {% for company in prospect_companies %}<option value="{{ company.id }}">{{ company.company_name }} / {{ company.branch }}</option>{% endfor %}
+  </select>
+  <button class="btn btn-primary btn-sm">Import individual clients</button>
+  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('prospects.template') }}">Download individual clients template</a>
+  <small class="d-block text-muted">One row per contact. No policy, ID or email needed. Importing does not send a campaign.</small>
+</form>
 <div class="mb-3">
   <a class="btn btn-sm {% if not active_status %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('recovery.queue') }}">All Open</a>
   {% for s in open_statuses %}
@@ -27,7 +38,7 @@
   </tr>
   {% for p in policies %}
   <tr class="{% if p.next_action_date and p.next_action_date <= today %}table-warning{% endif %}">
-    <td data-label="Policy">{{p.policy_number}}</td>
+    <td data-label="Policy">{{ 'Individual client' if p.lead_type == 'prospect' else p.policy_number }}</td>
     <td data-label="Client">{{p.initials}} {{p.surname}}</td>
     <td data-label="Cell">{{p.cell_number}}</td>
     <td data-label="Total">{{p.total}}</td>
