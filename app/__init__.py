@@ -22,6 +22,8 @@ def _ensure_lapsed_policy_contact_columns(app):
             if not str(db.engine.url).startswith("postgresql"):
                 return
             statements = [
+                "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS lead_type VARCHAR(20) NOT NULL DEFAULT 'policy'",
+                "CREATE INDEX IF NOT EXISTS ix_lapsed_policies_lead_type ON lapsed_policies (lead_type)",
                 "ALTER TABLE lapsed_policies ADD COLUMN IF NOT EXISTS callback_at TIMESTAMP",
                 "ALTER TABLE telesales_script_sessions ADD COLUMN IF NOT EXISTS script_snapshot_json TEXT",
                 "ALTER TABLE client_applications ADD COLUMN IF NOT EXISTS document_email VARCHAR(255)",
@@ -484,6 +486,7 @@ def create_app():
     from app.routes.applications import applications_bp
     from app.routes.signing import signing_bp
     from app.routes.policies import policies_bp
+    from app.routes.prospects import prospects_bp
     from app.routes.recovery import recovery_bp
     from app.routes.qa import qa_bp
     from app.routes.documents import documents_bp
@@ -510,6 +513,7 @@ def create_app():
     from app.routes.join import join_bp
     app.register_blueprint(join_bp)
     app.register_blueprint(policies_bp)
+    app.register_blueprint(prospects_bp)
     app.register_blueprint(recovery_bp)
     app.register_blueprint(qa_bp)
     app.register_blueprint(documents_bp)

@@ -96,6 +96,28 @@ def save_questionnaire(a, form):
     cdd['birth_date']=datetime.strptime(format_dob(a.date_of_birth),'%d/%m/%Y').strftime('%Y-%m-%d')
     save_answers(a,cdd)
     apply_consent(a,choice=='yes',None,None)
+    if a.lapsed_policy_id:
+        from datetime import date
+        from app import db
+        from app.models import AgentNotification, LapsedPolicy
+        lead = db.session.get(LapsedPolicy, a.lapsed_policy_id)
+        if lead and lead.lead_type == "prospect":
+            first_submission = not a.whatsapp_journey.ready
+            lead.initials = a.first_names[:50]
+            lead.surname = a.surname[:120]
+            lead.id_number = a.id_number
+            lead.cell_number = a.cell_number
+            lead.email_address = a.email
+            lead.address = a.residential_address
+            lead.suspense_reason = None
+            if first_submission:
+                if lead.recovery_status != "Opted Out":
+                    lead.recovery_status = "Application Started"
+                    lead.next_action_date = date.today()
+                if a.agent_id:
+                    db.session.add(AgentNotification(user_id=a.agent_id, title="Individual client application received",
+                        message=f"{a.first_names} {a.surname} completed application {a.application_ref}.",
+                        notification_type="application_submitted", entity_type="LapsedPolicy", entity_id=lead.id))
     a.whatsapp_journey.ready=True
 
 

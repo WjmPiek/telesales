@@ -96,6 +96,8 @@ def _append_comment(existing, note):
 
 def _policy_missing_fields(policy):
     missing = []
+    if policy.lead_type == "prospect":
+        return ["contact number"] if _is_missing(policy.cell_number) else []
     if _is_missing(getattr(policy, "id_number", None)):
         missing.append("ID number")
     if _is_missing(getattr(policy, "cell_number", None)) and _is_missing(getattr(policy, "home_tel", None)):
