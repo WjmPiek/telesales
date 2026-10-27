@@ -42,6 +42,16 @@ The Blueprint now uses `instance/uploads`. Existing services may retain their pr
 
 Security regression checks: `python -m unittest discover -s tests -p test_analytics_security.py`.
 
+### Franchise laps reports and client files
+
+Upload the existing franchise report directly under Client list & import, for example `Northcliff Laps Report.xlsx`. The filename supplies the franchise holder; operational branch access still follows the importing user's branch. The report accepts `Policy #`, `Receipt #`, `Initial. Surname`, `Address`, `Cell#`, `Phone#`, `Last Receipt`, `MPIA` and `Comment`. It preserves compound surnames, normalizes valid SA mobile numbers (including numeric cells missing their leading zero), stores receipt numbers and dates, and retains the original row. A missing ID does not block this contact-list import; an invalid mobile number is flagged for correction. January 1900 sentinel dates are retained in the original row and displayed as unknown for date filtering. This report does not import insured benefits or change historical member-cover rules.
+
+Find client / client file, Client list & import, and WhatsApp campaign recipient selection share franchise, year/month, date-range and process filters. Blank franchise means all accessible franchises combined. Date choices distinguish the last receipt, the import, application creation and the new policy start. Completed new joining requires an Active new-policy application; signing alone remains in progress. Removal/opt-out takes precedence in the displayed process category and opted-out contacts remain excluded from campaign selection. All listings and choices preserve branch/agent access. Directory pages show 50 records; adding a complete filtered campaign group uses all matches rather than silently truncating at 2,000.
+
+Submitted application details merge into the explicitly linked imported client, including the ID, current name, contact information and address. All other application, beneficiary, payment, member, consent and document data stays on that linked application in Client File. The original report row, franchise, policy number and receipt history remain available. Re-importing the same franchise/policy updates its source record without creating a duplicate, resetting consent/progress or replacing submitted form details. Importing or filtering never sends messages automatically.
+
+Report and merge regression checks: `python -m unittest discover -s tests -p test_laps_report.py`.
+
 ## Gmail SMTP
 
 Use a Gmail App Password, not your normal Gmail password.

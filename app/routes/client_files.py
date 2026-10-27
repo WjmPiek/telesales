@@ -24,6 +24,9 @@ def index():
     identity = ''.join(c for c in request.values.get('id_number', '') if c.isalnum()).upper()
     app_id = request.args.get('application_id', type=int)
     policy_id = request.args.get('policy_id', type=int)
+    if not identity and not app_id and not policy_id and request.method == 'GET':
+        from app.services.client_directory import directory_context
+        return render_template('clients/search.html', **directory_context(request.args)), 200, {'Cache-Control': 'no-store'}
     seed_app = seed_policy = None
     if app_id:
         seed_app = ClientApplication.query.get_or_404(app_id)
@@ -38,7 +41,14 @@ def index():
     if identity or seed_app or seed_policy:
         pq = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
         aq = scope_by_branch(ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id)
-        policies = pq.filter(identity_column(LapsedPolicy.id_number) == identity).all() if identity else ([seed_policy] if seed_policy else [])
+        policy_conditions = []
+        if identity:
+            policy_conditions.append(identity_column(LapsedPolicy.id_number) == identity)
+        if seed_app and seed_app.lapsed_policy_id:
+            policy_conditions.append(LapsedPolicy.id == seed_app.lapsed_policy_id)
+        if seed_policy:
+            policy_conditions.append(LapsedPolicy.id == seed_policy.id)
+        policies = pq.filter(or_(*policy_conditions)).all() if policy_conditions else []
         pids = [p.id for p in policies]
         conditions = [ClientApplication.lapsed_policy_id.in_(pids)]
         if identity:
@@ -82,7 +92,13 @@ def index():
         timeline.append(event(e.created_at,'Email','Event',e.details or 'Historical email event; the original message body was not recorded.',subject=e.campaign.subject if e.campaign else '',status=e.event_type,source='Historical campaign event'))
     timeline.sort(key=lambda item:item['at'])
     stored_files=ClientStoredFile.query.filter(ClientStoredFile.application_id.in_([a.id for a in applications])).filter(db.or_(ClientStoredFile.relative_path.like('fic-screening-%'),ClientStoredFile.relative_path.like('annexure_j1_%'))).all() if applications else []
-    response = render_template('clients/file.html', identity=identity, searched=searched,
+    source_details = {}
+    for policy in policies:
+        try:
+            source_details[policy.id] = json.loads(policy.source_row_json or '{}')
+        except (ValueError, TypeError):
+            source_details[policy.id] = {}
+    response = render_template('clients/file.html', identity=identity, searched=searched, source_details=source_details,
                                applications=applications, policies=policies, calls=calls, stored_files=stored_files,
                                scripts=scripts, documents=documents, messages=messages, timeline=timeline)
     return response, 200, {'Cache-Control': 'no-store'}

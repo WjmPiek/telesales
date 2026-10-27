@@ -220,10 +220,11 @@ class CompanyManagementTests(unittest.TestCase):
         self.assertEqual(LapsedPolicy.query.filter_by(policy_number='HISTORY-2').count(), 0)
         self.assertEqual(HistoricalMemberCover.query.count(), 0)
 
-    def test_blank_company_import_template_is_downloadable(self):
+    def test_report_import_replaces_template_link_and_legacy_template_remains_available(self):
         self.login(self.owner_id)
         page = self.get('/recovery/')
-        self.assertIn(b'Download blank import template', page.data)
+        self.assertIn(b'Import franchise laps report', page.data)
+        self.assertNotIn(b'Download blank import template', page.data)
         download = self.get('/static/templates/company_policy_import_blank_template.xlsx')
         self.assertEqual(download.status_code, 200)
         book = __import__('openpyxl').load_workbook(BytesIO(download.data), read_only=True, data_only=True)

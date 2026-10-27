@@ -380,6 +380,10 @@ class DocumentSignature(db.Model):
 
 class LapsedPolicy(db.Model):
     __tablename__ = "lapsed_policies"
+    source_type = db.Column(db.String(40))
+    source_filename = db.Column(db.String(255))
+    receipt_number = db.Column(db.String(80))
+    source_row_json = db.deferred(db.Column(db.Text))
     lead_type = db.Column(db.String(20), nullable=False, default="policy", server_default="policy", index=True)
     id = db.Column(db.Integer, primary_key=True)
     franchise = db.Column(db.String(160))

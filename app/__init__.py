@@ -323,6 +323,8 @@ def create_app():
     with app.app_context():
         from app.services.call_recordings import ensure_recording_columns
         ensure_recording_columns()
+        from app.services.laps_report import ensure_report_columns
+        ensure_report_columns()
 
     @app.before_request
     def protect_private_uploads():
