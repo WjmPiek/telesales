@@ -163,10 +163,18 @@ def filter_policy_query(base, values, include_process=True):
     return query
 
 
+def franchise_options_query(base):
+    # PostgreSQL requires DISTINCT ordering to refer to the selected expression.
+    # Rebuilding coalesce/nullif creates different bind parameters, so order by
+    # the selected label rather than reconstructing the expression.
+    name = franchise_column().label('franchise_name')
+    return (base.order_by(None).with_entities(name).filter(name.isnot(None), name != '')
+            .distinct().order_by('franchise_name'))
+
+
 def filter_context(base, values):
     selected = filter_values(values)
-    franchises = [row[0] for row in base.with_entities(franchise_column()).filter(
-        franchise_column().isnot(None), franchise_column() != '').distinct().order_by(franchise_column()).all()]
+    franchises = [row[0] for row in franchise_options_query(base).all()]
     basis = selected['date_basis']
     if basis in {'application', 'joined'}:
         column = ClientApplication.created_at if basis == 'application' else ClientApplication.inception_date
