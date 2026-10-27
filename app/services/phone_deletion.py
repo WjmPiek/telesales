@@ -17,6 +17,8 @@ def delete_phone(number):
     if not number:
         return
     digest = contact_hash(number)
+    from app.models import MarketingScreening
+    MarketingScreening.query.filter_by(phone_number=number).delete(synchronize_session=False)
     if not phone_is_suppressed(number):
         db.session.add(ContactSuppression(phone_hash=digest, source="whatsapp"))
     # Disable every duplicate marketing record before clearing its number.

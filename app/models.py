@@ -1111,6 +1111,23 @@ class ClientStoredFile(db.Model):
     __table_args__ = (db.UniqueConstraint("application_id", "relative_path", name="uq_client_stored_file"),)
 
 
+class MarketingScreening(db.Model):
+    """Append-only registry results and explicit WhatsApp consent evidence."""
+    __tablename__ = "marketing_screenings"
+    id = db.Column(db.Integer, primary_key=True)
+    lapsed_policy_id = db.Column(db.Integer, db.ForeignKey("lapsed_policies.id"), nullable=False, index=True)
+    phone_number = db.Column(db.String(30), nullable=False, index=True)
+    registry = db.Column(db.String(30), nullable=False, index=True)
+    result = db.Column(db.String(20), nullable=False)
+    checked_at = db.Column(db.DateTime, nullable=False)
+    expires_at = db.Column(db.DateTime)
+    reference = db.Column(db.String(1000), nullable=False)
+    source = db.Column(db.String(40), nullable=False, default="manual")
+    recorded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (db.Index('ix_marketing_screening_phone_registry_time', 'phone_number', 'registry', 'checked_at'),)
+
+
 class ApplicationMarketingConsent(db.Model):
     __tablename__ = "application_marketing_consents"
     id = db.Column(db.Integer, primary_key=True)

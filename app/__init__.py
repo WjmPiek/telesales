@@ -439,6 +439,8 @@ def create_app():
         CompanyGroupState.__table__.create(db.engine, checkfirst=True)
         CompanyDocument.__table__.create(db.engine, checkfirst=True)
         HistoricalMemberCover.__table__.create(db.engine, checkfirst=True)
+        from app.models import MarketingScreening
+        MarketingScreening.__table__.create(db.engine, checkfirst=True)
         if str(db.engine.url).startswith("postgresql"):
             from sqlalchemy import text
             with db.engine.begin() as conn:
@@ -544,6 +546,8 @@ def create_app():
 
     from app.routes.client_files import client_files_bp
     app.register_blueprint(client_files_bp)
+    from app.routes.marketing_screening import screening_bp
+    app.register_blueprint(screening_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(applications_bp)

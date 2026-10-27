@@ -427,7 +427,7 @@ def sign_application(token):
                 if choice not in {"yes", "no"}:
                     raise ValueError("Please choose Yes or No for marketing consent.")
                 previous=consent_value(app_obj)
-                apply_consent(app_obj, choice=="yes", request.remote_addr, request.headers.get("User-Agent"))
+                apply_consent(app_obj, choice=="yes", request.remote_addr, request.headers.get("User-Agent"), whatsapp_explicit=True)
                 if previous != (choice=="yes"):
                     DocumentSignature.query.filter_by(application_id=app_obj.id,document_type="popia").delete(synchronize_session=False)
                 db.session.flush()

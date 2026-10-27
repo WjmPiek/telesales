@@ -396,7 +396,7 @@ class WhatsAppProcessTests(unittest.TestCase):
         with patch(
             "app.routes.communications.send_whatsapp_template_image",
             return_value=SendResult(True, message_id="wamid.campaign-1", response_json={"messages": [{"id": "wamid.campaign-1"}]}),
-        ):
+        ), patch("app.services.marketing_screening.clearance", return_value=(True, "Test clearance")):
             ok, error = _send_to_recipient(
                 db.session.get(CommunicationCampaign, campaign_id),
                 db.session.get(CampaignRecipient, recipient_id),

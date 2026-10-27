@@ -95,7 +95,7 @@ def save_questionnaire(a, form):
     cdd.update(telephone=a.cell_number,residential_address=a.residential_address,postal_address=a.postal_address,email=a.email)
     cdd['birth_date']=datetime.strptime(format_dob(a.date_of_birth),'%d/%m/%Y').strftime('%Y-%m-%d')
     save_answers(a,cdd)
-    apply_consent(a,choice=='yes',None,None)
+    apply_consent(a,choice=='yes',None,None,whatsapp_explicit=True)
     if a.lapsed_policy_id:
         from datetime import date
         from app import db

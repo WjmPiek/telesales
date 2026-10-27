@@ -182,8 +182,15 @@ def _send_to_recipient(campaign, recipient, channel):
             return False, "Recipient does not belong to this company"
     pref = preference_for(policy)
     if pref.opted_out_all or is_suppressed(policy):
+        recipient.whatsapp_status = "Held"
         _event(recipient, "suppressed", channel, "Contact is opted out or on suppression list")
         return False, "Suppressed"
+    from app.services.marketing_screening import clearance
+    allowed, reason = clearance(policy)
+    if not allowed:
+        recipient.whatsapp_status = "Held"
+        _event(recipient, "marketing_held", channel, reason)
+        return False, reason
     links = callback_links(recipient.secure_token)
     error = None
     text = f"{campaign.message_body}\n\nCall me back: {links['callback']}\nNot interested: {links['not_interested']}\nOpt out: {links['opt_out']}"
@@ -1010,7 +1017,7 @@ def add_filtered_group(campaign_id):
         added += 1
     db.session.commit()
     flash(f"Group selection complete: {added} added, {skipped} excluded or already selected.", "success")
-    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, **{key: request.form.get(key, '') for key in ('q','franchise','date_basis','year','month','date_from','date_to','process','status','branch','lead_type')}))
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, **{key: request.form.get(key, '') for key in ('q','franchise','date_basis','year','month','date_from','date_to','process','status','branch','lead_type','registry','screening')}))
 
 
 @communications_bp.route("/<int:campaign_id>/send", methods=["POST"])
