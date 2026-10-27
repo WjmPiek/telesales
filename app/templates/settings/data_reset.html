@@ -18,6 +18,7 @@
 </div>
 
 <form method="post" class="card border-danger">
+  <input type="hidden" name="data_reset_csrf" value="{{ session['data_reset_csrf'] }}">
   <div class="card-body">
     <label class="form-label" for="confirmation">Type <strong>CLEAR ALL TEST DATA</strong> to confirm</label>
     <input class="form-control" id="confirmation" name="confirmation" autocomplete="off" required>

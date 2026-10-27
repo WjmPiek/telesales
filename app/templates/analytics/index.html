@@ -1,1 +1,18 @@
-{% extends "base.html" %}{% block content %}<h1>AI Call Analytics & Recordings</h1><p class="text-muted">Rule-based summaries now; this can later connect to a real transcription/AI provider.</p><h3>Recent Summaries</h3><table class="table"><tr><th>Date</th><th>Call</th><th>Summary</th><th>Next Action</th><th>Flags</th></tr>{% for s in summaries %}<tr><td>{{s.created_at}}</td><td>{{s.call_log_id}}</td><td>{{s.summary}}</td><td>{{s.next_best_action}}</td><td>{{s.risk_flags}}</td></tr>{% endfor %}</table><h3>Compliance Flags</h3><table class="table"><tr><th>Date</th><th>Severity</th><th>Type</th><th>Details</th></tr>{% for f in flags %}<tr><td>{{f.created_at}}</td><td>{{f.severity}}</td><td>{{f.flag_type}}</td><td>{{f.details}}</td></tr>{% endfor %}</table><h3>Recordings</h3><table class="table"><tr><th>Date</th><th>Filename</th><th>Call</th></tr>{% for r in recordings %}<tr><td>{{r.uploaded_at}}</td><td>{{r.original_filename}}</td><td>{{r.call_log_id}}</td></tr>{% endfor %}</table>{% endblock %}
+{% extends "base.html" %}{% block content %}<h1>AI Call Analytics & Recordings</h1><p class="text-muted">Rule-based summaries now; this can later connect to a real transcription/AI provider.</p><h3>Recent Summaries</h3><table class="table"><tr><th>Date</th><th>Call</th><th>Summary</th><th>Next Action</th><th>Flags</th></tr>{% for s in summaries %}<tr><td>{{s.created_at}}</td><td>{{s.call_log_id}}</td><td>{{s.summary}}</td><td>{{s.next_best_action}}</td><td>{{s.risk_flags}}</td></tr>{% endfor %}</table><h3>Compliance Flags</h3><table class="table"><tr><th>Date</th><th>Severity</th><th>Type</th><th>Details</th></tr>{% for f in flags %}<tr><td>{{f.created_at}}</td><td>{{f.severity}}</td><td>{{f.flag_type}}</td><td>{{f.details}}</td></tr>{% endfor %}</table><h3>Recordings</h3><table class="table"><tr><th>Date</th><th>Filename</th><th>Call</th></tr>{% for r in recordings %}<tr><td>{{r.uploaded_at}}</td><td><a href="{{ url_for('analytics.download_recording', recording_id=r.id) }}">{{r.original_filename}}</a></td><td>{{r.call_log_id}}</td></tr>{% endfor %}</table><h3>Recent calls</h3>
+<p>Recordings must be WAV, MP3, OGG, FLAC, M4A or WEBM files, up to 25 MB.</p>
+{% for call in calls %}
+<div class="card card-body mb-3">
+  <p>Call #{{ call.id }} · {{ call.outcome }}</p>
+  <form method="post" action="{{ url_for('analytics.summarize', call_log_id=call.id) }}" class="mb-2">
+    <input type="hidden" name="analytics_csrf" value="{{ session['analytics_csrf'] }}">
+    <button class="btn btn-outline-primary" type="submit">Generate summary</button>
+  </form>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('analytics.upload_recording', call_log_id=call.id) }}">
+    <input type="hidden" name="analytics_csrf" value="{{ session['analytics_csrf'] }}">
+    <label for="recording-{{ call.id }}">Recording for call #{{ call.id }}</label>
+    <input id="recording-{{ call.id }}" class="form-control mb-2" type="file" name="recording" accept=".wav,.mp3,.ogg,.flac,.m4a,.webm" required>
+    <button class="btn btn-primary" type="submit">Upload recording</button>
+  </form>
+</div>
+{% else %}<p>No calls available.</p>{% endfor %}
+{% endblock %}

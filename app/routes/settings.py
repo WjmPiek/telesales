@@ -320,11 +320,16 @@ def import_historical_member_cover():
 @settings_bp.route('/data-reset', methods=['GET', 'POST'])
 @login_required
 def data_reset():
-    from flask import abort
+    import secrets
+    from flask import abort, session
     from app.services.data_reset import reset_operational_data, reset_preview
     if not is_super_admin():
         abort(403)
     if request.method == 'POST':
+        expected = session.get('data_reset_csrf', '')
+        supplied = request.form.get('data_reset_csrf', '')
+        if not expected or not secrets.compare_digest(expected, supplied):
+            abort(400, 'Refresh the data reset page before submitting changes.')
         if request.form.get('confirmation', '').strip() != 'CLEAR ALL TEST DATA':
             flash('Reset cancelled. Enter the exact confirmation phrase.', 'danger')
             return redirect(url_for('settings.data_reset'))
@@ -342,6 +347,7 @@ def data_reset():
             f"{counts['suppression_records_kept']} opt-out suppression records were preserved.",
             'success')
         return redirect(url_for('settings.data_reset'))
+    session.setdefault('data_reset_csrf', secrets.token_urlsafe(32))
     return render_template('settings/data_reset.html', counts=reset_preview())
 
 

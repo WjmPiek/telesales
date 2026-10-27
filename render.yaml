@@ -23,7 +23,7 @@ services:
       - key: BASE_URL
         sync: false
       - key: UPLOAD_FOLDER
-        value: app/static/uploads
+        value: instance/uploads
       - key: WHATSAPP_ENABLED
         value: "true"
       - key: WHATSAPP_PROVIDER

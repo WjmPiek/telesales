@@ -32,6 +32,16 @@ Run `python seed.py` once. You can set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWO
 4. Set `BASE_URL` to your Render web URL.
 5. Run `python seed.py` once in Render Shell.
 
+### Recording storage upgrade
+
+Before deploying the private-recording update, preserve recordings on the **currently running** Render instance. Copy `scripts/preserve_call_recordings.py` from the update branch into that instance and run `python scripts/preserve_call_recordings.py` from the application directory. This standalone script uses the existing `DATABASE_URL`, adds two nullable columns, and copies available recordings into PostgreSQL without deleting files or changing their paths. Pause recording uploads during this copy and deploy immediately afterward so no disk-only uploads are missed. Review any `unavailable` count before proceeding; already-lost recordings need an external backup.
+
+The updated app automatically adds the same columns when starting an existing database, stores new recordings in PostgreSQL, and offers authenticated downloads scoped to each manager's branch. Legacy files that remain on disk are copied into PostgreSQL when downloaded. Recording uploads accept WAV, MP3, OGG, FLAC, M4A and WEBM containers, check extension/header agreement, and limit files to 25 MB. Header checks do not perform full audio decoding or malware scanning.
+
+The Blueprint now uses `instance/uploads`. Existing services may retain their previous `UPLOAD_FOLDER` override; direct static access to upload folders is blocked in either case. Keep PostgreSQL backups configured. The password-help control provides the account owner's contact instructions; it does not issue self-service password-reset tokens.
+
+Security regression checks: `python -m unittest discover -s tests -p test_analytics_security.py`.
+
 ## Gmail SMTP
 
 Use a Gmail App Password, not your normal Gmail password.
