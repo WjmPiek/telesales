@@ -882,9 +882,8 @@ def finish_application(app_obj, token):
     upload_email_sent = send_supporting_upload_email(app_obj)
     from app.services.document_reminders import schedule_document_reminders
     schedule_document_reminders(app_obj)
-    office_email = os.getenv("MAIL_DOCUMENTS_TO")
-    from email.utils import parseaddr
-    if office_email and parseaddr(office_email)[1].strip().casefold()!=parseaddr(recipient or '')[1].strip().casefold():
+    from app.services.email_service import submission_notification_recipients
+    for office_email in submission_notification_recipients(recipient):
         app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
         from app.services.email_service import signing_email_html
         office_body = "The client has submitted the signed application."
