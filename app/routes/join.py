@@ -30,6 +30,9 @@ def _recipient(token):
     recipient = CampaignRecipient.query.filter_by(secure_token=token).first_or_404()
     if not recipient.policy:
         abort(404)
+    campaign = recipient.campaign
+    if not campaign or campaign.deleted_at or campaign.status == 'Archived' or (campaign.company and campaign.company.status != 'Active'):
+        abort(404)
     return recipient
 
 

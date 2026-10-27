@@ -115,7 +115,7 @@ def clearance(policy):
         return False, 'Explicit WhatsApp marketing consent is missing or withdrawn'
     configuration = registry_policy()
     if configuration is None:
-        return False, 'Administrator must review applicable registers in Marketing screening'
+        return True, 'Consent recorded; external screening is not configured'
     for provider in configuration['required']:
         status = result_status(latest.get(provider))
         if status != 'clear':

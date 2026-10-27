@@ -99,9 +99,23 @@ def index():
         except (ValueError, TypeError):
             source_details[policy.id] = {}
     response = render_template('clients/file.html', identity=identity, searched=searched, source_details=source_details,
+                               choice_recipients=_choice_recipients(pids),
                                applications=applications, policies=policies, calls=calls, stored_files=stored_files,
                                scripts=scripts, documents=documents, messages=messages, timeline=timeline)
     return response, 200, {'Cache-Control': 'no-store'}
+
+
+def _choice_recipients(policy_ids):
+    from app.models import CampaignRecipient
+    rows = CampaignRecipient.query.filter(CampaignRecipient.lapsed_policy_id.in_(policy_ids)).order_by(
+        CampaignRecipient.created_at.desc(), CampaignRecipient.id.desc()).all() if policy_ids else []
+    links = {}
+    for row in rows:
+        campaign = row.campaign
+        if (campaign and not campaign.deleted_at and campaign.status != 'Archived'
+                and (not campaign.company or campaign.company.status == 'Active')):
+            links.setdefault(row.lapsed_policy_id, row)
+    return links
 
 
 @client_files_bp.route('/document/<int:file_id>')
