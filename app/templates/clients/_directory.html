@@ -2,15 +2,15 @@
 <div class="d-flex flex-wrap gap-3 mb-3">{% for key,label in process_labels.items() %}<span>{{ label }}: <strong>{{ directory_counts.get(key,0) }}</strong></span>{% endfor %}</div>
 <p>{{ directory_total }} matching client records. Counts above use the selected franchise, search and dates across all process statuses.</p>
 <div class="table-responsive"><table class="table table-sm table-striped align-middle">
-<thead><tr><th>Franchise</th><th>Client / policy</th><th>Contact / address</th><th>Last receipt</th><th>Process</th><th>Opt-out screening</th><th>Actions</th></tr></thead>
+<thead><tr><th>Franchise</th><th>Client / policy</th><th>Contact / address</th><th>Last receipt</th><th>Process</th><th>Contact preference</th><th>Actions</th></tr></thead>
 <tbody>{% for p,process in directory_rows %}<tr>
 <td>{{ p.franchise or p.company_name or p.branch or '' }}</td>
 <td>{{ p.initials or '' }} {{ p.surname or '' }}<div>{{ p.policy_number or 'Individual client' }}</div></td>
 <td>{{ p.cell_number or 'No mobile number' }}<div>{{ p.address or '' }}</div></td>
 <td>{{ p.last_date_paid or 'Unknown' }}{% if p.receipt_number %}<div>Receipt {{ p.receipt_number }}</div>{% endif %}</td>
 <td>{{ process_labels[process] }}<div class="small text-muted">{{ p.recovery_status }}</div></td>
-<td>{% for label,status,checked in screening_summaries[p.id] %}<div>{{label}}: {{screening_results[status]}}</div>{% endfor %}</td>
-<td><a class="btn btn-outline-primary btn-sm" href="{{ url_for('client_files.index',policy_id=p.id) }}">Client file</a> <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('marketing_screening.client',policy_id=p.id) }}">Screening / dates</a> <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('recovery.client_timeline',policy_id=p.id) }}">Timeline</a></td>
+<td>{{contact_labels[contact_permissions[p.id]]}}</td>
+<td><a class="btn btn-outline-primary btn-sm" href="{{ url_for('client_files.index',policy_id=p.id) }}">Client file</a> <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('marketing_screening.client',policy_id=p.id) }}">Contact preference / evidence</a> <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('recovery.client_timeline',policy_id=p.id) }}">Timeline</a></td>
 </tr>{% else %}<tr><td colspan="7">No clients match these filters.</td></tr>{% endfor %}</tbody></table></div>
 <nav class="d-flex align-items-center gap-3" aria-label="Client pages">
 {% if directory_page > 1 %}<a href="{{ url_for(request.endpoint, **dict(directory_filters, page=directory_page-1)) }}">Previous</a>{% endif %}

@@ -109,10 +109,10 @@ def record_opt_out(recipient, channel):
     policy.next_action_date = None
     phone_hash = contact_hash(normalize_phone(policy.cell_number))
     email_hash = contact_hash(normalize_email(policy.email_address))
-    existing = ContactSuppression.query.filter(db.or_(
-        ContactSuppression.phone_hash == phone_hash if phone_hash else db.false(),
-        ContactSuppression.email_hash == email_hash if email_hash else db.false(),
-    )).first()
-    if not existing:
-        db.session.add(ContactSuppression(phone_hash=phone_hash, email_hash=email_hash, source=channel, campaign_id=recipient.campaign_id, lapsed_policy_id=policy.id))
+    missing_phone = phone_hash and not ContactSuppression.query.filter_by(phone_hash=phone_hash).first()
+    missing_email = email_hash and not ContactSuppression.query.filter_by(email_hash=email_hash).first()
+    if missing_phone or missing_email:
+        db.session.add(ContactSuppression(phone_hash=phone_hash if missing_phone else None,
+            email_hash=email_hash if missing_email else None, source=channel,
+            campaign_id=recipient.campaign_id, lapsed_policy_id=policy.id))
     policy.comments = ((policy.comments or "") + f"\nOPTED OUT via {channel.title()} on {datetime.utcnow():%Y-%m-%d %H:%M} UTC").strip()

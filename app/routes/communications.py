@@ -1017,7 +1017,7 @@ def add_filtered_group(campaign_id):
         added += 1
     db.session.commit()
     flash(f"Group selection complete: {added} added, {skipped} excluded or already selected.", "success")
-    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, **{key: request.form.get(key, '') for key in ('q','franchise','date_basis','year','month','date_from','date_to','process','status','branch','lead_type','registry','screening')}))
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, **{key: request.form.get(key, '') for key in ('q','franchise','date_basis','year','month','date_from','date_to','process','status','branch','lead_type','registry','screening','contact_permission')}))
 
 
 @communications_bp.route("/<int:campaign_id>/send", methods=["POST"])
@@ -1101,6 +1101,38 @@ def export_campaign(campaign_id):
     for r in campaign.recipients:
         writer.writerow([f"{r.policy.initials or ''} {r.policy.surname or ''}".strip(), r.policy.cell_number or "", r.policy.email_address or "", r.whatsapp_status, r.email_status, r.response_type or "", r.response_channel or "", r.responded_at or ""])
     return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename=campaign_{campaign.id}_report.csv"})
+
+
+@communications_bp.route("/client/<token>", methods=["GET", "POST"])
+def client_choice(token):
+    """Private client choice link; opening a preview never changes preferences."""
+    from app.models import ContactCommunicationPreference
+    recipient = CampaignRecipient.query.filter_by(secure_token=token).first_or_404()
+    if not recipient.policy:
+        abort(404)
+    policy, campaign = recipient.policy, recipient.campaign
+    preference = ContactCommunicationPreference.query.filter_by(lapsed_policy_id=policy.id).first()
+    stopped = bool(preference and preference.opted_out_all)
+    session.setdefault('client_choice_csrf', secrets.token_urlsafe(32))
+    if request.method == 'POST':
+        supplied = request.form.get('client_choice_csrf', '')
+        if not secrets.compare_digest(session['client_choice_csrf'], supplied):
+            abort(400, 'Refresh this page and try again.')
+        if request.form.get('action') != 'opt-out':
+            abort(400)
+        if recipient.response_type != 'opt_out' or not stopped:
+            record_opt_out(recipient, 'client_portal')
+            _event(recipient, 'opt_out', 'client_portal', 'Client chose to stop marketing messages')
+            db.session.commit()
+        return redirect(url_for('.client_choice', token=token))
+    opted_out = (policy.recovery_status == 'Opted Out' or is_suppressed(policy)
+                 or stopped)
+    available = bool(campaign and not campaign.deleted_at and campaign.status != 'Archived'
+                     and (not campaign.company or campaign.company.status == 'Active')
+                     and (not campaign.product or campaign.product.active))
+    return render_template('clients/choice.html', recipient=recipient, opted_out=opted_out,
+                           application_available=available), 200, {
+        'Cache-Control':'no-store', 'Referrer-Policy':'no-referrer', 'X-Robots-Tag':'noindex, nofollow'}
 
 
 @communications_bp.route("/respond/<token>/<action>")

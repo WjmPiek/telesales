@@ -71,10 +71,11 @@ class MarketingScreeningTests(unittest.TestCase):
         self.assertIn('consent', clearance(lead)[1])
         self.assertFalse(clearance(lead)[0])
 
-    def test_missing_policy_checks_and_expired_checks_hold_then_clear(self):
+    def test_optional_external_screening_and_required_expired_checks(self):
         lead = self.lead()
         self.evidence(lead, 'whatsapp', 'granted')
-        self.assertIn('Administrator', clearance(lead)[1])
+        self.assertTrue(clearance(lead)[0])
+        self.assertIn('not configured', clearance(lead)[1])
         self.configure()
         self.assertIn('Not checked', clearance(lead)[1])
         self.evidence(lead, checked=datetime.utcnow()-timedelta(days=3), expires=datetime.utcnow()-timedelta(days=1))

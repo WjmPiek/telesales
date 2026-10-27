@@ -17,6 +17,15 @@ PROCESS_LABELS = {
 }
 DATE_LABELS = {'receipt': 'Last receipt date', 'imported': 'Import date',
                'application': 'Application started', 'joined': 'New policy start date'}
+CONTACT_LABELS = {'consented': 'Marketing consent recorded', 'opted_out': 'Opted out / stop marketing',
+                  'unknown': 'Marketing consent not recorded'}
+
+
+def contact_permission_expression(base):
+    from app.services.marketing_screening import result_expression
+    consent = result_expression('whatsapp')
+    return case((or_(removal_expression(base), consent == 'withdrawn'), 'opted_out'),
+                (consent == 'granted', 'consented'), else_='unknown')
 
 
 def scoped_policies():
@@ -35,15 +44,7 @@ def new_joining():
     return and_(ClientApplication.status == 'Active', ClientApplication.application_type.ilike('%new%'))
 
 
-def process_expressions(base):
-    linked_apps = scoped_applications().filter(ClientApplication.lapsed_policy_id == LapsedPolicy.id)
-    completed = linked_apps.filter(new_joining()).exists()
-    active_app = linked_apps.filter(ClientApplication.status.notin_(
-        ['Active', 'Rejected', 'QA Rejected', 'Compliance Rejected', 'Cancelled', 'Closed', 'Archived'])).exists()
-    scripts = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession,
-                              agent_col=TelesalesScriptSession.agent_id)
-    active_script = scripts.filter(TelesalesScriptSession.lapsed_policy_id == LapsedPolicy.id,
-                                   TelesalesScriptSession.status == 'In Progress').exists()
+def removal_expression(base):
     preferences = ContactCommunicationPreference.query.filter(
         ContactCommunicationPreference.lapsed_policy_id == LapsedPolicy.id,
         or_(ContactCommunicationPreference.opted_out_all.is_(True),
@@ -55,7 +56,19 @@ def process_expressions(base):
     suppressed_ids = [row.id for row in base.with_entities(LapsedPolicy.id, LapsedPolicy.cell_number, LapsedPolicy.email_address).all()
                       if contact_hash(normalize_phone(row.cell_number)) in phones
                       or contact_hash(normalize_email(row.email_address)) in emails] if hashes else []
-    removed = or_(LapsedPolicy.recovery_status == 'Opted Out', preferences, LapsedPolicy.id.in_(suppressed_ids))
+    return or_(LapsedPolicy.recovery_status == 'Opted Out', preferences, LapsedPolicy.id.in_(suppressed_ids))
+
+
+def process_expressions(base):
+    linked_apps = scoped_applications().filter(ClientApplication.lapsed_policy_id == LapsedPolicy.id)
+    completed = linked_apps.filter(new_joining()).exists()
+    active_app = linked_apps.filter(ClientApplication.status.notin_(
+        ['Active', 'Rejected', 'QA Rejected', 'Compliance Rejected', 'Cancelled', 'Closed', 'Archived'])).exists()
+    scripts = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession,
+                              agent_col=TelesalesScriptSession.agent_id)
+    active_script = scripts.filter(TelesalesScriptSession.lapsed_policy_id == LapsedPolicy.id,
+                                   TelesalesScriptSession.status == 'In Progress').exists()
+    removed = removal_expression(base)
     in_progress = or_(active_app, active_script)
     not_started = and_(not_(linked_apps.exists()), not_(active_script),
                        LapsedPolicy.recovery_status.in_(['New', 'Imported', 'Called', 'No Answer', 'Callback', 'Interested', 'Suspense']))
@@ -67,7 +80,9 @@ def process_expressions(base):
 
 def filter_values(values):
     selected = {key: (values.get(key) or '').strip() for key in
-                ('q', 'franchise', 'year', 'month', 'date_from', 'date_to', 'process', 'branch', 'status', 'lead_type', 'registry', 'screening')}
+                ('q', 'franchise', 'year', 'month', 'date_from', 'date_to', 'process', 'branch', 'status', 'lead_type', 'registry', 'screening', 'contact_permission')}
+    if selected['contact_permission'] and selected['contact_permission'] not in CONTACT_LABELS:
+        abort(400, 'Choose a valid contact permission.')
     from app.services.marketing_screening import REGISTRIES, RESULTS
     if (selected['registry'] and selected['registry'] not in REGISTRIES) or (selected['screening'] and selected['screening'] not in RESULTS):
         abort(400, 'Choose a valid screening register and result.')
@@ -143,6 +158,8 @@ def filter_policy_query(base, values, include_process=True):
     if selected['screening']:
         from app.services.marketing_screening import screening_condition
         query = query.filter(screening_condition(selected['registry'], selected['screening']))
+    if selected['contact_permission']:
+        query = query.filter(contact_permission_expression(base) == selected['contact_permission'])
     return query
 
 
@@ -166,7 +183,7 @@ def filter_context(base, values):
     if selected['year']:
         years = sorted(set(years) | {int(selected['year'])}, reverse=True)
     from app.services.marketing_screening import REGISTRIES, RESULTS
-    return dict(screening_registries=REGISTRIES, screening_results=RESULTS,
+    return dict(screening_registries=REGISTRIES, screening_results=RESULTS, contact_labels=CONTACT_LABELS,
                 directory_filters=selected, directory_franchises=franchises, directory_years=years,
                 directory_months=[(number, calendar.month_name[number]) for number in range(1, 13)],
                 process_labels=PROCESS_LABELS, date_labels=DATE_LABELS)
@@ -189,12 +206,7 @@ def directory_context(values):
     records = query.add_columns(state.label('process')).order_by(LapsedPolicy.imported_at.desc(), LapsedPolicy.id.desc()).offset((page-1)*50).limit(50).all()
     context.update(directory_rows=records, directory_counts=counts, directory_total=total,
                    directory_page=page, directory_pages=pages)
-    from app.services.marketing_screening import REGISTRIES, latest_results, result_status
-    summaries = {}
-    for policy, _ in records:
-        latest = latest_results(policy.cell_number)
-        summaries[policy.id] = [(label, result_status(latest.get(key)),
-                                 latest[key].checked_at if key in latest else None)
-                                for key, label in REGISTRIES.items()]
-    context['screening_summaries'] = summaries
+    ids = [policy.id for policy, _ in records]
+    context['contact_permissions'] = dict(base.filter(LapsedPolicy.id.in_(ids)).with_entities(
+        LapsedPolicy.id, contact_permission_expression(base)).all()) if ids else {}
     return context

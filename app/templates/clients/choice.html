@@ -1,0 +1,11 @@
+{% extends 'join/_layout.html' %}
+{% block join_content %}
+<h1>Your application and contact preference</h1>
+<p>Choose whether you would like to complete an insurance application or stop marketing messages from us.</p>
+{% if opted_out %}<div class="product" role="status"><strong>Marketing messages have been stopped.</strong><p>You can still apply if you wish. Starting an application does not switch marketing messages back on.</p></div>{% endif %}
+{% if application_available %}<section class="product"><h2>Start or continue your application</h2><p>Review the available cover and complete your details. Your application will be linked to your existing client record.</p><a class="button" href="{{url_for('join.qualify',token=recipient.secure_token)}}">Start or continue application</a></section>
+{% else %}<p>This application link is no longer available. You can still stop marketing messages below.</p>{% endif %}
+<section class="product"><h2>Stop marketing messages</h2><p>This stops marketing calls, WhatsApp messages and emails from us. It does not cancel a policy or prevent us from handling an application you request.</p>
+{% if not opted_out %}<form method="post"><input type="hidden" name="client_choice_csrf" value="{{session.client_choice_csrf}}"><input type="hidden" name="action" value="opt-out"><button class="button" style="background:#78414a" type="submit">Stop marketing messages</button></form>{% else %}<p>Your opt-out is recorded. No further action is needed.</p>{% endif %}</section>
+<p class="muted">This link is private. Please do not forward it to other people.</p>
+{% endblock %}
