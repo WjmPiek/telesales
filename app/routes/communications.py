@@ -581,7 +581,7 @@ def create_campaign():
                 db.session.commit()
                 flash(phone_error, "danger")
                 return render_template("communications/create.html", selected_template=selected_template, products=products)
-            if is_suppressed(policy) or preference_for(policy).opted_out_all:
+            if is_suppressed(policy) or preference_for(policy).opted_out_all or not preference_for(policy).whatsapp_allowed:
                 db.session.rollback()
                 db.session.delete(campaign)
                 db.session.commit()
@@ -629,19 +629,9 @@ def view_campaign(campaign_id):
     leads_query = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
     if campaign.company:
         leads_query = _company_leads(leads_query, campaign.company)
-    q = (request.args.get("q") or "").strip()
-    status = (request.args.get("status") or "").strip()
-    branch = (request.args.get("branch") or "").strip()
-    if q:
-        like = f"%{q}%"
-        leads_query = leads_query.filter(db.or_(LapsedPolicy.surname.ilike(like), LapsedPolicy.cell_number.ilike(like), LapsedPolicy.email_address.ilike(like)))
-    if status:
-        leads_query = leads_query.filter(LapsedPolicy.recovery_status == status)
-    if branch:
-        leads_query = leads_query.filter(LapsedPolicy.branch == branch)
-    lead_type = request.args.get("lead_type", "")
-    if lead_type in {"prospect", "policy"}:
-        leads_query = leads_query.filter(LapsedPolicy.lead_type == lead_type)
+    from app.services.client_directory import filter_policy_query, filter_context
+    directory_options = filter_context(leads_query, request.args)
+    leads_query = filter_policy_query(leads_query, request.args)
     leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(500).all()
     metrics = {
         "total": len(recipients),
@@ -655,7 +645,7 @@ def view_campaign(campaign_id):
     public_application_link = (url_for("join.campaign_application", token=campaign.public_application_token, _external=True)
                                if campaign.product_id and campaign.public_application_token else None)
     return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches, campaign_manager=_is_manager(),
-                           public_application_link=public_application_link)
+                           public_application_link=public_application_link, **directory_options)
 
 
 @communications_bp.route("/<int:campaign_id>/application-qr.png")
@@ -973,11 +963,11 @@ def add_recipients(campaign_id):
     if campaign.audience_type == "individual" and ids:
         CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
     added = 0
-    policies_q = LapsedPolicy.query.filter(LapsedPolicy.id.in_(ids))
+    policies_q = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id).filter(LapsedPolicy.id.in_(ids))
     if campaign.company:
         policies_q = _company_leads(policies_q, campaign.company)
     for policy in policies_q.all():
-        if is_suppressed(policy) or preference_for(policy).opted_out_all:
+        if is_suppressed(policy) or preference_for(policy).opted_out_all or not preference_for(policy).whatsapp_allowed:
             continue
         exists = CampaignRecipient.query.filter_by(campaign_id=campaign.id, lapsed_policy_id=policy.id).first()
         if not exists:
@@ -1003,23 +993,12 @@ def add_filtered_group(campaign_id):
     leads_query = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
     if campaign.company:
         leads_query = _company_leads(leads_query, campaign.company)
-    q = (request.form.get("q") or "").strip()
-    status = (request.form.get("status") or "").strip()
-    branch = (request.form.get("branch") or "").strip()
-    if q:
-        like = f"%{q}%"
-        leads_query = leads_query.filter(db.or_(LapsedPolicy.surname.ilike(like), LapsedPolicy.cell_number.ilike(like), LapsedPolicy.email_address.ilike(like)))
-    if status:
-        leads_query = leads_query.filter(LapsedPolicy.recovery_status == status)
-    if branch:
-        leads_query = leads_query.filter(LapsedPolicy.branch == branch)
-    lead_type = request.form.get("lead_type", "")
-    if lead_type in {"prospect", "policy"}:
-        leads_query = leads_query.filter(LapsedPolicy.lead_type == lead_type)
-    policies = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(2000).all()
+    from app.services.client_directory import filter_policy_query
+    leads_query = filter_policy_query(leads_query, request.form)
+    policies = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).all()
     added = skipped = 0
     for policy in policies:
-        if is_suppressed(policy) or preference_for(policy).opted_out_all:
+        if is_suppressed(policy) or preference_for(policy).opted_out_all or not preference_for(policy).whatsapp_allowed:
             skipped += 1
             continue
         exists = CampaignRecipient.query.filter_by(campaign_id=campaign.id, lapsed_policy_id=policy.id).first()
@@ -1031,7 +1010,7 @@ def add_filtered_group(campaign_id):
         added += 1
     db.session.commit()
     flash(f"Group selection complete: {added} added, {skipped} excluded or already selected.", "success")
-    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, q=q, status=status, branch=branch, lead_type=lead_type))
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, **{key: request.form.get(key, '') for key in ('q','franchise','date_basis','year','month','date_from','date_to','process','status','branch','lead_type')}))
 
 
 @communications_bp.route("/<int:campaign_id>/send", methods=["POST"])

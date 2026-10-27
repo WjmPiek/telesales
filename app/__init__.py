@@ -320,6 +320,26 @@ def create_app():
     migrate.init_app(app, db)
     login_manager.init_app(app)
 
+    with app.app_context():
+        from app.services.call_recordings import ensure_recording_columns
+        ensure_recording_columns()
+        from app.services.laps_report import ensure_report_columns
+        ensure_report_columns()
+
+    @app.before_request
+    def protect_private_uploads():
+        # Keep legacy files private even if Render still sets UPLOAD_FOLDER
+        # beneath app/static. Documents have authenticated download routes.
+        from pathlib import Path
+        from flask import request, abort
+        if request.endpoint == 'static':
+            relative = (request.view_args or {}).get('filename', '')
+            target = (Path(app.static_folder) / relative).resolve()
+            roots = [Path(app.config['UPLOAD_FOLDER']).resolve(),
+                     (Path(app.static_folder) / 'uploads').resolve()]
+            if any(target == root or root in target.parents for root in roots):
+                abort(404)
+
     from app.models import User
 
     # Deliberately leave existing non-owner accounts unapproved until the owner reviews them.

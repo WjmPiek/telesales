@@ -32,6 +32,26 @@ Run `python seed.py` once. You can set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWO
 4. Set `BASE_URL` to your Render web URL.
 5. Run `python seed.py` once in Render Shell.
 
+### Recording storage upgrade
+
+Before deploying the private-recording update, preserve recordings on the **currently running** Render instance. Copy `scripts/preserve_call_recordings.py` from the update branch into that instance and run `python scripts/preserve_call_recordings.py` from the application directory. This standalone script uses the existing `DATABASE_URL`, adds two nullable columns, and copies available recordings into PostgreSQL without deleting files or changing their paths. Pause recording uploads during this copy and deploy immediately afterward so no disk-only uploads are missed. Review any `unavailable` count before proceeding; already-lost recordings need an external backup.
+
+The updated app automatically adds the same columns when starting an existing database, stores new recordings in PostgreSQL, and offers authenticated downloads scoped to each manager's branch. Legacy files that remain on disk are copied into PostgreSQL when downloaded. Recording uploads accept WAV, MP3, OGG, FLAC, M4A and WEBM containers, check extension/header agreement, and limit files to 25 MB. Header checks do not perform full audio decoding or malware scanning.
+
+The Blueprint now uses `instance/uploads`. Existing services may retain their previous `UPLOAD_FOLDER` override; direct static access to upload folders is blocked in either case. Keep PostgreSQL backups configured. The password-help control provides the account owner's contact instructions; it does not issue self-service password-reset tokens.
+
+Security regression checks: `python -m unittest discover -s tests -p test_analytics_security.py`.
+
+### Franchise laps reports and client files
+
+Upload the existing franchise report directly under Client list & import, for example `Northcliff Laps Report.xlsx`. The filename supplies the franchise holder; operational branch access still follows the importing user's branch. The report accepts `Policy #`, `Receipt #`, `Initial. Surname`, `Address`, `Cell#`, `Phone#`, `Last Receipt`, `MPIA` and `Comment`. It preserves compound surnames, normalizes valid SA mobile numbers (including numeric cells missing their leading zero), stores receipt numbers and dates, and retains the original row. A missing ID does not block this contact-list import; an invalid mobile number is flagged for correction. January 1900 sentinel dates are retained in the original row and displayed as unknown for date filtering. This report does not import insured benefits or change historical member-cover rules.
+
+Find client / client file, Client list & import, and WhatsApp campaign recipient selection share franchise, year/month, date-range and process filters. Blank franchise means all accessible franchises combined. Date choices distinguish the last receipt, the import, application creation and the new policy start. Completed new joining requires an Active new-policy application; signing alone remains in progress. Removal/opt-out takes precedence in the displayed process category and opted-out contacts remain excluded from campaign selection. All listings and choices preserve branch/agent access. Directory pages show 50 records; adding a complete filtered campaign group uses all matches rather than silently truncating at 2,000.
+
+Submitted application details merge into the explicitly linked imported client, including the ID, current name, contact information and address. All other application, beneficiary, payment, member, consent and document data stays on that linked application in Client File. The original report row, franchise, policy number and receipt history remain available. Re-importing the same franchise/policy updates its source record without creating a duplicate, resetting consent/progress or replacing submitted form details. Importing or filtering never sends messages automatically.
+
+Report and merge regression checks: `python -m unittest discover -s tests -p test_laps_report.py`.
+
 ## Gmail SMTP
 
 Use a Gmail App Password, not your normal Gmail password.

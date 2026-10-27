@@ -380,6 +380,10 @@ class DocumentSignature(db.Model):
 
 class LapsedPolicy(db.Model):
     __tablename__ = "lapsed_policies"
+    source_type = db.Column(db.String(40))
+    source_filename = db.Column(db.String(255))
+    receipt_number = db.Column(db.String(80))
+    source_row_json = db.deferred(db.Column(db.Text))
     lead_type = db.Column(db.String(20), nullable=False, default="policy", server_default="policy", index=True)
     id = db.Column(db.Integer, primary_key=True)
     franchise = db.Column(db.String(160))
@@ -771,6 +775,8 @@ class CallRecording(db.Model):
     lapsed_policy_id = db.Column(db.Integer, db.ForeignKey("lapsed_policies.id"), index=True)
     agent_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     file_path = db.Column(db.String(500), nullable=False)
+    file_data = db.deferred(db.Column(db.LargeBinary))
+    content_type = db.Column(db.String(100))
     original_filename = db.Column(db.String(255))
     duration_seconds = db.Column(db.Integer)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)

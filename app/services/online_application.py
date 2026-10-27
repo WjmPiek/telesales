@@ -101,21 +101,17 @@ def save_questionnaire(a, form):
         from app import db
         from app.models import AgentNotification, LapsedPolicy
         lead = db.session.get(LapsedPolicy, a.lapsed_policy_id)
-        if lead and lead.lead_type == "prospect":
+        if lead:
             first_submission = not a.whatsapp_journey.ready
-            lead.initials = a.first_names[:50]
-            lead.surname = a.surname[:120]
-            lead.id_number = a.id_number
-            lead.cell_number = a.cell_number
-            lead.email_address = a.email
-            lead.address = a.residential_address
+            from app.services.client_merge import merge_application_details
+            merge_application_details(a)
             lead.suspense_reason = None
             if first_submission:
                 if lead.recovery_status != "Opted Out":
                     lead.recovery_status = "Application Started"
                     lead.next_action_date = date.today()
                 if a.agent_id:
-                    db.session.add(AgentNotification(user_id=a.agent_id, title="Individual client application received",
+                    db.session.add(AgentNotification(user_id=a.agent_id, title="Client application received",
                         message=f"{a.first_names} {a.surname} completed application {a.application_ref}.",
                         notification_type="application_submitted", entity_type="LapsedPolicy", entity_id=lead.id))
     a.whatsapp_journey.ready=True

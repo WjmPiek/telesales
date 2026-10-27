@@ -96,6 +96,9 @@ def _append_comment(existing, note):
 
 def _policy_missing_fields(policy):
     missing = []
+    if policy.source_type == 'laps_report':
+        from app.routes.prospects import prospect_phone
+        return [] if prospect_phone(policy.cell_number) else ['contact number']
     if policy.lead_type == "prospect":
         return ["contact number"] if _is_missing(policy.cell_number) else []
     if _is_missing(getattr(policy, "id_number", None)):
@@ -160,30 +163,8 @@ def open_recovery_query():
 @login_required
 @permission_required("recovery.view")
 def queue():
-    status = request.args.get("status")
-    query = open_recovery_query()
-    if status:
-        query = query.filter(LapsedPolicy.recovery_status == status)
-    policies = query.order_by(
-        LapsedPolicy.next_action_date.asc().nullslast(),
-        LapsedPolicy.imported_at.asc()
-    ).limit(200).all()
-
-    status_counts = {
-        row[0] or "New": row[1]
-        for row in open_recovery_query().with_entities(LapsedPolicy.recovery_status, db.func.count(LapsedPolicy.id))
-        .group_by(LapsedPolicy.recovery_status).all()
-    }
-    return render_template(
-        "recovery/queue.html",
-        policies=policies,
-        status_counts=status_counts,
-        open_statuses=LEAD_OPEN_STATUSES,
-        active_status=status,
-        today=date.today(),
-    )
-
-
+    from app.services.client_directory import directory_context
+    return render_template('recovery/queue.html', **directory_context(request.args))
 
 
 @recovery_bp.route("/pipeline")
@@ -451,7 +432,30 @@ def import_lapsed():
     if not file:
         flash("Please choose an Excel file", "danger")
         return redirect(url_for("recovery.queue"))
-    wb = load_workbook(file, data_only=True, read_only=True)
+    try:
+        if not (file.filename or '').lower().endswith('.xlsx'):
+            raise ValueError('Choose an Excel .xlsx report.')
+        import io
+        content = file.stream.read(10 * 1024 * 1024 + 1)
+        if len(content) > 10 * 1024 * 1024:
+            raise ValueError('The import file must be 10 MB or smaller.')
+        wb = load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as exc:
+        flash(str(exc) if isinstance(exc, ValueError) else 'The Excel file could not be read.', 'danger')
+        return redirect(url_for('recovery.queue'))
+    from app.services.laps_report import REPORT_HEADERS, header, import_report
+    report_headers = {header(cell.value) for cell in wb.active[1]}
+    if REPORT_HEADERS.issubset(report_headers):
+        try:
+            franchise, created, updated, missing = import_report(wb, file.filename, current_user)
+            flash(f'{franchise}: imported {created} clients; updated {updated}; {missing} without a valid mobile number. Importing does not send WhatsApp messages.', 'success' if not missing else 'warning')
+            return redirect(url_for('recovery.queue', franchise=franchise))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), 'danger')
+            return redirect(url_for('recovery.queue'))
+        finally:
+            wb.close()
     if "POLICY_IMPORT" in wb.sheetnames:
         return _import_single_sheet_policies(wb)
     ws = wb["CLIENTS"] if "CLIENTS" in wb.sheetnames else wb.active

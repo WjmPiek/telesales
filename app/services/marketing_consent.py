@@ -42,7 +42,7 @@ def apply_consent(a, allowed, ip=None, user_agent=None):
         same_id=bool(a.id_number and policy.id_number==a.id_number)
         same_phone=bool(phones.intersection({normalize_phone(policy.cell_number),normalize_phone(policy.home_tel)}))
         same_email=bool(email and normalize_email(policy.email_address)==email)
-        if same_id or same_phone or same_email:policies.append(policy)
+        if policy.id == a.lapsed_policy_id or same_id or same_phone or same_email:policies.append(policy)
     if allowed and not policies and (phones or email):
         policy=LapsedPolicy(initials=a.first_names,surname=a.surname,id_number=a.id_number,
             cell_number=a.cell_number,email_address=a.email,branch=a.branch,assigned_agent_id=a.agent_id,
