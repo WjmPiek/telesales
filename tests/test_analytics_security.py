@@ -28,6 +28,11 @@ def wav_bytes():
 
 class AnalyticsSecurityTests(unittest.TestCase):
     def setUp(self):
+        # Keep these route tests independent of the live licensing service.
+        # test_module_license.py separately exercises the entitlement gate.
+        license_check = patch('app.module_license.entitlement', return_value={'managed': False, 'active': True})
+        license_check.start()
+        self.addCleanup(license_check.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.app = create_app()
         self.app.config.update(TESTING=True, UPLOAD_FOLDER=str(Path(self.tmp.name) / 'uploads'))
@@ -36,9 +41,9 @@ class AnalyticsSecurityTests(unittest.TestCase):
         db.drop_all()
         db.create_all()
         from flask import g
-        @self.app.before_request
         def clear_cached_user():
             g.pop('_login_user', None)
+        self.app.before_request_funcs.setdefault(None, []).insert(0, clear_cached_user)
         roles = {name: Role(name=name) for name in ('Super Admin', 'Branch Manager', 'Agent')}
         self.users = {}
         for name, role, branch in [('admin', 'Super Admin', 'A'), ('manager', 'Branch Manager', 'A'),

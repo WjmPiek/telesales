@@ -190,12 +190,16 @@ def martins_launch():
     email = str(payload.get("email") or "").strip().lower()
     if not email:
         return "Launch token does not contain an email address.", 400
+    from app.module_license import entitlement
+    if not entitlement(email)["active"]:
+        return "Insurance Applications is inactive. Open My Modules in the Martins system.", 403
     user = User.query.filter(db.func.lower(User.email) == email).first()
     if not can_login(user):
         _audit(None, "SSO_LOGIN_DENIED", f"Email={email}; IP={_client_ip()}; owner approval required")
         return "Access requires an existing account approved by wjm@martinsdirect.com.", 403
     # SSO authenticates approved users; it cannot create, activate or promote them.
     login_user(user)
+    session["martins_module_login"] = True
     _audit(user.id, "MARTINS_SSO_LOGIN", "Signed in from the Martins main system")
     return redirect(url_for("role_portals.home"))
 
@@ -589,6 +593,7 @@ def old_franchises():
 @login_required
 def logout():
     logout_user()
+    session.pop("martins_module_login", None)
     return redirect(url_for("auth.login"))
 
 
