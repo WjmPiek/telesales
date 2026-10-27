@@ -25,7 +25,7 @@ def process_scheduled_campaigns(limit=10):
         CommunicationCampaign.scheduled_at <= now,
         CommunicationCampaign.queue_status.in_(["queued", "retry"]),
     ).order_by(CommunicationCampaign.scheduled_at.asc()).limit(limit).all()
-    stats = {"processed": 0, "sent": 0, "failed": 0}
+    stats = {"processed": 0, "sent": 0, "failed": 0, "held": 0}
     for campaign in campaigns:
         claimed = CommunicationCampaign.query.filter(
             CommunicationCampaign.id == campaign.id,
@@ -43,17 +43,19 @@ def process_scheduled_campaigns(limit=10):
                     raise RuntimeError(result.error or f"Template status is {campaign.template_status}")
             sent = 0
             for recipient in campaign.recipients:
-                if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed"}:
+                if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed", "Held"}:
                     ok, _ = _send_to_recipient(campaign, recipient, "whatsapp")
                     sent += int(ok)
                 db.session.commit()
-            campaign.status = "Sent"
-            campaign.queue_status = "completed"
-            campaign.sent_at = datetime.utcnow()
-            audit("campaign_auto_sent", "campaign", campaign.id, campaign.created_by_id, f"Delivered through {sent} channel sends")
-            db.session.add(AgentNotification(user_id=campaign.created_by_id, title="Scheduled campaign sent", message=f"{campaign.name} was processed automatically.", notification_type="campaign_sent", entity_type="campaign", entity_id=campaign.id))
+            held = sum(r.whatsapp_status == 'Held' for r in campaign.recipients)
+            campaign.status = "Needs attention" if held else "Sent"
+            campaign.queue_status = "held" if held else "completed"
+            campaign.sent_at = datetime.utcnow() if sent else campaign.sent_at
+            audit("campaign_auto_held" if held else "campaign_auto_sent", "campaign", campaign.id,
+                  campaign.created_by_id, f"{sent} sent, {held} held")
+            db.session.add(AgentNotification(user_id=campaign.created_by_id, title="Campaign needs attention" if held else "Scheduled campaign sent", message=f"{campaign.name}: {sent} sent, {held} held. Review screening evidence and requeue to retry held recipients.", notification_type="campaign_held" if held else "campaign_sent", entity_type="campaign", entity_id=campaign.id))
             db.session.commit()
-            stats["sent"] += 1
+            stats["held" if held else "sent"] += 1
         except Exception as exc:
             db.session.rollback()
             campaign = db.session.get(CommunicationCampaign, campaign.id)

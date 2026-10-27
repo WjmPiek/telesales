@@ -67,7 +67,10 @@ def process_expressions(base):
 
 def filter_values(values):
     selected = {key: (values.get(key) or '').strip() for key in
-                ('q', 'franchise', 'year', 'month', 'date_from', 'date_to', 'process', 'branch', 'status', 'lead_type')}
+                ('q', 'franchise', 'year', 'month', 'date_from', 'date_to', 'process', 'branch', 'status', 'lead_type', 'registry', 'screening')}
+    from app.services.marketing_screening import REGISTRIES, RESULTS
+    if (selected['registry'] and selected['registry'] not in REGISTRIES) or (selected['screening'] and selected['screening'] not in RESULTS):
+        abort(400, 'Choose a valid screening register and result.')
     selected['date_basis'] = values.get('date_basis') or 'receipt'
     if selected['date_basis'] not in DATE_LABELS or (selected['process'] and selected['process'] not in PROCESS_LABELS):
         abort(400, 'Choose a valid date basis and process status.')
@@ -137,6 +140,9 @@ def filter_policy_query(base, values, include_process=True):
             query = query.filter(*date_conditions(column, selected, timestamp=basis == 'imported'))
     if include_process and selected['process']:
         query = query.filter(process_expressions(base) == selected['process'])
+    if selected['screening']:
+        from app.services.marketing_screening import screening_condition
+        query = query.filter(screening_condition(selected['registry'], selected['screening']))
     return query
 
 
@@ -159,7 +165,9 @@ def filter_context(base, values):
     years = sorted({value.year for value in dates if value and value.year > 1900}, reverse=True)
     if selected['year']:
         years = sorted(set(years) | {int(selected['year'])}, reverse=True)
-    return dict(directory_filters=selected, directory_franchises=franchises, directory_years=years,
+    from app.services.marketing_screening import REGISTRIES, RESULTS
+    return dict(screening_registries=REGISTRIES, screening_results=RESULTS,
+                directory_filters=selected, directory_franchises=franchises, directory_years=years,
                 directory_months=[(number, calendar.month_name[number]) for number in range(1, 13)],
                 process_labels=PROCESS_LABELS, date_labels=DATE_LABELS)
 
@@ -181,4 +189,12 @@ def directory_context(values):
     records = query.add_columns(state.label('process')).order_by(LapsedPolicy.imported_at.desc(), LapsedPolicy.id.desc()).offset((page-1)*50).limit(50).all()
     context.update(directory_rows=records, directory_counts=counts, directory_total=total,
                    directory_page=page, directory_pages=pages)
+    from app.services.marketing_screening import REGISTRIES, latest_results, result_status
+    summaries = {}
+    for policy, _ in records:
+        latest = latest_results(policy.cell_number)
+        summaries[policy.id] = [(label, result_status(latest.get(key)),
+                                 latest[key].checked_at if key in latest else None)
+                                for key, label in REGISTRIES.items()]
+    context['screening_summaries'] = summaries
     return context

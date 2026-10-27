@@ -11,7 +11,7 @@ def consent_value(a):
     return row.allowed if row else None
 
 
-def apply_consent(a, allowed, ip=None, user_agent=None):
+def apply_consent(a, allowed, ip=None, user_agent=None, whatsapp_explicit=False):
     row=ApplicationMarketingConsent.query.filter_by(application_id=a.id).first()
     if not row:
         row=ApplicationMarketingConsent(application_id=a.id,allowed=allowed)
@@ -49,6 +49,18 @@ def apply_consent(a, allowed, ip=None, user_agent=None):
             recovery_status='Marketing Consented',next_action_date=None,comments='Added after explicit POPIA marketing consent.')
         db.session.add(policy);db.session.flush();policies.append(policy)
     for policy in policies:
+        if whatsapp_explicit:
+            from app.models import MarketingScreening
+            from app.services.marketing_screening import valid_phone
+            try:
+                phone = valid_phone(a.cell_number)
+            except ValueError:
+                phone = None
+            if phone:
+                db.session.add(MarketingScreening(lapsed_policy_id=policy.id, phone_number=phone,
+                    registry='whatsapp', result='granted' if allowed else 'withdrawn',
+                    checked_at=datetime.utcnow(), reference=f'Application #{a.id}: explicit WhatsApp marketing choice (v1)',
+                    source='application'))
         pref=preference_for(policy)
         if not allowed:
             pref.telephone_allowed=pref.whatsapp_allowed=pref.email_allowed=False

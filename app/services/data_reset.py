@@ -35,6 +35,7 @@ from app.models import (
     DocumentSignature,
     HistoricalMemberCover,
     LapsedPolicy,
+    MarketingScreening,
     RecoveryCallLog,
     SupportingDocumentReminder,
     TelesalesScriptSession,
@@ -92,6 +93,16 @@ def _add_suppression(phone, email, source, reason):
 
 
 def _preserve_opt_outs():
+    seen = set()
+    for row in MarketingScreening.query.filter(MarketingScreening.result != 'error').order_by(
+            MarketingScreening.checked_at.desc(), MarketingScreening.id.desc()).all():
+        key = (row.phone_number, row.registry)
+        if key in seen:
+            continue
+        seen.add(key)
+        if row.result in {'listed', 'withdrawn'}:
+            _add_suppression(row.phone_number, None, 'marketing_screening',
+                             f'{row.registry}: {row.result} before data reset')
     for pref in ContactCommunicationPreference.query.filter_by(opted_out_all=True).all():
         policy = db.session.get(LapsedPolicy, pref.lapsed_policy_id)
         if policy:
@@ -166,6 +177,7 @@ def reset_operational_data():
     RecoveryCallLog.query.delete(synchronize_session=False)
     ContactCommunicationPreference.query.delete(synchronize_session=False)
     HistoricalMemberCover.query.delete(synchronize_session=False)
+    MarketingScreening.query.delete(synchronize_session=False)
     LapsedPolicy.query.delete(synchronize_session=False)
 
     operational_entities = {
