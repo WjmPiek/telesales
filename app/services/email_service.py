@@ -4,7 +4,23 @@ import logging
 import ssl
 import mimetypes
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import parseaddr, getaddresses
+
+
+def submission_notification_recipients(client_email=''):
+    """Add submission observers without replacing existing office recipients."""
+    seen = {parseaddr(client_email or '')[1].strip().casefold()}
+    recipients = []
+    configured = [os.getenv(key, '').replace(';', ',') for key in
+                  ('MAIL_DOCUMENTS_TO', 'APPLICATION_SUBMISSION_NOTIFY')]
+    for _, address in getaddresses(configured):
+        address = address.strip()
+        key = address.casefold()
+        if not address or '@' not in address or '\r' in address or '\n' in address or key in seen:
+            continue
+        seen.add(key)
+        recipients.append(address)
+    return recipients
 
 
 def business_bank_confirmation_attachment():
