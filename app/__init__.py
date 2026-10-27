@@ -598,4 +598,6 @@ def create_app():
         db.session.commit()
         print(f"Processed {len(jobs)} follow-ups: {sent} sent, {failed} failed, {skipped} skipped")
 
+    from app.module_license import check_session_license
+    app.before_request(check_session_license)
     return app
