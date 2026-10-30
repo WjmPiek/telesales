@@ -1,4 +1,4 @@
-{% extends 'base.html' %}{% block content %}
+{% extends 'base.html' %}{% from '_document_status.html' import status_link %}{% block content %}
 {% if app.whatsapp_journey %}<div class="alert alert-info">WhatsApp application: client completes the question form and signs once. <a href="{{url_for('qa.review_application',app_id=app.id)}}">Verify completed application</a></div>{% endif %}
 <div class="d-flex justify-content-between align-items-center mb-3"><h3>{{app.application_ref}}</h3>{% if current_user.role and current_user.role.name|lower == 'admin' %}<form method="post" action="{{ url_for('applications.delete_application', app_id=app.id) }}" onsubmit="return confirm('Delete application {{app.application_ref}}? This cannot be undone.');"><button class="btn btn-outline-danger">Delete Application</button></form>{% endif %}</div>
 
@@ -60,7 +60,7 @@
         {% for row in document_summary.rows %}
           <tr>
             <td>{{row.label}}{% if row.group == 'Employee FIC' %}<br><a href="{{url_for('applications.screening_review',app_id=app.id)}}">Record check / upload screenshots</a>{% endif %}</td>
-            <td><span class="badge text-bg-{{row.badge}}">{{row.status}}</span></td>
+            <td>{{status_link(app, row)}}</td>
             <td>{{row.signed_at or row.uploaded_at or ''}}</td>
           </tr>
         {% endfor %}

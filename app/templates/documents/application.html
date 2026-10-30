@@ -1,4 +1,5 @@
-{% extends 'base.html' %}{% block content %}
+{% extends 'base.html' %}{% from '_document_status.html' import status_link %}{% block content %}
+<style>[id^="document-"],#staff-upload{scroll-margin-top:24px}tr:target{outline:2px solid #69499d;background:#f5efff}#staff-upload:target{outline:2px solid #69499d}</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3>{{app.application_ref}} Documents</h3>
@@ -37,10 +38,10 @@
       <thead><tr><th>Group</th><th>Document</th><th>Status</th><th>Date</th><th>File</th><th>Review Action</th></tr></thead>
       <tbody>
       {% for row in summary.rows %}
-        <tr>
+        <tr id="document-{{row.key}}">
           <td>{{row.group}}</td>
           <td>{{row.label}} {% if not row.required %}<span class="text-muted">optional</span>{% endif %}</td>
-          <td><span class="badge text-bg-{{row.badge}}">{{row.status}}</span></td>
+          <td>{{status_link(app, row)}}</td>
           <td>{{row.signed_at or row.uploaded_at or ''}}</td>
           <td>
             {% if row.group == 'FICA' and row.document %}
@@ -52,6 +53,7 @@
               {% if row.key == 'popia' and app.popia_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='popia')}}">View PDF</a>{% endif %}
               {% if row.key == 'disclosure' and app.disclosure_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='disclosure')}}">View PDF</a>{% endif %}
               {% if row.key == 'welcome' and app.welcome_pack_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='welcome_pack')}}">View PDF</a>{% endif %}
+              {% if row.key == 'cdd' and row.status == 'Signed' %}<a class="btn btn-outline-primary btn-sm" href="{{url_for('applications.download_document', app_id=app.id, doc_type='cdd')}}">View PDF</a>{% endif %}
             {% endif %}
           </td>
           <td>
@@ -78,13 +80,13 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="staff-upload">
   <div class="card-header"><b>Staff Upload Document</b></div>
   <div class="card-body">
     <form method="post" enctype="multipart/form-data" class="row g-2">
       <div class="col-md-4">
         <select name="document_type" class="form-select" required>
-          {% for key, label in fica_labels.items() %}<option value="{{key}}">{{label}}</option>{% endfor %}
+          {% for key, label in fica_labels.items() %}<option value="{{key}}" {% if request.args.get('document_type') == key %}selected{% endif %}>{{label}}</option>{% endfor %}
         </select>
       </div>
       <div class="col-md-5"><input class="form-control" type="file" name="file" required></div>

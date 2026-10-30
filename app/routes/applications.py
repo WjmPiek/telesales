@@ -535,6 +535,12 @@ def download_document(app_id, doc_type):
         generate_disclosure_pdf(app_obj, path)
         app_obj.disclosure_pdf_path = path
 
+    elif doc_type == "cdd":
+        from app.services.cdd_service import generate_cdd_pdf
+        path = os.path.join(upload_folder, f"annexure_j1_{app_obj.id}.pdf")
+        if not os.path.exists(path):
+            generate_cdd_pdf(app_obj, path)
+
     elif doc_type == "fica":
         path = os.path.join(upload_folder, f"fica_verification_{app_obj.id}.pdf")
         generate_fica_pdf(app_obj, path)

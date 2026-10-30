@@ -1,0 +1,20 @@
+{% macro status_link(app, row) -%}
+  {% set pdf_types = {'application':'signed_application', 'popia':'popia', 'disclosure':'disclosure', 'welcome':'welcome_pack', 'cdd':'cdd'} %}
+  {% if row.group == 'Employee FIC' %}
+    {% set href = url_for('applications.screening_review', app_id=app.id) %}
+    {% set action = 'Open employee FIC check' %}
+  {% elif row.group == 'Signature' and row.status == 'Signed' and row.key in pdf_types %}
+    {% set href = url_for('applications.download_document', app_id=app.id, doc_type=pdf_types[row.key]) %}
+    {% set action = 'View signed document' %}
+  {% elif row.document and row.group == 'FICA' and row.status == 'Approved' %}
+    {% set href = url_for('documents.download_fica', doc_id=row.document.id) %}
+    {% set action = 'View approved upload' %}
+  {% elif row.document and row.group == 'FICA' %}
+    {% set href = url_for('documents.application_documents', app_id=app.id, _anchor='document-' ~ row.key) %}
+    {% set action = 'Open document review' %}
+  {% else %}
+    {% set href = url_for('documents.application_documents', app_id=app.id, document_type=row.key, _anchor='staff-upload') %}
+    {% set action = 'Upload this document' %}
+  {% endif %}
+  <a class="badge text-bg-{{row.badge}} text-decoration-none" href="{{href}}" title="{{action}}" aria-label="{{row.label}}: {{row.status}} — {{action}}">{{row.status}}</a>
+{%- endmacro %}
