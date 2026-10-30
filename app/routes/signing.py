@@ -832,16 +832,7 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, remi
 
 def finish_application(app_obj, token):
     from app.services.delivery_preferences import receipt_address
-    from app.services.email_service import business_bank_confirmation_attachment
-    from app.services.company_documents import active_company_documents
     recipient = receipt_address(request.form, app_obj)
-    company_bank = any(row.category == 'bank_confirmation' for row in active_company_documents(app_obj, include_bank=True))
-    if str(app_obj.payment_method or '').strip().lower() == 'cash' and not company_bank:
-        cash_bank_letter = business_bank_confirmation_attachment()
-        if not cash_bank_letter:
-            raise ValueError("The business bank confirmation letter for this application has not been configured.")
-        import shutil
-        shutil.rmtree(os.path.dirname(cash_bank_letter), ignore_errors=True)
     ok, errors = assert_application_rules(app_obj)
     if not ok:
         raise ValueError("Application blocked: " + "; ".join(errors))

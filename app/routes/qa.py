@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from flask import Blueprint, render_template, redirect, url_for, request, flash
+from flask import Blueprint, render_template, redirect, url_for, request, flash, session
 from flask_login import login_required, current_user
 from app import db
 from app.services.document_status_service import document_summary
@@ -176,6 +176,21 @@ def review_application(app_id):
             app.whatsapp_journey.activated_at=datetime.utcnow()
 
         if decision in {'QA Approved', 'Compliance Approved'}:
+            from app.services.application_bank_letter import required, saved_letter, save_letter
+            if required(app):
+                upload=request.files.get('bank_confirmation_letter')
+                try:
+                    if upload and upload.filename:
+                        save_letter(app,upload,current_user.id)
+                    elif saved_letter(app) is None:
+                        raise ValueError(f'Attach the bank confirmation letter for {app.branch or "this branch"} before approving and emailing documents.')
+                except ValueError as exc:
+                    db.session.rollback()
+                    session[f'qa_bank_draft_{app.id}']=request.form.to_dict()
+                    flash(str(exc),'warning')
+                    return redirect(url_for('qa.review_application',app_id=app.id))
+
+        if decision in {'QA Approved', 'Compliance Approved'}:
             from app.services.compliance_service import only_digits
             app.policy_number = only_digits(app.id_number)
 
@@ -224,7 +239,12 @@ def review_application(app_id):
     from app.services.branch_filing import filing_branch
     from app.services.application_workflow import workflow_state
     from app.services.compliance_service import only_digits
-    return render_template('qa/review_application.html', automatic_policy_number=only_digits(app.id_number), flow=workflow_state(app), default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
+    from app.services.application_bank_letter import required, saved_letter
+    draft=session.pop(f'qa_bank_draft_{app.id}',{})
+    if draft:
+        checklist_defaults.update({key:draft.get(key)=='on' for key,_ in QA_CHECKLIST})
+        if _cash_payment(app):checklist_defaults['debit_order']=True
+    return render_template('qa/review_application.html', bank_required=required(app), bank_attached=saved_letter(app) is not None, qa_draft=draft, automatic_policy_number=only_digits(app.id_number), flow=workflow_state(app), default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
 
 @qa_bp.route('/fica/<int:doc_id>/<decision>', methods=['POST'])
 @login_required

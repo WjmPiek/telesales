@@ -35,6 +35,9 @@ class DobActivationTests(unittest.TestCase):
         self.assertEqual(activation_identity_errors(self.record),[])
         db.session.add(BranchFilingOffice(branch_key='test office',branch_name='Test Office',email='office@example.test',is_default=True));db.session.commit()
         data={key:'on' for key,label in QA_CHECKLIST};data.update(decision='QA Approved',policy_number='DOB-TEST',start_date=date.today().isoformat(),filing_branch='Test Office')
+        from reportlab.pdfgen import canvas
+        letter=io.BytesIO();pdf=canvas.Canvas(letter);pdf.drawString(40,800,'Test Office bank confirmation');pdf.save();letter.seek(0)
+        data['bank_confirmation_letter']=(letter,'bank.pdf')
         delivery=SimpleNamespace(branch_name='Test Office',recipient_email='office@example.test',status='Accepted by mail server')
         with patch('app.services.company_documents.active_company_documents',return_value=[SimpleNamespace(category='bank_confirmation')]), \
              patch('app.services.company_documents.materialise_company_documents',return_value=([],None)), \
@@ -46,7 +49,7 @@ class DobActivationTests(unittest.TestCase):
         self.assertEqual(self.record.policy_number,self.record.id_number)
         self.assertNotEqual(self.record.policy_number,'DOB-TEST')
         self.assertEqual(self.record.whatsapp_journey.notice_status,'Sent')
-        self.assertIn('now active',mail.call_args.args[2]);self.assertEqual(len(mail.call_args.args[3]),5)
+        self.assertIn('now active',mail.call_args.args[2]);self.assertEqual(len(mail.call_args.args[3]),6)
 
     def test_additional_upload_review_or_rejection_is_followup_only(self):
         doc=self.complete_agent_file()
