@@ -7,12 +7,16 @@ from email.message import EmailMessage
 from email.utils import parseaddr, getaddresses
 
 
-def submission_notification_recipients(client_email=''):
-    """Add submission observers without replacing existing office recipients."""
+def submission_notification_recipients(client_email='', application=None):
+    """Use the application's selected office, with environment defaults for older applications."""
     seen = {parseaddr(client_email or '')[1].strip().casefold()}
     recipients = []
     configured = [os.getenv(key, '').replace(';', ',') for key in
                   ('MAIL_DOCUMENTS_TO', 'APPLICATION_SUBMISSION_NOTIFY')]
+    if application is not None and application.filing_branch:
+        from app.services.branch_filing import filing_office
+        office = filing_office(application)
+        configured = [office.email] if office else []
     for _, address in getaddresses(configured):
         address = address.strip()
         key = address.casefold()

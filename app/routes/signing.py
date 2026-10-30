@@ -883,7 +883,7 @@ def finish_application(app_obj, token):
     from app.services.document_reminders import schedule_document_reminders
     schedule_document_reminders(app_obj)
     from app.services.email_service import submission_notification_recipients
-    for office_email in submission_notification_recipients(recipient):
+    for office_email in submission_notification_recipients(recipient, application=app_obj):
         app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
         from app.services.email_service import signing_email_html
         office_body = "The client has submitted the signed application."

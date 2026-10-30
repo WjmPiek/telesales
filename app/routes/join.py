@@ -11,6 +11,7 @@ from app.models import (
 )
 from app.services.compliance_service import age_from_dob, classify_product_template, dob_from_sa_id, is_valid_sa_id
 from app.services.member_benefits import member_limits
+from app.services.branch_filing import filing_branch
 
 
 join_bp = Blueprint("join", __name__, url_prefix="/join")
@@ -204,6 +205,7 @@ def application(token, product_id):
         total_members=qualification["total_members"],
         requested_cover=Decimal(str(qualification["cover_amount"])),
         source_campaign_recipient_id=recipient.id,
+        filing_branch=filing_branch(recipient.campaign),
         form_template=form_template,
         sign_token=secrets.token_urlsafe(32),
         sign_token_created_at=datetime.utcnow(),
@@ -313,6 +315,7 @@ def campaign_application(token):
                 id_number="".join(ch for ch in values["id_number"] if ch.isdigit()), date_of_birth=dob,
                 cell_number=phone, email=values["email"], document_email=values["email"], status="Draft",
                 application_type="New Policy - QR Campaign", payment_method="Cash",
+                filing_branch=filing_branch(campaign),
                 cover_amount=product.cover_amount, requested_cover=product.cover_amount,
                 monthly_premium=product.monthly_premium, total_payment=product.monthly_premium,
                 waiting_period=f"{product.waiting_period_months or 0} months", total_members=total_members,

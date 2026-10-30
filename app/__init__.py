@@ -82,6 +82,7 @@ def _ensure_communication_campaign_columns(app):
                 return
             statements = [
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_name VARCHAR(160)",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS filing_branch VARCHAR(120)",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS whatsapp_template_language VARCHAR(20) DEFAULT 'en_US'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_category VARCHAR(40) DEFAULT 'MARKETING'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_type VARCHAR(40) DEFAULT 'MEDIA_INTERACTIVE'",

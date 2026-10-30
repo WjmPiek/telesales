@@ -799,6 +799,7 @@ class CommunicationCampaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False)
     subject = db.Column(db.String(255))
+    filing_branch = db.Column(db.String(120))
     message_body = db.Column(db.Text, nullable=False)
     whatsapp_template_name = db.Column(db.String(160))
     whatsapp_template_language = db.Column(db.String(20), default="en_US")

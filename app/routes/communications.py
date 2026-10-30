@@ -15,7 +15,7 @@ from app.models import (
     ContactSuppression, CommunicationFollowUp, CommunicationEvent, ClientApplication,
     WhatsAppTemplate, WhatsAppMediaAsset, WhatsAppProviderJob, WhatsAppMessage,
     WhatsAppMediaVersion, WhatsAppProviderLog, WhatsAppAuditEvent, WhatsAppConversation, WhatsAppContact,
-    PolicyProduct, ApplicationJourney, CompanyGroupState
+    PolicyProduct, ApplicationJourney, CompanyGroupState, BranchFilingOffice
 )
 from app.services.communication_service import (
     preference_for, is_suppressed, callback_links, record_callback,
@@ -155,7 +155,37 @@ def _company_leads(query, company):
 
 @communications_bp.context_processor
 def _company_context():
-    return {"campaign_companies": _available_companies() if current_user.is_authenticated else []}
+    if not current_user.is_authenticated:
+        return {}
+    offices = BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.is_default.desc(), BranchFilingOffice.branch_name).all()
+    return {"campaign_companies": _available_companies(), "document_offices": offices,
+            "document_routing_csrf": session.setdefault("document_routing_csrf", secrets.token_urlsafe(32))}
+
+
+def _document_office(branch=None):
+    if branch:
+        return BranchFilingOffice.query.filter_by(branch_key=branch.strip().lower(), active=True).first_or_404()
+    return BranchFilingOffice.query.filter_by(is_default=True, active=True).first()
+
+
+@communications_bp.route("/<int:campaign_id>/document-recipient", methods=["POST"])
+@login_required
+def update_document_recipient(campaign_id):
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign):
+        abort(403)
+    csrf = session.get("document_routing_csrf")
+    if not csrf or not secrets.compare_digest(csrf, request.form.get("document_routing_csrf", "")):
+        abort(400)
+    office = _document_office(request.form.get("filing_branch"))
+    if not office:
+        abort(400, "Configure an active document recipient first.")
+    campaign.filing_branch = office.branch_name
+    audit("document_recipient_changed", "campaign", campaign.id, current_user.id,
+          f"New applications will file with {office.branch_name}: {office.email}")
+    db.session.commit()
+    flash("Document recipient saved for new applications. Existing applications keep their saved recipient.", "success")
+    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
 
 def _event(recipient, event_type, channel=None, details=None):
@@ -444,6 +474,7 @@ def create_campaign():
         abort(403, "Agents may send approved templates only.")
     if request.method == "POST":
         company_id = request.form.get("company_id", type=int)
+        document_office = _document_office(request.form.get("filing_branch"))
         company = db.session.get(CompanyGroupState, company_id) if company_id else None
         if company_id and (not company or company.id not in {item.id for item in companies}):
             abort(403)
@@ -517,6 +548,7 @@ def create_campaign():
         template_buttons = order_whatsapp_template_buttons(template_buttons)
         campaign = CommunicationCampaign(
             name=campaign_name,
+            filing_branch=document_office.branch_name if document_office else None,
             subject=(request.form.get("subject") or "Funeral policy callback").strip(),
             message_body=message_body,
             whatsapp_template_name=requested_template_name or None,
@@ -740,7 +772,7 @@ def duplicate_campaign(campaign_id):
         whatsapp_template_name=source.whatsapp_template_name, whatsapp_template_language=source.whatsapp_template_language,
         image_filename=source.image_filename, image_url=source.image_url, image_data=source.image_data, image_mimetype=source.image_mimetype, audience_type=source.audience_type or "group",
         template_status="Pending", template_approved_at=None, template_approved_by_id=None,
-        send_whatsapp=True, send_email=False, branch=source.branch,
+        send_whatsapp=True, send_email=False, branch=source.branch, filing_branch=source.filing_branch,
         product_id=source.product_id, public_application_token=secrets.token_urlsafe(32),
         created_by_id=current_user.id, status="Draft")
     db.session.add(clone); db.session.flush()
@@ -1366,5 +1398,4 @@ def whatsapp_webhook():
     """Backward-compatible webhook alias; the canonical Meta URL is /whatsapp/webhook."""
     from app.routes.whatsapp import webhook
     return webhook()
-
 
