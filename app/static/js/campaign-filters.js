@@ -4,11 +4,27 @@
   const status = document.querySelector('[data-filter-status]');
   if (!form || !results || !status) return;
   const fallback = form.querySelector('button[type="submit"]');
+  const batch = document.querySelector('[data-client-batch]');
+  const batchCount = document.querySelector('[data-batch-count]');
+  const delivery = document.querySelector('[data-campaign-delivery]');
   if (fallback) fallback.hidden = true;
   let timer, controller, revision = 0;
+  let queue = form.dataset.campaignQueue;
+  const selectionCount = () => results.querySelectorAll('input[name="policy_ids"]:checked:not(:disabled)').length;
+  function updateSelection() {
+    if (batchCount) batchCount.textContent = `${selectionCount()} selected`;
+    if (results.getAttribute('aria-busy') !== 'true') busy(false);
+  }
+  function applyBatch() {
+    if (batch && batch.value !== 'manual') {
+      const inputs = Array.from(results.querySelectorAll('input[name="policy_ids"]:not(:disabled)'));
+      inputs.forEach((input, index) => input.checked = index < Number(batch.value));
+    }
+    updateSelection();
+  }
   const busy = value => {
     results.setAttribute('aria-busy', String(value));
-    results.querySelectorAll('button[type="submit"], button:not([type])').forEach(button => button.disabled = value);
+    results.querySelectorAll('button[type="submit"], button:not([type])').forEach(button => button.disabled = value || !selectionCount());
   };
   const count = () => `${results.querySelectorAll('input[name="policy_ids"]').length} clients shown`;
   status.textContent = count();
@@ -28,6 +44,9 @@
       results.replaceChildren(...next.childNodes);
       results.querySelectorAll('input[name="policy_ids"]').forEach(input => input.checked = selected.has(input.value));
       results.querySelectorAll('.individual-radio:checked').forEach(input => input.closest('tr').classList.add('recipient-row-selected'));
+      const nextDelivery = page.querySelector('[data-campaign-delivery]');
+      if (delivery && nextDelivery) delivery.replaceChildren(...nextDelivery.childNodes);
+      queue = page.querySelector('[data-auto-client-filters]')?.dataset.campaignQueue;
       // Date-basis changes can expose a different set of years.
       const year = form.elements.namedItem('year');
       const nextYear = page.querySelector('[data-auto-client-filters] select[name="year"]');
@@ -39,6 +58,7 @@
       }
       history.replaceState(null, '', url);
       status.textContent = count();
+      applyBatch();
       if (fallback) fallback.hidden = true;
     } catch (error) {
       if (version !== revision || error.name === 'AbortError') return;
@@ -62,8 +82,21 @@
   });
   form.addEventListener('submit', event => { event.preventDefault(); schedule(0); });
   results.addEventListener('change', event => {
-    if (!event.target.matches('.individual-radio')) return;
-    results.querySelectorAll('tbody tr').forEach(row => row.classList.remove('recipient-row-selected'));
-    event.target.closest('tr').classList.add('recipient-row-selected');
+    if (!event.target.matches('input[name="policy_ids"]')) return;
+    if (batch) batch.value = 'manual';
+    if (event.target.matches('.individual-radio')) {
+      results.querySelectorAll('tbody tr').forEach(row => row.classList.remove('recipient-row-selected'));
+      event.target.closest('tr').classList.add('recipient-row-selected');
+    }
+    updateSelection();
   });
+  if (batch) batch.addEventListener('change', () => {
+    if (batch.value === 'manual') results.querySelectorAll('input[name="policy_ids"]').forEach(input => input.checked = false);
+    applyBatch();
+  });
+  busy(false);
+  // Refresh delivery colours while the background sender works. This is read-only.
+  setInterval(() => {
+    if (!document.hidden && ['queued','processing','retry'].includes(queue) && results.getAttribute('aria-busy') !== 'true') schedule(0);
+  }, 5000);
 })();

@@ -199,9 +199,18 @@ def _event(recipient, event_type, channel=None, details=None):
     ))
 
 
-def _send_to_recipient(campaign, recipient, channel):
+def _send_to_recipient(campaign, recipient, channel, *, follow_up=False):
     if channel != "whatsapp":
         return False, "Campaigns support WhatsApp only"
+    from app.services.campaign_audience import SENT_STATUSES, contact_number
+    if not follow_up and recipient.whatsapp_status in SENT_STATUSES:
+        return True, None
+    number=contact_number(recipient.policy)
+    if not follow_up and number and any(row.id != recipient.id and row.whatsapp_status in SENT_STATUSES
+            and row.policy and contact_number(row.policy) == number for row in campaign.recipients):
+        recipient.whatsapp_status='Skipped'
+        _event(recipient,'duplicate_number_skipped',channel,'This number already received this campaign.')
+        return False,'This number already received this campaign'
     policy = recipient.policy
     if campaign.company:
         if campaign.company.status != "Active":
@@ -671,7 +680,9 @@ def view_campaign(campaign_id):
     from app.services.client_directory import filter_policy_query, filter_context
     directory_options = filter_context(leads_query, request.args)
     leads_query = filter_policy_query(leads_query, request.args)
-    leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).limit(500).all()
+    leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc(),LapsedPolicy.id.desc()).limit(500).all()
+    from app.services.campaign_audience import audience_rows
+    leads,audience_states=audience_rows(leads,recipients)
     metrics = {
         "total": len(recipients),
         "wa_sent": sum(1 for r in recipients if r.whatsapp_status in {"Sent", "Delivered", "Read"}),
@@ -683,7 +694,7 @@ def view_campaign(campaign_id):
     branches = [row[0] for row in db.session.query(LapsedPolicy.branch).filter(LapsedPolicy.branch.isnot(None), LapsedPolicy.branch != "").distinct().order_by(LapsedPolicy.branch).all()]
     public_application_link = (url_for("join.campaign_application", token=campaign.public_application_token, _external=True)
                                if campaign.product_id and campaign.public_application_token else None)
-    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, metrics=metrics, branches=branches, campaign_manager=_is_manager(),
+    return render_template("communications/view.html", campaign=campaign, recipients=recipients, leads=leads, audience_states=audience_states, metrics=metrics, branches=branches, campaign_manager=_is_manager(),
                            public_application_link=public_application_link, **directory_options)
 
 
@@ -1000,10 +1011,14 @@ def add_recipients(campaign_id):
     if campaign.audience_type == "individual" and len(ids) > 1:
         ids = ids[:1]
     added = 0
+    from app.services.campaign_audience import contact_number
+    selected_numbers={contact_number(row.policy) for row in campaign.recipients if row.policy}
     policies_q = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id).filter(LapsedPolicy.id.in_(ids))
     if campaign.company:
         policies_q = _company_leads(policies_q, campaign.company)
     for policy in policies_q.all():
+        if campaign.audience_type == 'group' and (not contact_number(policy) or contact_number(policy) in selected_numbers):
+            continue
         if is_suppressed(policy) or preference_for(policy).opted_out_all or not preference_for(policy).whatsapp_allowed:
             continue
         exists = CampaignRecipient.query.filter_by(campaign_id=campaign.id, lapsed_policy_id=policy.id).first()
@@ -1038,6 +1053,7 @@ def add_recipients(campaign_id):
             recipient = CampaignRecipient(campaign_id=campaign.id, lapsed_policy_id=policy.id, secure_token=secrets.token_urlsafe(32))
             db.session.add(recipient); db.session.flush(); _event(recipient, "recipient_added")
             added += 1
+            selected_numbers.add(contact_number(policy))
     db.session.commit()
     if campaign.audience_type == "individual" and added:
         flash("Individual client selected.", "success")
@@ -1061,7 +1077,12 @@ def add_filtered_group(campaign_id):
     leads_query = filter_policy_query(leads_query, request.form)
     policies = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc()).all()
     added = skipped = 0
+    from app.services.campaign_audience import contact_number
+    selected_numbers={contact_number(row.policy) for row in campaign.recipients if row.policy}
     for policy in policies:
+        if not contact_number(policy) or contact_number(policy) in selected_numbers:
+            skipped += 1
+            continue
         if is_suppressed(policy) or preference_for(policy).opted_out_all or not preference_for(policy).whatsapp_allowed:
             skipped += 1
             continue
@@ -1072,6 +1093,7 @@ def add_filtered_group(campaign_id):
         recipient = CampaignRecipient(campaign_id=campaign.id, lapsed_policy_id=policy.id, secure_token=secrets.token_urlsafe(32))
         db.session.add(recipient); db.session.flush(); _event(recipient, "recipient_added")
         added += 1
+        selected_numbers.add(contact_number(policy))
     db.session.commit()
     flash(f"Group selection complete: {added} added, {skipped} excluded or already selected.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id, **{key: request.form.get(key, '') for key in ('q','franchise','date_basis','year','month','date_from','date_to','process','status','branch','lead_type','registry','screening','contact_permission')}))
@@ -1112,7 +1134,13 @@ def schedule_follow_up(campaign_id):
     channel = "whatsapp"
     due_at = datetime.utcnow() + timedelta(days=days)
     count = 0
+    from app.services.campaign_audience import contact_number
+    seen_numbers=set()
     for recipient in campaign.recipients:
+        number=contact_number(recipient.policy)
+        if not number or number in seen_numbers:
+            continue
+        seen_numbers.add(number)
         if recipient.response_type:
             continue
         exists = CommunicationFollowUp.query.filter_by(recipient_id=recipient.id, channel=channel, status="Pending").first()

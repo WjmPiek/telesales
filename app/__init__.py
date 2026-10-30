@@ -615,6 +615,8 @@ def create_app():
             CommunicationFollowUp.due_at <= datetime.utcnow(),
         ).order_by(CommunicationFollowUp.due_at.asc()).limit(500).all()
         sent = failed = skipped = 0
+        from app.services.campaign_audience import contact_number
+        processed_numbers=set()
         for job in jobs:
             if job.channel != "whatsapp":
                 job.status = "Skipped"
@@ -623,10 +625,18 @@ def create_app():
                 skipped += 1
                 continue
             recipient = job.recipient
+            number=contact_number(recipient.policy)
+            contact_key=(job.campaign_id,number)
+            if not number or contact_key in processed_numbers:
+                job.status='Skipped';job.processed_at=datetime.utcnow()
+                job.last_error='Duplicate or invalid number in this follow-up batch.'
+                skipped += 1
+                continue
+            processed_numbers.add(contact_key)
             if recipient.response_type:
                 job.status = "Skipped"; job.processed_at = datetime.utcnow(); skipped += 1
                 continue
-            ok, error = _send_to_recipient(job.campaign, recipient, job.channel)
+            ok, error = _send_to_recipient(job.campaign, recipient, job.channel, follow_up=True)
             job.attempt_count += 1; job.processed_at = datetime.utcnow()
             job.status = "Sent" if ok else "Failed"; job.last_error = error
             sent += int(ok); failed += int(not ok)
