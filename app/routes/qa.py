@@ -166,18 +166,18 @@ def review_application(app_id):
             if not app.signed_at or not app.whatsapp_journey.signed_bundle_at:
                 flash('The client must finish and submit the signed application first.', 'danger')
                 return redirect(url_for('qa.review_application', app_id=app.id))
-            policy_number=request.form.get('policy_number','').strip()
             try:
                 start_date=datetime.strptime(request.form.get('start_date',''),'%Y-%m-%d').date()
                 if start_date > date.today():raise ValueError()
             except ValueError:
                 flash('Enter the actual policy start date (today or earlier) before marking it active.', 'danger')
                 return redirect(url_for('qa.review_application', app_id=app.id))
-            if not policy_number or len(policy_number)>80:
-                flash('Enter the issued policy number before completing verification.', 'danger')
-                return redirect(url_for('qa.review_application', app_id=app.id))
-            app.policy_number=policy_number;app.inception_date=start_date
+            app.inception_date=start_date
             app.whatsapp_journey.activated_at=datetime.utcnow()
+
+        if decision in {'QA Approved', 'Compliance Approved'}:
+            from app.services.compliance_service import only_digits
+            app.policy_number = only_digits(app.id_number)
 
         review = ComplianceReview(
             application_id=app.id,
@@ -223,7 +223,8 @@ def review_application(app_id):
     from app.models import BranchFilingOffice
     from app.services.branch_filing import filing_branch
     from app.services.application_workflow import workflow_state
-    return render_template('qa/review_application.html', flow=workflow_state(app), default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
+    from app.services.compliance_service import only_digits
+    return render_template('qa/review_application.html', automatic_policy_number=only_digits(app.id_number), flow=workflow_state(app), default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
 
 @qa_bp.route('/fica/<int:doc_id>/<decision>', methods=['POST'])
 @login_required

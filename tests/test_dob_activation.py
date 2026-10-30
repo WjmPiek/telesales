@@ -43,6 +43,8 @@ class DobActivationTests(unittest.TestCase):
             response=self.client.post(f'/qa/application/{self.aid}',data=data)
         self.assertEqual(response.status_code,302)
         self.assertEqual(self.record.status,'Active')
+        self.assertEqual(self.record.policy_number,self.record.id_number)
+        self.assertNotEqual(self.record.policy_number,'DOB-TEST')
         self.assertEqual(self.record.whatsapp_journey.notice_status,'Sent')
         self.assertIn('now active',mail.call_args.args[2]);self.assertEqual(len(mail.call_args.args[3]),5)
 
@@ -94,3 +96,12 @@ class DobActivationTests(unittest.TestCase):
         self.assertEqual(self.record.status,'Active')
         public.post(link,data={'action':'complete'})
         self.assertEqual(self.record.status,'Active')
+
+    def test_approval_page_fills_policy_number_from_principal_id_and_locks_field(self):
+        from bs4 import BeautifulSoup
+        self.dob_only()
+        self.record.policy_number='old-draft-number';db.session.commit()
+        page=self.client.get(f'/qa/application/{self.aid}')
+        field=BeautifulSoup(page.data,'html.parser').find('input',id='policy-number')
+        self.assertEqual(field['value'],self.record.id_number)
+        self.assertTrue(field.has_attr('readonly'))
