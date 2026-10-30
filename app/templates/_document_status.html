@@ -16,5 +16,5 @@
     {% set href = url_for('documents.application_documents', app_id=app.id, document_type=row.key, _anchor='staff-upload') %}
     {% set action = 'Upload this document' %}
   {% endif %}
-  <a class="badge text-bg-{{row.badge}} text-decoration-none" href="{{href}}" title="{{action}}" aria-label="{{row.label}}: {{row.status}} — {{action}}">{{row.status}}</a>
+  <a class="badge document-status-link text-bg-{{row.badge}} text-decoration-none" href="{{href}}" title="{{action}}" aria-label="{{row.label}}: {{row.status}} — {{action}}">{{row.status}}</a>
 {%- endmacro %}

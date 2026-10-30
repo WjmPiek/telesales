@@ -1,11 +1,12 @@
 {% extends 'base.html' %}{% from '_document_status.html' import status_link %}{% block content %}
+<link rel="stylesheet" href="{{url_for('static',filename='css/document-panels.css',v='1')}}">
 <style>[id^="document-"],#staff-upload{scroll-margin-top:24px}tr:target{outline:2px solid #69499d;background:#f5efff}#staff-upload:target{outline:2px solid #69499d}</style>
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="document-page-header mb-3">
   <div>
     <h3>{{app.application_ref}} Documents</h3>
     <div class="text-muted">{{app.first_names}} {{app.surname}} | {{app.cell_number}} | {{app.email}}</div>
   </div>
-  <a class="btn btn-outline-secondary" href="{{url_for('applications.view_application', app_id=app.id)}}">Back to Application</a><a class="btn btn-outline-primary" href="{{url_for('qa.review_application',app_id=app.id)}}">Quality Review</a>
+  <div class="document-page-actions"><a class="btn btn-outline-secondary" href="{{url_for('applications.view_application', app_id=app.id)}}">Back to Application</a><a class="btn btn-outline-primary" href="{{url_for('qa.review_application',app_id=app.id)}}">Quality Review</a></div>
 </div>
 
 {% if app.signed_at and not ((app.whatsapp_journey and app.whatsapp_journey.activated_at) or app.status == 'Active') %}
@@ -34,7 +35,7 @@
 <div class="card mb-3">
   <div class="card-header"><b>Document Status Panel</b></div>
   <div class="card-body table-responsive">
-    <table class="table table-sm align-middle">
+    <table class="table table-sm align-middle document-panel-table">
       <thead><tr><th>Group</th><th>Document</th><th>Status</th><th>Date</th><th>File</th><th>Review Action</th></tr></thead>
       <tbody>
       {% for row in summary.rows %}
@@ -42,12 +43,12 @@
           <td>{{row.group}}</td>
           <td>{{row.label}} {% if not row.required %}<span class="text-muted">optional</span>{% endif %}</td>
           <td>{{status_link(app, row)}}</td>
-          <td>{{row.signed_at or row.uploaded_at or ''}}</td>
+          <td>{% set stamp = row.signed_at or row.uploaded_at %}{% if stamp %}<time datetime="{{stamp.isoformat()}}"><span class="document-date">{{stamp.strftime('%Y-%m-%d')}}</span><span class="document-time">{{stamp.strftime('%H:%M')}}</span></time>{% endif %}</td>
           <td>
             {% if row.group == 'FICA' and row.document %}
               <a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('documents.download_fica', doc_id=row.document.id)}}">View Upload</a>
             {% elif row.group == 'Employee FIC' %}
-              <a class="btn btn-outline-primary btn-sm" href="{{url_for('applications.screening_review', app_id=app.id)}}">Record check / upload screenshots</a>
+              <a class="btn btn-outline-primary btn-sm" href="{{url_for('applications.screening_review', app_id=app.id)}}">FIC evidence</a>
             {% elif row.group == 'Signature' %}
               {% if row.key == 'application' and app.signed_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='signed_application')}}">View PDF</a>{% endif %}
               {% if row.key == 'popia' and app.popia_pdf_path %}<a class="btn btn-outline-primary btn-sm" target="_blank" href="{{url_for('applications.download_document', app_id=app.id, doc_type='popia')}}">View PDF</a>{% endif %}
@@ -60,12 +61,12 @@
             {% if row.group == 'Employee FIC' %}
               <a class="btn btn-primary btn-sm" href="{{url_for('applications.screening_review', app_id=app.id)}}">{{'View FIC check' if row.screening else 'Upload required screenshot'}}</a>
             {% elif row.group == 'FICA' and row.document and row.status in ['Needs Review', 'Rejected'] %}
-              <div class="d-flex gap-1 flex-wrap align-items-start">
+              <div class="document-review-actions">
                 <form method="post" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='approve')}}">
                   <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Approve this FICA document?')">Accept</button>
                 </form>
-                <form method="post" class="d-flex gap-1" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='reject')}}">
-                  <input class="form-control form-control-sm" name="reason" placeholder="Reason for rejection" style="min-width: 190px;">
+                <form method="post" class="document-reject-form" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='reject')}}">
+                  <input class="form-control form-control-sm" name="reason" placeholder="Reason for rejection" aria-label="Reason for rejecting {{row.label}}">
                   <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Reject this FICA document and email the client to resend it?')">Decline</button>
                 </form>
               </div>
@@ -83,14 +84,15 @@
 <div class="card" id="staff-upload">
   <div class="card-header"><b>Staff Upload Document</b></div>
   <div class="card-body">
-    <form method="post" enctype="multipart/form-data" class="row g-2">
-      <div class="col-md-4">
-        <select name="document_type" class="form-select" required>
+    <form method="post" enctype="multipart/form-data" class="document-upload-form">
+      <div class="document-upload-type">
+        <label for="staff-document-type" class="form-label">Document to upload</label>
+        <select id="staff-document-type" name="document_type" class="form-select" required>
           {% for key, label in fica_labels.items() %}<option value="{{key}}" {% if request.args.get('document_type') == key %}selected{% endif %}>{{label}}</option>{% endfor %}
         </select>
       </div>
-      <div class="col-md-5"><input class="form-control" type="file" name="file" required></div>
-      <div class="col-md-3"><button class="btn btn-primary w-100">Upload</button></div>
+      <div><label for="staff-document-file" class="form-label">Choose file</label><input id="staff-document-file" class="form-control" type="file" name="file" required></div>
+      <div><button class="btn btn-primary w-100">Upload</button></div>
     </form>
     <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP. Original photo quality is preserved. Each file must be 25 MB or smaller. Uploads are marked Needs Review until staff approves them. Images and scanned PDFs need manual verification unless OCR is configured.</div>
   </div>
