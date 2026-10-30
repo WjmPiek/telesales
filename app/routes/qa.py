@@ -70,9 +70,11 @@ def qa_dashboard():
     app_q = scope_by_branch(ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id, selected_branch=branch)
     lead_q = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id, selected_branch=branch)
 
-    qa_statuses = ['Signed', 'QA Review', 'QA Pending', 'Application Started', 'Signing Link Sent', 'Signing Link Prepared', 'Submitted', 'FICA Review', 'FICA Outstanding', 'QA Approved']
-    qa_apps = app_q.filter(ClientApplication.status.in_(qa_statuses)).order_by(ClientApplication.updated_at.desc()).limit(50).all()
-    signed_apps = app_q.filter(ClientApplication.signed_at.isnot(None), ClientApplication.status.notin_(['Active', 'Compliance Approved', 'Compliance Rejected', 'QA Rejected'])).order_by(ClientApplication.signed_at.asc()).limit(50).all()
+    from app.services.application_workflow import workflow_state, FINAL_STATUSES
+    candidates = app_q.filter(ClientApplication.signed_at.isnot(None), ClientApplication.status.notin_(FINAL_STATUSES)).order_by(ClientApplication.updated_at.asc()).limit(200).all()
+    states = {a.id: workflow_state(a) for a in candidates}
+    qa_apps = [a for a in candidates if states[a.id]['ready']]
+    signed_apps = [a for a in candidates if not states[a.id]['ready']]
     fica_docs = scope_by_branch(ClientFicaDocument.query.join(ClientApplication, ClientFicaDocument.application_id == ClientApplication.id), ClientApplication, branch_col=ClientApplication.branch, agent_col=ClientApplication.agent_id, selected_branch=branch).filter(ClientFicaDocument.status.in_(['Received', 'Needs Review']))
     fica_docs = fica_docs.order_by(ClientFicaDocument.uploaded_at.asc()).limit(50).all()
     review_q = ComplianceReview.query.filter(ComplianceReview.application_id.in_(app_q.with_entities(ClientApplication.id)))
@@ -218,7 +220,8 @@ def review_application(app_id):
             checklist_defaults[key] = True
     from app.models import BranchFilingOffice
     from app.services.branch_filing import filing_branch
-    return render_template('qa/review_application.html', default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
+    from app.services.application_workflow import workflow_state
+    return render_template('qa/review_application.html', flow=workflow_state(app), default_filing_branch=filing_branch(app), filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(), app=app, script=script, docs=docs, reviews=reviews, checklist=QA_CHECKLIST, checklist_defaults=checklist_defaults, cash_payment=_cash_payment(app))
 
 @qa_bp.route('/fica/<int:doc_id>/<decision>', methods=['POST'])
 @login_required
@@ -227,18 +230,8 @@ def review_fica(doc_id, decision):
     if not _is_qa_user() and not (doc.application.whatsapp_journey and doc.application.agent_id == current_user.id):
         flash('Only authorised staff can review these documents.', 'danger')
         return redirect(url_for('main.dashboard'))
-    if decision not in {'approve', 'reject'}:
-        from flask import abort
-        abort(400)
-    ensure_branch_access(doc.application, agent_attr='agent_id')
-    doc.status = 'Reviewed' if decision == 'approve' else 'Rejected'
-    db.session.flush()
-    if document_summary(doc.application)['complete'] and doc.application.status not in {'Active', 'QA Approved', 'Compliance Approved'}:
-        doc.application.status = 'QA Pending'
-    db.session.add(AuditLog(user_id=current_user.id, action=f'FICA {doc.status}', entity_type='ClientFicaDocument', entity_id=str(doc.id), details=doc.original_filename or doc.document_type))
-    db.session.commit()
-    flash(f'FICA document marked {doc.status}.', 'success')
-    return redirect(request.referrer or url_for('qa.qa_dashboard'))
+    from app.routes.documents import review_fica as document_review
+    return document_review(doc_id, decision)
 
 
 @qa_bp.route('/application/<int:app_id>/retry-confirmation',methods=['POST'])

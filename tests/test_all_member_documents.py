@@ -111,8 +111,9 @@ class AllMemberDocumentsTests(unittest.TestCase):
                 'member_2_id_copy':(self.photo(1), 'child-id.png')}, content_type='multipart/form-data')
         self.assertEqual(response.status_code, 302)
         self.assertEqual(upload.call_args.args[1], 'member_2_id_copy')
-        self.assertEqual(self.record.status, 'QA Pending')
+        self.assertEqual(self.record.status, 'FICA Review')
 
 
 if __name__ == '__main__':
     unittest.main()
+

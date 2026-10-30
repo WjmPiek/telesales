@@ -3,7 +3,7 @@ from app.services.client_storage import application_folder, store_document
 import os
 import secrets
 from datetime import datetime
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, send_file, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, send_file, abort, session
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from app import db
@@ -28,6 +28,16 @@ def _can_manage_documents():
     return _role_name() in {"admin", "super admin", "super_admin", "manager", "branch manager", "branch_manager", "compliance", "qa"}
 
 
+def _can_review_application(application):
+    return _can_manage_documents() or bool(application.whatsapp_journey and application.agent_id == current_user.id)
+
+
+def _editable(application):
+    from app.services.application_workflow import FINAL_STATUSES
+    if application.status in FINAL_STATUSES or (application.whatsapp_journey and application.whatsapp_journey.activated_at):
+        abort(409, 'This application has a final decision. Open the application to view its delivery status.')
+
+
 def _client_name(app):
     return " ".join([x for x in [app.first_names, app.surname] if x]) or app.application_ref
 
@@ -44,7 +54,8 @@ def _ensure_active_signing_link(app):
 
 
 def _send_rejected_document_email(app, rejected_labels, reason=None):
-    if not app.email:
+    email = (app.document_email or app.email or '').strip()
+    if not email:
         return False, "Application has no client email address."
 
     screened, errors=ensure_screened(app)
@@ -65,7 +76,7 @@ def _send_rejected_document_email(app, rejected_labels, reason=None):
         "Only the document(s) listed above need to be resent.\n\n"
         "Thank you.\nMartin's Funerals"
     )
-    sent = send_email(app.email, "Martin's Funerals document rejected - please resend", body, [], application_id=app.id)
+    sent = send_email(email, "Martin's Funerals document rejected - please resend", body, [], application_id=app.id)
     return sent, None
 
 
@@ -93,7 +104,7 @@ def _allowed_file(filename):
 @documents_bp.route("/")
 @login_required
 def document_dashboard():
-    if not _can_manage_documents():
+    if not _can_manage_documents() and _role_name() != 'agent':
         flash("Only managers/compliance users can access document tracking.", "danger")
         return redirect(url_for("main.dashboard"))
     branch = selected_branch_arg()
@@ -127,14 +138,15 @@ def document_dashboard():
 @documents_bp.route("/application/<int:app_id>", methods=["GET", "POST"])
 @login_required
 def application_documents(app_id):
-    if not _can_manage_documents():
-        flash("Only managers/compliance users can manage documents.", "danger")
-        return redirect(url_for("main.dashboard"))
     app = ClientApplication.query.get_or_404(app_id)
+    if not _can_review_application(app):
+        abort(403)
     ensure_branch_access(app, agent_attr="agent_id")
     upload_labels = {**STAFF_UPLOAD_LABELS,
                      **{row["key"]: row["label"] for row in required_fica_documents(app)}}
+    session.setdefault('document_request_csrf', secrets.token_urlsafe(32))
     if request.method == "POST":
+        _editable(app)
         doc_type = request.form.get("document_type")
         uploaded_file = request.files.get("file")
         if doc_type not in upload_labels:
@@ -171,15 +183,19 @@ def application_documents(app_id):
         db.session.commit()
         flash(f"Document uploaded. Status: {validation_status}. {validation_notes}", "warning" if validation_status == "Needs Review" else "danger")
         return redirect(url_for("documents.application_documents", app_id=app.id))
-    return render_template("documents/application.html", app=app, summary=document_summary(app), fica_labels=upload_labels, upload_audit=AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(app.id)).filter(AuditLog.action.in_(["FICA Uploaded", "Duplicate upload rejected"])).order_by(AuditLog.id.desc()).limit(100).all())
+    from app.services.application_workflow import workflow_state
+    flow = workflow_state(app)
+    return render_template("documents/application.html", app=app, flow=flow, summary=flow['summary'], fica_labels=upload_labels,
+        last_request=AuditLog.query.filter_by(entity_type='ClientApplication', entity_id=str(app.id), action='Agent requested outstanding items').order_by(AuditLog.id.desc()).first(),
+        upload_audit=AuditLog.query.filter_by(entity_type="ClientApplication", entity_id=str(app.id)).filter(AuditLog.action.in_(["FICA Uploaded", "Duplicate upload rejected"])).order_by(AuditLog.id.desc()).limit(100).all())
 
 
 @documents_bp.route("/fica/<int:doc_id>/download")
 @login_required
 def download_fica(doc_id):
-    if not _can_manage_documents():
-        abort(403)
     doc = ClientFicaDocument.query.get_or_404(doc_id)
+    if not _can_review_application(doc.application):
+        abort(403)
     ensure_branch_access(doc.application, agent_attr="agent_id")
     application_folder(doc.application)
     path = _resolve_existing(doc.file_path)
@@ -191,12 +207,18 @@ def download_fica(doc_id):
 @documents_bp.route("/fica/<int:doc_id>/<action>", methods=["POST"])
 @login_required
 def review_fica(doc_id, action):
-    if not _can_manage_documents():
-        abort(403)
     doc = ClientFicaDocument.query.get_or_404(doc_id)
+    if not _can_review_application(doc.application):
+        abort(403)
     ensure_branch_access(doc.application, agent_attr="agent_id")
     if action not in {"approve", "reject"}:
         abort(404)
+    app = ClientApplication.query.filter_by(id=doc.application_id).with_for_update().populate_existing().one()
+    doc = ClientFicaDocument.query.filter_by(id=doc.id).with_for_update().populate_existing().one()
+    _editable(app)
+    latest = ClientFicaDocument.query.filter_by(application_id=app.id, document_type=doc.document_type).order_by(ClientFicaDocument.uploaded_at.desc(), ClientFicaDocument.id.desc()).first()
+    if doc.status == 'Replaced' or latest.id != doc.id:
+        abort(409, 'A newer upload exists. Review the latest file.')
     old_status = doc.status
     reason = request.form.get("reason", "").strip()
     label = fica_label(doc.application, doc.document_type)
@@ -204,8 +226,8 @@ def review_fica(doc_id, action):
     if action == "approve":
         doc.status = "Reviewed"
         db.session.flush()
-        if document_summary(doc.application)['complete'] and doc.application.status not in {'QA Approved', 'Compliance Approved'}:
-            doc.application.status = 'QA Pending'
+        from app.services.application_workflow import advance_to_quality
+        ready = advance_to_quality(app, actor_id=current_user.id)
         audit_details = f"{label} changed from {old_status} to {doc.status}. {reason}"
         db.session.add(AuditLog(
             user_id=current_user.id,
@@ -215,9 +237,12 @@ def review_fica(doc_id, action):
             details=audit_details
         ))
         db.session.commit()
-        flash(f"{label} marked as approved.", "success")
-        return redirect(url_for("documents.application_documents", app_id=doc.application_id))
+        flash(f"{label} accepted. " + ('Agent check complete. Continue with Quality Review.' if ready else 'Continue checking the remaining items.'), "success")
+        return redirect(url_for('qa.review_application' if ready else 'documents.application_documents', app_id=app.id))
 
+    if not reason:
+        flash('Enter what the client needs to correct before requesting a replacement.', 'danger')
+        return redirect(url_for('documents.application_documents', app_id=app.id))
     doc.status = "Rejected"
     doc.application.status = "FICA Outstanding"
     sent, mail_error = _send_rejected_document_email(doc.application, [label], reason)
@@ -243,6 +268,69 @@ def review_fica(doc_id, action):
     else:
         flash(f"{label} rejected, but the email was not sent. {mail_error or 'Check SMTP/provider settings.'}", "danger")
     return redirect(url_for("documents.application_documents", app_id=doc.application_id))
+
+
+@documents_bp.route('/application/<int:app_id>/request-outstanding', methods=['POST'])
+@login_required
+def request_outstanding(app_id):
+    app = ClientApplication.query.filter_by(id=app_id).with_for_update().first_or_404()
+    if not _can_review_application(app):
+        abort(403)
+    ensure_branch_access(app, agent_attr='agent_id')
+    supplied = request.form.get('document_request_csrf', '')
+    if not supplied or not secrets.compare_digest(session.get('document_request_csrf', ''), supplied):
+        abort(400, 'Refresh the document review page before sending.')
+    _editable(app)
+    if not app.signed_at or not app.sign_token:
+        flash('The client must submit the signed application before a supporting-document request can be sent.', 'danger')
+        return redirect(url_for('documents.application_documents', app_id=app.id))
+    from app.services.application_workflow import workflow_state
+    from app.services.delivery_preferences import valid_email
+    from app.services.email_service import signing_email_html
+    flow = workflow_state(app)
+    choices = {row['key']: row for row in flow['client_requests']}
+    selected = list(dict.fromkeys(request.form.getlist('items')))
+    if any(key not in choices for key in selected):
+        abort(409, 'The document list changed. Refresh and review the latest uploads.')
+    notes = request.form.get('notes', '').strip()
+    if len(notes) > 2000 or (not selected and not notes and not flow['missing_ids']):
+        flash('Select the outstanding documents or enter what the client needs to provide (up to 2000 characters).', 'danger')
+        return redirect(url_for('documents.application_documents', app_id=app.id))
+    if any(choices[key]['status'] == 'Needs Review' for key in selected) and not notes:
+        flash('Explain what needs correcting before requesting a replacement for an uploaded document.', 'danger')
+        return redirect(url_for('documents.application_documents', app_id=app.id))
+    email = (app.document_email or app.email or '').strip()
+    if not valid_email(email):
+        flash('Add a valid client document email address before sending.', 'danger')
+        return redirect(url_for('documents.application_documents', app_id=app.id))
+    for key in selected:
+        doc = choices[key].get('document')
+        if doc:
+            doc.status = 'Rejected'
+    labels = [choices[key]['label'] for key in selected]
+    token = _ensure_active_signing_link(app)
+    link = current_app.config['BASE_URL'].rstrip('/') + url_for('signing.supporting_documents', token=token)
+    body = f'Dear {_client_name(app)},\n\nWe checked your application. Please provide the following outstanding items:\n'
+    body += '\n'.join('- ' + label for label in labels)
+    if flow['missing_ids']:
+        body += '\n- Valid ID numbers for: ' + ', '.join(flow['missing_ids'])
+    if notes:
+        body += '\n\nAgent instructions:\n' + notes
+    body += f'\n\nUpload or photograph the requested documents using this secure link:\n{link}\n\nYour existing application and accepted documents remain saved. You can return to this link when the outstanding documents are available.\n\nMartin\'s Funerals'
+    app.status = 'FICA Outstanding'
+    db.session.commit()
+    try:
+        sent = send_email(email, 'Outstanding items for your application: ' + app.application_ref, body, [],
+            html_body=signing_email_html(app, link, body, 'Upload outstanding documents'), application_id=app.id)
+    except Exception:
+        current_app.logger.exception('Outstanding-document email failed for application %s', app.id)
+        sent = False
+    db.session.add(AuditLog(user_id=current_user.id, action='Agent requested outstanding items', entity_type='ClientApplication',
+        entity_id=str(app.id), details=f"{'Accepted by mail server' if sent else 'Delivery failed'}; recipient {email}; items: {', '.join(labels)}; instructions: {notes}"))
+    db.session.commit()
+    flash('Request email accepted by the mail server. The application is waiting for the client.' if sent else
+          'Request saved, but the email failed. Review the address and use Send request email to retry.', 'success' if sent else 'danger')
+    return redirect(url_for('documents.application_documents', app_id=app.id))
 
 
 @documents_bp.route("/application/<int:app_id>/resend-missing/<channel>", methods=["POST"])

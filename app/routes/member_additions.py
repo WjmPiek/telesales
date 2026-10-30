@@ -128,6 +128,8 @@ def client_form(token):
                 from app.services.member_count_review import confirm_current_members
                 confirm_current_members(application)
                 addition.completed_at = datetime.utcnow()
+                from app.services.application_workflow import advance_to_quality
+                advance_to_quality(application)
                 db.session.commit()
                 return redirect(url_for('member_additions.client_form', token=token))
             if action == 'add' and not addition.used_at:

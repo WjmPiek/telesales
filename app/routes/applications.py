@@ -278,11 +278,13 @@ def view_application(app_id):
     session.setdefault('member_addition_csrf', secrets.token_urlsafe(32))
     from app.services.member_additions import can_add, available_kinds, pending_addition
     from app.services.member_count_review import count_summary
+    from app.services.application_workflow import workflow_state
     return render_template("applications/view.html", app=a, member_benefits=member_benefits,
                            document_summary=document_summary(a), screening=latest_screening(a),
                            allow_member_addition=can_add(a) and bool(available_kinds(a)),
                            pending_member_addition=pending_addition(a),
                            member_count=count_summary(a),
+                           flow=workflow_state(a),
                            upload_email_event=upload_email_event, office_email_event=office_email_event,
                            office_prompt=False, filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(),
                            filing_destination=filing_branch(a), filing_email=(filing_office(a).email if filing_office(a) else None), filing_delivery=latest_delivery(a), filing_history=ApplicationFilingDelivery.query.filter_by(application_id=a.id).order_by(ApplicationFilingDelivery.id.desc()).all())
@@ -578,9 +580,11 @@ def screening_review(app_id):
                 checked=datetime.fromisoformat(request.form.get('checked_at',''))-timedelta(hours=2)
                 if checked.tzinfo is not None:raise ValueError('Use the South African local date and time.')
                 save_employee_check(a,request.files.getlist('screenshots'),request.form.get('outcome'),(request.form.get('notes') or '').strip(),checked,current_user.id)
+                from app.services.application_workflow import advance_to_quality
+                ready = advance_to_quality(a, actor_id=current_user.id)
                 db.session.commit();flash('FIC check and screenshots saved with the application.','success')
                 if request.form.get('outcome') == 'no_match':
-                    return redirect(url_for('qa.review_application', app_id=a.id))
+                    return redirect(url_for('qa.review_application' if ready else 'documents.application_documents', app_id=a.id))
             except (ValueError,TypeError) as exc:
                 db.session.rollback();flash(str(exc),'danger')
         elif request.form.get('action')=='review':
@@ -592,8 +596,10 @@ def screening_review(app_id):
             else:
                 screening.reviewed_by=current_user.id;screening.reviewed_at=datetime.utcnow();screening.review_notes=notes;screening.status='Reviewed'
                 db.session.add(AuditLog(action='FIC_STAFF_REVIEW',entity_type='ClientApplication',entity_id=str(a.id),details='Screening '+str(screening.id)+' reviewed by user '+str(current_user.id)))
-                db.session.commit();flash('Staff review recorded. Continue with quality review.','success')
-                return redirect(url_for('qa.review_application', app_id=a.id))
+                from app.services.application_workflow import advance_to_quality
+                ready = advance_to_quality(a, actor_id=current_user.id)
+                db.session.commit();flash('Staff review recorded. Continue with the remaining application checks.','success')
+                return redirect(url_for('qa.review_application' if ready else 'documents.application_documents', app_id=a.id))
         return redirect(url_for('applications.screening_review',app_id=a.id))
     paths=json.loads(screening.evidence_json) if screening else []
     evidence=ClientStoredFile.query.filter(ClientStoredFile.application_id==a.id,ClientStoredFile.relative_path.in_(paths)).all() if paths else []

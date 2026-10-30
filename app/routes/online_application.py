@@ -82,7 +82,7 @@ def form(token):
                     if upload and upload.filename:
                         _save_upload(a,kind,upload);changed=True
                 if not changed:raise ValueError('Choose a replacement document to upload.')
-                a.status='QA Pending'
+                a.status='FICA Review'
                 db.session.commit()
                 flash('Replacement documents saved for staff review. Your signed forms remain unchanged.','success')
                 return redirect(url_for('online_application.form',token=token))

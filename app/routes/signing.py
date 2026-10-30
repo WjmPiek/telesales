@@ -897,6 +897,9 @@ def finish_application(app_obj, token):
     upload_email_sent = send_supporting_upload_email(app_obj)
     from app.services.document_reminders import schedule_document_reminders
     schedule_document_reminders(app_obj)
+    from app.services.application_workflow import advance_to_quality
+    advance_to_quality(app_obj)
+    db.session.commit()
     from app.services.email_service import submission_notification_recipients
     for office_email in submission_notification_recipients(recipient, application=app_obj):
         app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)

@@ -1,6 +1,6 @@
-{% extends 'base.html' %}{% from '_document_status.html' import status_link %}{% block content %}
+{% extends 'base.html' %}{% from '_application_workflow.html' import workflow_banner %}{% from '_document_status.html' import status_link %}{% block content %}
 <link rel="stylesheet" href="{{url_for('static',filename='css/document-panels.css',v='1')}}">
-{% if app.whatsapp_journey %}<div class="alert alert-info">WhatsApp application: client completes the question form and signs once. <a href="{{url_for('qa.review_application',app_id=app.id)}}">Verify completed application</a></div>{% endif %}
+{{workflow_banner(app, flow)}}
 <div class="d-flex justify-content-between align-items-center mb-3"><h3>{{app.application_ref}}</h3>{% if current_user.role and current_user.role.name|lower == 'admin' %}<form method="post" action="{{ url_for('applications.delete_application', app_id=app.id) }}" onsubmit="return confirm('Delete application {{app.application_ref}}? This cannot be undone.');"><button class="btn btn-outline-danger">Delete Application</button></form>{% endif %}</div>
 
 {% if app.whatsapp_journey and app.whatsapp_journey.activated_at %}<div class="alert alert-success">Policy active. Confirmation email: {{app.whatsapp_journey.notice_status}}.</div>{% if app.whatsapp_journey.notice_status=='Failed' %}<form method="post" action="{{url_for('qa.retry_confirmation',app_id=app.id)}}"><button class="btn btn-primary">Retry confirmation email</button></form>{% endif %}{% endif %}

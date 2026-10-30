@@ -1,29 +1,29 @@
-{% extends 'base.html' %}
+{% extends 'base.html' %}{% from '_application_workflow.html' import workflow_banner %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div><h3 class="mb-0">QA Review: {{ app.application_ref }}</h3><small class="text-muted">{{ app.first_names }} {{ app.surname }} | {{ app.branch or '-' }} | {{ app.status }}</small></div>
   <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('applications.view_application', app_id=app.id) }}">Open Application</a>{% if app.lapsed_policy_id %}<a class="btn btn-outline-secondary" href="{{ url_for('recovery.client_timeline', policy_id=app.lapsed_policy_id) }}">Timeline</a>{% endif %}</div>
 </div>
 <div class="d-flex gap-2 mb-3"><a class="btn btn-outline-primary" href="{{url_for('documents.application_documents',app_id=app.id)}}">Review documents</a><a class="btn btn-outline-primary" href="{{url_for('client_files.index',application_id=app.id)}}">Client file and chat history</a><a class="btn btn-outline-primary" href="{{url_for('applications.screening_review',app_id=app.id)}}">FIC check</a></div>
+{{workflow_banner(app, flow)}}
 <div class="row g-3">
   <div class="col-lg-8">
-    <div class="card mb-3"><div class="card-header"><strong>Compliance checklist</strong></div><div class="card-body">
+    <div class="card mb-3"><div class="card-header"><strong>Final Quality Review</strong></div><div class="card-body">
       <form method="post">
         <div class="row">
         {% for key, label in checklist %}
-          <div class="col-md-6 mb-2"><div class="form-check"><input class="form-check-input" type="checkbox" id="{{ key }}" name="{{ key }}" {% if checklist_defaults.get(key) %}checked{% endif %} {% if cash_payment and key == 'debit_order' %}disabled{% endif %}><label class="form-check-label" for="{{ key }}">{{ 'Debit order authority — not applicable (cash payment)' if cash_payment and key == 'debit_order' else label }}</label></div></div>
+          <div class="col-md-6 mb-2"><div class="form-check"><input class="form-check-input" type="checkbox" id="{{ key }}" name="{{ key }}" required {% if checklist_defaults.get(key) %}checked{% endif %} {% if cash_payment and key == 'debit_order' %}disabled{% endif %}><label class="form-check-label" for="{{ key }}">{{ 'Debit order authority — not applicable (cash payment)' if cash_payment and key == 'debit_order' else label }}</label></div></div>
         {% endfor %}
         </div>
-        {% if app.whatsapp_journey %}<div class="alert alert-info">Completing verification activates this policy and emails the client. Confirm the issued policy details below.</div><label>Issued policy number</label><input class="form-control" name="policy_number" value="{{app.policy_number or ''}}"><label>Policy start date</label><input class="form-control" type="date" name="start_date" value="{{app.inception_date or ''}}">{% endif %}
-        <label for="filing_branch" class="form-label mt-3">Branch responsible for updating and filing this client record</label><select id="filing_branch" name="filing_branch" class="form-select"><option value="">Select filing branch before approval</option>{% for office in filing_offices %}<option value="{{office.branch_name}}" {% if (app.filing_branch or default_filing_branch) == office.branch_name %}selected{% endif %}>{{office.branch_name}} · {{office.contact_first_name or ''}} {{office.contact_surname or ''}} · {{office.email}}</option>{% endfor %}</select><p class="text-muted">Approval sends the five signed policy PDFs to this branch. Failed sends remain visible in the Branch filing report.</p>
-        <label class="form-label mt-3">QA / Compliance notes</label><textarea name="notes" class="form-control" rows="4" placeholder="Add approval notes, rejection reason, missing documents, or agent feedback"></textarea>
-        <div class="mt-3 d-flex gap-2 flex-wrap">
-          <button name="decision" value="QA Approved" class="btn btn-success">{{'Complete verification and activate' if app.whatsapp_journey else 'QA Approve'}}</button>
-          <button name="decision" value="QA Rejected" class="btn btn-danger">QA Reject</button>
-          <button name="decision" value="Compliance Approved" class="btn btn-primary">Compliance Final Approve</button>
-          <button name="decision" value="Compliance Rejected" class="btn btn-outline-danger">Compliance Reject</button>
+        {% if app.whatsapp_journey %}<div class="alert alert-info">Approve and activate sends the final policy documents to the client automatically. Confirm the issued policy number, start date, client email and filing branch below.</div><p>Client confirmation email: <strong>{{app.document_email or app.email}}</strong></p><label for="policy-number">Issued policy number</label><input id="policy-number" class="form-control" name="policy_number" maxlength="80" required value="{{app.policy_number or ''}}"><label for="policy-start-date">Policy start date</label><input id="policy-start-date" class="form-control" type="date" name="start_date" required value="{{app.inception_date or ''}}">{% endif %}
+        <label for="filing_branch" class="form-label mt-3">Branch responsible for updating and filing this client record</label><select id="filing_branch" name="filing_branch" class="form-select" required><option value="">Select filing branch before approval</option>{% for office in filing_offices %}<option value="{{office.branch_name}}" {% if (app.filing_branch or default_filing_branch) == office.branch_name %}selected{% endif %}>{{office.branch_name}} · {{office.contact_first_name or ''}} {{office.contact_surname or ''}} · {{office.email}}</option>{% endfor %}</select><p class="text-muted">Approval sends the five signed policy PDFs to this branch. Failed sends remain visible in the Branch filing report.</p>
+        <label for="qa-notes" class="form-label mt-3">QA / Compliance notes</label><textarea id="qa-notes" name="notes" class="form-control" rows="4" placeholder="Add approval notes, rejection reason, missing documents, or agent feedback"></textarea>
+        {% if not flow.closed %}<div class="mt-3 d-flex gap-2 flex-wrap">
+          <button name="decision" value="QA Approved" class="btn btn-success btn-lg" {% if not flow.ready %}disabled{% endif %}>{{'Approve and activate — email documents' if app.whatsapp_journey else 'Approve application'}}</button>
+          <a class="btn btn-outline-primary" href="{{url_for('documents.application_documents',app_id=app.id)}}#request-outstanding">Request missing items / corrections</a>
         </div>
-        <small class="text-muted d-block mt-2">Approvals require all checklist items to be ticked. Rejections can be saved with partial checklist and notes.</small>
+        <small class="text-muted d-block mt-2">Confirm each checklist item before approval. After activation, delivery results and retry options appear on the application.</small>
+        <details class="mt-3"><summary>Decline application</summary><p class="mt-2">Use this only for a final decline. Request missing documents above when the client can correct the file.</p><button name="decision" value="QA Rejected" formnovalidate class="btn btn-outline-danger">Decline application</button></details>{% endif %}
       </form>
     </div></div>
 
@@ -32,7 +32,7 @@
   <div class="col-lg-4">
     <div class="card mb-3"><div class="card-header"><strong>Application summary</strong></div><div class="card-body"><p><strong>Product:</strong> {{ app.product.product_name if app.product else '-' }} {{ app.product.plan_name if app.product else '' }}</p><p><strong>Premium:</strong> R {{ app.monthly_premium or 0 }}</p><p><strong>Cell:</strong> {{ app.cell_number or '-' }}</p><p><strong>Email:</strong> {{ app.email or '-' }}</p><p><strong>Signed:</strong> {{ app.signed_at or 'No' }}</p></div></div>
     <div class="card mb-3"><div class="card-header"><strong>Script QA</strong></div><div class="card-body">{% if script %}<p><strong>Status:</strong> {{ script.status }}</p><p><strong>Score:</strong> {{ script.qa_score }}%</p><p><strong>Result:</strong> {{ script.qa_result or '-' }}</p>{% if script.pdf_path %}<p><a target="_blank" rel="noopener" href="{{url_for('recovery.download_script_pdf',session_id=script.id)}}">Insurance Sales script PDF</a></p>{% endif %}{% else %}<p class="text-muted">No script session linked.</p>{% endif %}</div></div>
-    <div class="card"><div class="card-header"><strong>FICA documents</strong></div><ul class="list-group list-group-flush">{% for doc in docs %}<li class="list-group-item"><strong>{{ doc.document_type|replace('_',' ')|title }}</strong><br><small>{{ doc.status }} - {{ doc.original_filename }}</small><div class="mt-2 d-flex gap-2"><form method="post" action="{{ url_for('qa.review_fica', doc_id=doc.id, decision='approve') }}"><button class="btn btn-sm btn-outline-success">Approve</button></form><form method="post" action="{{ url_for('qa.review_fica', doc_id=doc.id, decision='reject') }}"><button class="btn btn-sm btn-outline-danger">Reject</button></form></div></li>{% else %}<li class="list-group-item text-muted">No FICA documents uploaded.</li>{% endfor %}</ul></div>
+    <div class="card card-body"><h5>Agent document check</h5><p>Review the member IDs, proof of address and any replacements on one screen.</p><a class="btn btn-outline-primary" href="{{url_for('documents.application_documents',app_id=app.id)}}">Open document review</a></div>
   </div>
 </div>
 {% endblock %}
