@@ -967,8 +967,6 @@ def add_recipients(campaign_id):
     ids = [int(x) for x in request.form.getlist("policy_ids") if x.isdigit()]
     if campaign.audience_type == "individual" and len(ids) > 1:
         ids = ids[:1]
-    if campaign.audience_type == "individual" and ids:
-        CampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
     added = 0
     policies_q = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id).filter(LapsedPolicy.id.in_(ids))
     if campaign.company:
@@ -977,6 +975,33 @@ def add_recipients(campaign_id):
         if is_suppressed(policy) or preference_for(policy).opted_out_all or not preference_for(policy).whatsapp_allowed:
             continue
         exists = CampaignRecipient.query.filter_by(campaign_id=campaign.id, lapsed_policy_id=policy.id).first()
+        if campaign.audience_type == "individual":
+            if exists:
+                flash("Individual client already selected.", "success")
+                return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+            previous = CampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+            previous_ids = [row.id for row in previous]
+            if previous_ids:
+                # Sent links, replies and applications must keep their original
+                # recipient. Only an unused draft selection can be replaced.
+                has_history = (
+                    any(row.whatsapp_status not in (None, "Not Sent") or row.response_type or row.responded_at for row in previous)
+                    or CommunicationEvent.query.filter(CommunicationEvent.recipient_id.in_(previous_ids),
+                        CommunicationEvent.event_type != "recipient_added").first()
+                    or CommunicationFollowUp.query.filter(CommunicationFollowUp.recipient_id.in_(previous_ids)).first()
+                    or WhatsAppMessage.query.filter(WhatsAppMessage.campaign_recipient_id.in_(previous_ids)).first()
+                    or ClientApplication.query.filter(ClientApplication.source_campaign_recipient_id.in_(previous_ids)).first()
+                )
+                if has_history:
+                    flash("This campaign already has client history. Duplicate the campaign to select a different client.", "warning")
+                    return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+                # Preserve draft selection events against the original policy,
+                # without leaving foreign keys pointing at the removed row.
+                CommunicationEvent.query.filter(CommunicationEvent.recipient_id.in_(previous_ids)).update(
+                    {CommunicationEvent.recipient_id: None}, synchronize_session=False)
+                for row in previous:
+                    db.session.delete(row)
+                db.session.flush()
         if not exists:
             recipient = CampaignRecipient(campaign_id=campaign.id, lapsed_policy_id=policy.id, secure_token=secrets.token_urlsafe(32))
             db.session.add(recipient); db.session.flush(); _event(recipient, "recipient_added")
