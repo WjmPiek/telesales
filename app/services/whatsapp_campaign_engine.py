@@ -48,14 +48,16 @@ def process_scheduled_campaigns(limit=10):
                     sent += int(ok)
                 db.session.commit()
             held = sum(r.whatsapp_status == 'Held' for r in campaign.recipients)
-            campaign.status = "Needs attention" if held else "Sent"
-            campaign.queue_status = "held" if held else "completed"
+            failed = sum(r.whatsapp_status == 'Failed' for r in campaign.recipients)
+            needs_attention = bool(held or failed)
+            campaign.status = "Needs attention" if needs_attention else "Sent"
+            campaign.queue_status = "held" if held else ("failed" if failed else "completed")
             campaign.sent_at = datetime.utcnow() if sent else campaign.sent_at
-            audit("campaign_auto_held" if held else "campaign_auto_sent", "campaign", campaign.id,
-                  campaign.created_by_id, f"{sent} sent, {held} held")
-            db.session.add(AgentNotification(user_id=campaign.created_by_id, title="Campaign needs attention" if held else "Scheduled campaign sent", message=f"{campaign.name}: {sent} sent, {held} held. Review screening evidence and requeue to retry held recipients.", notification_type="campaign_held" if held else "campaign_sent", entity_type="campaign", entity_id=campaign.id))
+            audit("campaign_auto_failed" if failed else ("campaign_auto_held" if held else "campaign_auto_sent"), "campaign", campaign.id,
+                  campaign.created_by_id, f"{sent} sent, {failed} failed, {held} held")
+            db.session.add(AgentNotification(user_id=campaign.created_by_id, title="Campaign needs attention" if needs_attention else "Scheduled campaign sent", message=f"{campaign.name}: {sent} sent, {failed} failed, {held} held. Review the campaign report for failure details before retrying.", notification_type="campaign_failed" if failed else ("campaign_held" if held else "campaign_sent"), entity_type="campaign", entity_id=campaign.id))
             db.session.commit()
-            stats["held" if held else "sent"] += 1
+            stats["failed" if failed else ("held" if held else "sent")] += 1
         except Exception as exc:
             db.session.rollback()
             campaign = db.session.get(CommunicationCampaign, campaign.id)
@@ -66,3 +68,4 @@ def process_scheduled_campaigns(limit=10):
             db.session.commit()
             stats["failed"] += 1
     return stats
+

@@ -264,6 +264,21 @@ class MarketingScreeningTests(unittest.TestCase):
             self.assertEqual(recipient.whatsapp_status, 'Sent')
             self.assertEqual(campaign.queue_status, 'completed')
 
+    def test_provider_rejection_is_failed_instead_of_sent(self):
+        from app.services.whatsapp_campaign_engine import process_scheduled_campaigns
+        lead = self.lead()
+        campaign, recipient = self.campaign(lead)
+        with self.app.test_request_context(), patch('app.routes.communications._refresh_template_status',
+                return_value=SimpleNamespace(ok=True)), patch('app.routes.communications.send_whatsapp_template_image',
+                return_value=SimpleNamespace(ok=False, error='Provider rejected sender', message_id=None, response_json={})):
+            stats = process_scheduled_campaigns()
+            self.assertEqual(recipient.whatsapp_status, 'Failed')
+            self.assertEqual(campaign.status, 'Needs attention')
+            self.assertEqual(campaign.queue_status, 'failed')
+            self.assertIsNone(campaign.sent_at)
+            self.assertEqual(stats['failed'], 1)
+            self.assertEqual(stats['sent'], 0)
+
     def test_explicit_application_consent_is_linked_to_imported_phone(self):
         from app.services.marketing_consent import apply_consent
         lead = self.lead()
@@ -312,3 +327,4 @@ class MarketingScreeningTests(unittest.TestCase):
         self.assertIn('screening=clear', response.location)
         self.assertEqual({r.lapsed_policy_id for r in CampaignRecipient.query.filter_by(campaign_id=campaign_id)},
                          {lead.id, other.id})
+

@@ -146,6 +146,28 @@ def _diagnostic_step(name: str, url: str, response) -> tuple[dict, dict | list |
 
 def get_meta_connection_status() -> MetaConnectionResult:
     """Run transparent Meta Cloud API diagnostics without exposing the access token."""
+    if _provider() == "360dialog":
+        base = os.getenv("D360_API_BASE_URL", "https://waba-v2.360dialog.io").rstrip("/")
+        endpoint = os.getenv("D360_TEMPLATE_API_URL", f"{base}/v1/configs/templates").strip()
+        if not os.getenv("D360_API_KEY"):
+            return MetaConnectionResult(False, error="D360_API_KEY is not configured.", diagnostics=[])
+        try:
+            response = requests.get(endpoint, headers={"D360-API-KEY": os.environ["D360_API_KEY"],
+                "Accept": "application/json"}, timeout=25)
+            step, _ = _diagnostic_step("360dialog template access (sending is not tested)", endpoint, response)
+            # Display only the outcome: provider responses can contain private
+            # configuration unrelated to the connection check.
+            step.pop("response", None)
+            if not step["ok"]:
+                return MetaConnectionResult(False, error=step.get("error"), diagnostics=[step])
+            profile_endpoint = f"{base}/whatsapp_business_profile"
+            profile_response = requests.get(profile_endpoint, params={"fields": "about"},
+                headers={"D360-API-KEY": os.environ["D360_API_KEY"], "Accept": "application/json"}, timeout=25)
+            profile_step, _ = _diagnostic_step("360dialog sender access (sending is not tested)", profile_endpoint, profile_response)
+            profile_step.pop("response", None)
+            return MetaConnectionResult(profile_step["ok"], error=profile_step.get("error"), diagnostics=[step, profile_step])
+        except requests.RequestException:
+            return MetaConnectionResult(False, error="360dialog connection request failed.", diagnostics=[])
     token = os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
     phone_number_id = os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     waba_id = os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
@@ -645,3 +667,4 @@ def send_application_link(application, link, body):
     from app.services.conversation_history import record_communication
     record_communication('WhatsApp',message,'Sent' if result.ok else 'Failed',application_id=application.id)
     return result
+

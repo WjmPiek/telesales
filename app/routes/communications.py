@@ -308,7 +308,7 @@ def whatsapp_dashboard():
         "delivered_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="delivered").count(),
         "read_messages": WhatsAppMessage.query.filter_by(direction="outbound", status="read").count(),
         "scheduled": CommunicationCampaign.query.filter_by(status="Scheduled").count(),
-        "queue_failed": CommunicationCampaign.query.filter_by(queue_status="retry").count(),
+        "queue_failed": CommunicationCampaign.query.filter(CommunicationCampaign.queue_status.in_(["retry", "failed"])).count(),
         "media_assets": WhatsAppMediaAsset.query.count(),
         "provider_errors": WhatsAppProviderLog.query.filter_by(status="failed").count(),
         "callbacks": CampaignRecipient.query.filter_by(response_type="callback").count(),
@@ -1330,20 +1330,23 @@ def whatsapp_settings():
             "ok": result.ok,
             "error": result.error,
             "steps": result.diagnostics or [],
+            "provider": os.getenv("WHATSAPP_PROVIDER", "meta").strip().lower(),
             "tested_at": datetime.utcnow().strftime("%d %b %Y %H:%M UTC"),
         }
         session.modified = True
         if result.ok:
             phone = result.phone or {}
             label = phone.get("display_phone_number") or phone.get("verified_name") or "configured number"
-            flash(f"Meta Cloud API connection successful for {label}.", "success")
+            flash("Provider read checks passed. Message delivery has not been tested.", "success")
         else:
-            flash(f"Meta connection failed: {result.error}", "danger")
+            flash(f"Provider connection failed: {result.error}", "danger")
         return redirect(url_for("communications.whatsapp_settings"))
     token=os.getenv("META_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
     config={
         "enabled": os.getenv("WHATSAPP_ENABLED", "false").lower() in {"1","true","yes","y"},
-        "provider": os.getenv("WHATSAPP_PROVIDER", "meta"),
+        "provider": os.getenv("WHATSAPP_PROVIDER", "meta").strip().lower(),
+        "d360_key_set": bool(os.getenv("D360_API_KEY")),
+        "sending_endpoint": os.getenv("D360_API_BASE_URL", "https://waba-v2.360dialog.io").rstrip("/") + "/messages",
         "waba_id": os.getenv("META_WABA_ID") or os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID"),
         "phone_number_id": os.getenv("META_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
         "graph_version": os.getenv("META_GRAPH_API_VERSION", "v25.0"),
@@ -1354,6 +1357,8 @@ def whatsapp_settings():
         "last_sync": db.session.query(func.max(WhatsAppTemplate.last_checked_at)).scalar(),
     }
     diagnostics = session.get("meta_connection_diagnostics")
+    if diagnostics and diagnostics.get("provider") != config["provider"]:
+        diagnostics = None
     return render_template("communications/whatsapp_settings.html", config=config, diagnostics=diagnostics)
 
 @communications_bp.route("/webhooks/whatsapp", methods=["GET", "POST"])
@@ -1361,4 +1366,5 @@ def whatsapp_webhook():
     """Backward-compatible webhook alias; the canonical Meta URL is /whatsapp/webhook."""
     from app.routes.whatsapp import webhook
     return webhook()
+
 
