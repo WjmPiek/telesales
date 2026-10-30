@@ -66,6 +66,7 @@ class ApplicationWorkflowTests(unittest.TestCase):
         db.session.commit()
         self.assertFalse(advance_to_quality(self.record))
         self.assertTrue(workflow_state(self.record)['missing_ids'])
+        self.assertEqual(workflow_state(self.record)['missing_ids'], ['Existing Child'])
 
     def test_combined_request_requires_csrf_explains_replacement_and_preserves_accepted_files(self):
         doc=self.complete_agent_file();nonce=self.request_nonce();url=f'/documents/application/{self.aid}/request-outstanding'

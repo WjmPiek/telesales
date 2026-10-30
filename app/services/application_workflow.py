@@ -9,7 +9,7 @@ FINAL_STATUSES = {'Active', 'QA Approved', 'Compliance Approved', 'QA Rejected',
 
 def workflow_state(application):
     from app.services.member_count_review import count_summary
-    from app.services.cover_eligibility import missing_member_ids
+    from app.services.cover_eligibility import application_members
     from app.services.screening_service import ensure_screened
     summary = document_summary(application)
     active = bool(application.status == 'Active' or (application.whatsapp_journey and application.whatsapp_journey.activated_at))
@@ -20,7 +20,8 @@ def workflow_state(application):
     count = count_summary(application)
     if count['missing']:
         blockers.append(f"Confirm {count['missing']} missing member(s) with the client.")
-    ids = missing_member_ids(application)
+    ids = [member['name'] or ('Principal member' if index == 0 else f'Additional member {index}')
+           for index, member in enumerate(application_members(application)) if not member['id_number']]
     if ids:
         blockers.append('Capture valid member ID numbers: ' + ', '.join(ids) + '.')
     for row in summary['rows']:
