@@ -55,25 +55,43 @@ def required_fica_documents(application):
     if not client_is_sa(application):
         rows.append({"key": "permit_visa", "label": "Principal Member Permit / Visa"})
 
+    # The questionnaire also stores a combined member list. Family products
+    # mirror the spouse/child/extended rows there, whereas Member+ products
+    # store their members only there. Older product rules may still say family.
+    # Read the saved people rather than choosing a list from those rules.
+    from app.services.compliance_service import format_dob
+
+    def identity(name, identifier):
+        value = str(identifier or '').strip()
+        value = _digits(value) if len(_digits(value)) == 13 else (format_dob(value) or value)
+        return (' '.join(str(name or '').casefold().split()), value)
+
+    canonical = set()
     if any((getattr(application, "spouse_first_names", None), getattr(application, "spouse_surname", None),
             getattr(application, "spouse_id_number", None), getattr(application, "spouse_date_of_birth", None))):
         rows.append({"key": "spouse_id_copy", "label": "Spouse ID Copy"})
+        canonical.add(identity(' '.join(filter(None, [getattr(application, 'spouse_first_names', None),
+                                                      getattr(application, 'spouse_surname', None)])),
+                               getattr(application, 'spouse_id_number', None) or getattr(application, 'spouse_date_of_birth', None)))
 
-    rules = getattr(getattr(application, "product", None), "rules", None)
-    plan_type = str(getattr(rules, "plan_type", None) or getattr(application, "form_template", None) or "family").lower()
-    if plan_type == "member_product":
-        member_groups = [("member", "Additional Member", _json_members(getattr(application, "product_dependents_json", None)))]
-    else:
-        member_groups = [
-            ("child", "Child", _json_members(getattr(application, "dependents_json", None))),
-            ("extended", "Extended Member", _json_members(getattr(application, "extended_family_json", None))),
-        ]
+    member_groups = [
+        ("child", "Child", _json_members(getattr(application, "dependents_json", None))),
+        ("extended", "Extended Member", _json_members(getattr(application, "extended_family_json", None))),
+        ("member", "Additional Member", _json_members(getattr(application, "product_dependents_json", None))),
+    ]
     for prefix, label, members in member_groups:
         for index, member in enumerate(members, 1):
-            if not isinstance(member, dict) or not any(member.get(k) for k in ("full_name", "id_or_dob", "relationship")):
+            if not isinstance(member, dict) or not any(member.get(k) for k in ("full_name", "id_or_dob", "id_number", "date_of_birth", "relationship")):
                 continue
             name = str(member.get("full_name") or "").strip()
+            person = identity(name, member.get('id_or_dob') or member.get('id_number') or member.get('date_of_birth'))
+            if prefix == 'member' and person in canonical:
+                continue
+            if prefix != 'member':
+                canonical.add(person)
             suffix = f" - {name}" if name else ""
+            if prefix == 'member' and member.get('relationship'):
+                suffix += f" ({member['relationship']})"
             rows.append({"key": f"{prefix}_{index}_id_copy", "label": f"{label} {index} ID Copy{suffix}"})
 
     rows.append({"key": "proof_of_address", "label": "Proof of Address"})

@@ -76,7 +76,8 @@ def form(token):
             action=request.form.get('action')
             if action=='replace' and a.whatsapp_journey.signed_bundle_at:
                 changed=False
-                for kind in ['id_copy','proof_of_address']:
+                from app.services.document_status_service import required_fica_types
+                for kind in required_fica_types(a):
                     upload=request.files.get(kind)
                     if upload and upload.filename:
                         _save_upload(a,kind,upload);changed=True
@@ -112,7 +113,9 @@ def form(token):
             error='We could not save your application. Please try again or contact staff.'
     from app.routes.signing import REQUIRED_SIGNATURE_DOCS, _fica_status
     if a.whatsapp_journey.signed_bundle_at:
-        return render_template('online/replacements.html',app=a,nonce=session[nonce_key],error=error)
+        from app.services.document_status_service import required_fica_documents
+        return render_template('online/replacements.html',app=a,nonce=session[nonce_key],error=error,
+                               requirements=required_fica_documents(a))
     from app.services.member_benefits import member_benefit, member_limits
     from app.services.compliance_service import age_from_dob, dob_from_sa_id, format_dob
     limits=member_limits(a.product)
