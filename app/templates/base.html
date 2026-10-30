@@ -16,6 +16,7 @@
 <link rel="icon" type="image/png" href="/static/brand/icon-192.png?v=20260918-brand" sizes="192x192">
 <link rel="apple-touch-icon" href="/static/brand/icon-180.png?v=20260918-brand" sizes="180x180">
 <link rel="stylesheet" href="/static/css/module-shell.css?v=20260919-mobile-scroll">
+<link rel="stylesheet" href="{{url_for('static',filename='css/clean-ui.css',v='1')}}">
 </head>
 <body>
 {% if current_user.is_authenticated %}
@@ -30,12 +31,12 @@
   <main class="app-main ms-main">
     <div class="app-topbar ms-topbar">
       <a class="topbar-brand ms-topbar-brand" href="https://martinssystem.co.za/"><img src="{{ url_for('static', filename='img/martins_logo.png') }}" alt="Martins"><span>Martin's Funerals System</span></a>
-      <div class="topbar-account"><span>Logged in as</span><strong>{{ current_user.name }}</strong><span class="topbar-role">{{ current_user.role.name if current_user.role else 'User' }}</span><a href="{{ url_for('auth.logout') }}">Logout</a></div>
+      <div class="topbar-account"><strong>{{ current_user.name }}</strong><span class="topbar-role">{{ current_user.role.name if current_user.role else 'User' }}</span><a href="{{ url_for('auth.logout') }}">Logout</a></div>
       <button class="btn btn-light btn-sm mobile-menu-button" onclick="toggleSidebar(true)">Menu</button>
     </div>
     <div class="mobile-topbar"><a href="{{ url_for('role_portals.home') }}">Martin's Funerals · Insurance Sales</a><button class="btn btn-light btn-sm" onclick="toggleSidebar(true)">Menu</button></div>
     <div class="content-wrap">
-      <form action="{{ url_for('client_files.index') }}" method="post" class="d-flex gap-2 mb-3" role="search">
+      <form action="{{ url_for('client_files.index') }}" method="post" class="quick-client-search mb-3" role="search">
         <label class="visually-hidden" for="client-id-search">Search clients by main member ID</label>
         <input id="client-id-search" class="form-control" name="id_number" placeholder="Search clients by main member ID number" required>
         <button class="btn btn-primary" type="submit">Search clients</button>
@@ -56,4 +57,5 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>function toggleSidebar(show){const s=document.getElementById('appSidebar');const b=document.getElementById('sidebarBackdrop');if(!s||!b)return;s.classList.toggle('show',show);b.classList.toggle('show',show);}function toggleDarkMode(){document.body.classList.toggle('dark-mode');localStorage.setItem('telesalesDarkMode',document.body.classList.contains('dark-mode')?'1':'0');}if(localStorage.getItem('telesalesDarkMode')==='1'){document.body.classList.add('dark-mode');}</script>
 {% if current_user.is_authenticated %}{% include '_callback_popup.html' %}{% endif %}
+<script src="{{url_for('static',filename='js/clean-ui.js',v='1')}}"></script>
 </body></html>

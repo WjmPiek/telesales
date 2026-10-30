@@ -11,23 +11,22 @@
 
 {{workflow_banner(app, flow)}}
 {% if app.signed_at and not flow.closed %}
-<section class="card card-body mb-3" id="request-outstanding">
-  <h4>Request outstanding items</h4>
-  <p>Tick the documents the client must send. Add clear instructions, then send one email with the secure upload link. Accepted documents stay saved.</p>
+<details class="clean-section mb-3" id="request-outstanding" {% if summary.missing %}open{% endif %}><summary>Request outstanding items{% if last_request and 'Delivery failed' in last_request.details %} · Email failed{% endif %}</summary><div class="clean-section-body">
+  <p>Select documents and add instructions.</p>
   <form method="post" action="{{url_for('documents.request_outstanding',app_id=app.id)}}">
     <input type="hidden" name="document_request_csrf" value="{{session['document_request_csrf']}}">
     {% for row in flow.client_requests %}<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="items" value="{{row.key}}" id="request-{{row.key}}" {% if row.status in ['Missing','Rejected'] %}checked{% endif %}><label class="form-check-label" for="request-{{row.key}}">{{row.label}} <span class="badge text-bg-{{'warning' if row.status=='Needs Review' else 'danger'}}">{{row.status}}</span></label></div>{% endfor %}
     {% if flow.missing_ids %}<p>Also requests valid ID numbers for: {{flow.missing_ids|join(', ')}}.</p>{% endif %}
-    <label class="form-label mt-2" for="request-notes">What does the client need to provide or correct?</label><textarea class="form-control" name="notes" id="request-notes" maxlength="2000" rows="3" placeholder="For example: the spouse ID photo is blurred. Please take a clear photo showing all four edges."></textarea>
-    <p class="text-muted mt-2">Email to: <strong>{{app.document_email or app.email or 'Add a client email first'}}</strong>. Selecting a received document requests a replacement; explain the reason above.</p>
+    <label class="form-label mt-2" for="request-notes">Instructions for the client</label><textarea class="form-control" name="notes" id="request-notes" maxlength="2000" rows="3" placeholder="For example: please upload a clearer ID photo."></textarea>
+    <p class="text-muted mt-2">Email to: <strong>{{app.document_email or app.email or 'Add a client email first'}}</strong>. Uploads selected here will be requested again.</p>
     <button class="btn btn-primary">Send request email</button>
   </form>
   {% if last_request %}<p class="mt-3 mb-0"><strong>Latest request:</strong> {{last_request.created_at.strftime('%Y-%m-%d %H:%M')}} UTC · {{last_request.details}}</p>{% endif %}
-</section>
+</div></details>
 {% endif %}
 
 <div class="row g-3 mb-3">
-  <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Document collection (includes follow-ups)</div><h3>{{summary.completion_percent}}%</h3></div></div></div>
+  <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Documents</div><h3>{{summary.completion_percent}}%</h3></div></div></div>
   <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Missing / Rejected</div><h3>{{summary.missing|length}}</h3></div></div></div>
   <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Needs Review</div><h3>{{summary.pending_review|length}}</h3></div></div></div>
 </div>
@@ -41,7 +40,7 @@
       {% for row in summary.rows %}
         <tr id="document-{{row.key}}">
           <td>{{row.group}}</td>
-          <td>{{row.label}} {% if not row.approval_required %}<span class="text-muted d-block">Follow-up only — does not block activation</span>{% endif %}</td>
+          <td>{{row.label}} {% if not row.approval_required %}<span class="text-muted d-block">Follow-up only</span>{% endif %}</td>
           <td>{{status_link(app, row)}}</td>
           <td>{% set stamp = row.signed_at or row.uploaded_at %}{% if stamp %}<time datetime="{{stamp.isoformat()}}"><span class="document-date">{{stamp.strftime('%Y-%m-%d')}}</span><span class="document-time">{{stamp.strftime('%H:%M')}}</span></time>{% endif %}</td>
           <td>
@@ -65,10 +64,10 @@
                 <form method="post" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='approve')}}">
                   <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Approve this FICA document?')">Accept</button>
                 </form>
-                <form method="post" class="document-reject-form" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='reject')}}">
+                <details class="document-correction"><summary>Request replacement</summary><form method="post" class="document-reject-form" action="{{url_for('documents.review_fica', doc_id=row.document.id, action='reject')}}">
                   <input class="form-control form-control-sm" name="reason" placeholder="What needs correcting?" required aria-label="Reason for rejecting {{row.label}}">
-                  <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Reject this FICA document and email the client to resend it?')">Request replacement by email</button>
-                </form>
+                  <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Reject this FICA document and email the client to resend it?')">Send email</button>
+                </form></details>
               </div>
             {% elif row.group == 'FICA' and row.document and row.status == 'Approved' %}
               <span class="text-success">Accepted</span>
@@ -81,8 +80,7 @@
   </div>
 </div>
 
-{% if not flow.closed %}<div class="card" id="staff-upload">
-  <div class="card-header"><b>Staff Upload Document</b></div>
+{% if not flow.closed %}<details class="clean-section" id="staff-upload"><summary>Upload a document</summary>
   <div class="card-body">
     <form method="post" enctype="multipart/form-data" class="document-upload-form">
       <div class="document-upload-type">
@@ -94,8 +92,8 @@
       <div><label for="staff-document-file" class="form-label">Choose file</label><input id="staff-document-file" class="form-control" type="file" name="file" required></div>
       <div><button class="btn btn-primary w-100">Upload</button></div>
     </form>
-    <div class="text-muted mt-2">Allowed files: PDF, JPG, PNG, WEBP. Original photo quality is preserved. Each file must be 25 MB or smaller. Uploads are marked Needs Review until staff approves them. Images and scanned PDFs need manual verification unless OCR is configured.</div>
+    <div class="text-muted mt-2">PDF, JPG, PNG or WEBP · Up to 25 MB · Staff review required.</div>
   </div>
-</div>
-{% endif %}<details class="card card-body mt-3"><summary>Upload audit history</summary>{% for event in upload_audit %}<p>{{event.created_at}} | {{event.action}} | {{event.details}}</p>{% else %}<p>No upload attempts recorded.</p>{% endfor %}</details>
+</details>
+{% endif %}<details class="clean-section mt-3"><summary>Upload audit history</summary>{% for event in upload_audit %}<p>{{event.created_at}} | {{event.action}} | {{event.details}}</p>{% else %}<p>No upload attempts recorded.</p>{% endfor %}</details>
 {% endblock %}
