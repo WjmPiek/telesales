@@ -223,4 +223,5 @@ def client_email_content(kind, application, link=""):
               "first_names": application.first_names or "", "surname": application.surname or "",
               "application_ref": application.application_ref or "", "link": link,
               "policy_number": application.policy_number or "", "start_date": str(application.inception_date or "")}
-    return item["subject"].format(**values), item["body"].format(**values)
+    from app.services.branch_contact import contact_line
+    return item["subject"].format(**values), item["body"].format(**values) + '\n\n' + contact_line(application)

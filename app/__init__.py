@@ -643,6 +643,11 @@ def create_app():
         db.session.commit()
         print(f"Processed {len(jobs)} follow-ups: {sent} sent, {failed} failed, {skipped} skipped")
 
+    @app.context_processor
+    def client_office_contact():
+        from app.services.branch_contact import branch_contact
+        return {'branch_contact':branch_contact}
+
     from app.module_license import check_session_license
     app.before_request(check_session_license)
     return app

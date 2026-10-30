@@ -92,6 +92,7 @@ def _process_campaign_button(payload_id, contact):
         record_callback(recipient, "whatsapp")
         contact.tags = ", ".join(dict.fromkeys([x.strip() for x in ((contact.tags or "") + ", callback, hot").split(",") if x.strip()]))
         contact.status = "Callback Requested"
+        return recipient
     elif action in {"optout", "opt_out"}:
         number = contact.phone_number
         record_opt_out(recipient, "whatsapp")
@@ -100,6 +101,27 @@ def _process_campaign_button(payload_id, contact):
         contact.status = "Opted Out"
     else:
         return
+
+
+def _send_callback_confirmation(recipient, contact, conversation):
+    from app.models import CommunicationEvent
+    from app.services.branch_contact import contact_line
+    if contact.opted_out or not recipient.callback_created:
+        return
+    if CommunicationEvent.query.filter_by(recipient_id=recipient.id,event_type='callback_contact_confirmed').first():
+        return
+    body='Thank you. A consultant will call you back. You can also phone us directly.\n'+contact_line(recipient)
+    try:
+        result=send_whatsapp_text(contact.phone_number,body)
+    except Exception:
+        current_app.logger.exception('Callback recorded but contact confirmation could not be sent')
+        return
+    db.session.add(WhatsAppMessage(conversation_id=conversation.id,provider_message_id=result.message_id,
+        direction='outbound',message_type='text',body=body,status='sent' if result.ok else 'failed',
+        error_message=result.error,raw_payload=json.dumps(result.response_json or {})))
+    if result.ok:
+        db.session.add(CommunicationEvent(campaign_id=recipient.campaign_id,recipient_id=recipient.id,
+            lapsed_policy_id=recipient.lapsed_policy_id,event_type='callback_contact_confirmed',channel='whatsapp'))
 
 
 def _process_payload(payload):
@@ -137,6 +159,7 @@ def _process_payload(payload):
             body = ""
             media_id = None
             mime = None
+            callback_recipient = None
             if message_type == "text":
                 body = (item.get("text") or {}).get("body") or ""
                 if body.strip().casefold() in {"stop", "unsubscribe", "opt out", "opt-out", "cancel", "end", "quit"}:
@@ -155,12 +178,12 @@ def _process_payload(payload):
                 button = item.get("button") or {}
                 body = button.get("text") or "[Button response]"
                 payload_id = button.get("payload") or button.get("id")
-                _process_campaign_button(payload_id, contact)
+                callback_recipient = _process_campaign_button(payload_id, contact)
             elif message_type == "interactive":
                 interactive = item.get("interactive") or {}
                 reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
                 body = reply.get("title") or reply.get("id") or "[Interactive response]"
-                _process_campaign_button(reply.get("id"), contact)
+                callback_recipient = _process_campaign_button(reply.get("id"), contact)
             else:
                 body = f"[{message_type.title()} message]"
 
@@ -184,6 +207,8 @@ def _process_payload(payload):
             conversation.last_message_at = created_at
             conversation.unread_count = (conversation.unread_count or 0) + 1
             contact.updated_at = datetime.utcnow()
+            if callback_recipient:
+                _send_callback_confirmation(callback_recipient,contact,conversation)
 
         for status in value.get("statuses") or []:
             provider_id = status.get("id")

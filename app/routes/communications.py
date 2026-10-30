@@ -1235,7 +1235,7 @@ def public_response(token, action):
         message = "Your opt-out has been recorded. You will not receive further marketing communication."
     else: abort(404)
     db.session.commit()
-    return render_template("communications/response.html", message=message)
+    return render_template("communications/response.html", message=message, recipient=recipient)
 
 
 @communications_bp.route("/notifications")

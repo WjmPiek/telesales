@@ -1,1 +1,1 @@
-{% extends 'base.html' %}{% block content %}<div class="card mx-auto mt-5" style="max-width:650px"><div class="card-body text-center py-5"><h2>Response recorded</h2><p class="lead">{{ message }}</p></div></div>{% endblock %}
+{% extends 'base.html' %}{% block content %}{% set office=branch_contact(recipient) %}<div class="card mx-auto mt-5" style="max-width:650px"><div class="card-body text-center py-5"><h2>Response recorded</h2><p class="lead">{{ message }}</p><p>Call {{office.name}}: <a href="tel:{{office.tel}}">{{office.phone}}</a></p></div></div>{% endblock %}

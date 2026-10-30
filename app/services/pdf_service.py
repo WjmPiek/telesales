@@ -1,3 +1,4 @@
+from app.services.branch_contact import branch_contact
 import json
 from app.services.client_storage import durable_pdf
 import os
@@ -704,7 +705,7 @@ def generate_welcome_pack(app_obj, out_path, signature_path_override=None):
     y = _section(c, "Contact Details", 32, y)
     contact_rows = [
         ("Company", "Martin's Funerals"),
-        ("Telephone", "0860 911 777"),
+        ("Telephone", branch_contact(app_obj)["phone"]),
         ("Email", "info@martinsdirect.com"),
         ("Website", "www.martinsfunerals.co.za"),
         ("FSP", "48189"),
@@ -811,7 +812,7 @@ def generate_popia_pdf(app_obj, out_path, signature_path_override=None):
     y -= 78
 
     y = _section(c, "Company Details", 32, y, w=260)
-    company_rows = [("Company Name", "Martin's Funerals"), ("FSP", "48189"), ("Contact", "0860 911 777"), ("Website", "www.martinsfunerals.co.za")]
+    company_rows = [("Company Name", "Martin's Funerals"), ("FSP", "48189"), ("Contact", branch_contact(app_obj)["phone"]), ("Website", "www.martinsfunerals.co.za")]
     _draw_key_values(c, company_rows, 42, y, label_w=95, leading=12, size=7.8)
     _footer(c)
     c.save()
