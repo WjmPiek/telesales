@@ -388,6 +388,12 @@ def sign_application(token):
     if not session.get(_unlocked_key(app_obj.id)):
         return render_template("sign/unlock.html", app=app_obj, token=token)
 
+    if request.method == 'GET':
+        from app.services.member_additions import review_return
+        addition_link = review_return(app_obj)
+        if addition_link:
+            return redirect(addition_link)
+
     # Campaign/WhatsApp applications use their questionnaire page as the
     # document dashboard, but their document signature forms still post here.
     # Redirect only ordinary page loads; allowing POST keeps the highlighted
@@ -471,6 +477,10 @@ def sign_application(token):
                 # Return to the document after each field so the client can see
                 # the saved signature in place before scrolling to the next pad.
                 if doc_type in _signed_doc_types(app_obj):
+                    from app.services.member_additions import review_return
+                    addition_link = review_return(app_obj)
+                    if addition_link:
+                        return redirect(addition_link)
                     # WhatsApp/browser questionnaire applications choose their
                     # next document from the online application page.
                     if app_obj.whatsapp_journey:
@@ -691,7 +701,7 @@ def supporting_documents(token):
                            missing_id_rows=member_rows, missing_ids=missing_member_ids(app_obj), member_id_nonce=session[nonce_key])
 
 
-def _reopen_changed_application_for_signature(app_obj, changed):
+def _reopen_changed_application_for_signature(app_obj, changed, reason='ID correction'):
     """Retain the signed original, then invalidate only the changed application form."""
     import secrets
     from app.models import AuditLog, AgentNotification, ClientStoredFile
@@ -727,11 +737,11 @@ def _reopen_changed_application_for_signature(app_obj, changed):
     app_obj.status = "Signature Sent"
     if app_obj.whatsapp_journey:
         app_obj.whatsapp_journey.signed_bundle_at = None
-    db.session.add(AuditLog(action="Application reopened for ID correction", entity_type="ClientApplication",
+    db.session.add(AuditLog(action="Application reopened for " + reason, entity_type="ClientApplication",
         entity_id=str(app_obj.id), details=f"Original PDF preserved as {archive_name}; previous signature evidence: {previous_signature_summary}. Updated application requires a new client signature. Changed members: {', '.join(changed)}."))
     if app_obj.agent_id:
         db.session.add(AgentNotification(user_id=app_obj.agent_id, title="Application needs re-signing",
-            message=f"Application {app_obj.application_ref}: client supplied an outstanding ID. Original signed PDF archived; updated form must be signed before QA approval.",
+            message=f"Application {app_obj.application_ref}: {reason}. Original signed PDF archived; updated form must be signed before QA approval.",
             notification_type="application", entity_type="ClientApplication", entity_id=app_obj.id))
 
 

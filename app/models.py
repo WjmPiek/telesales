@@ -1192,6 +1192,22 @@ class ApplicationJourney(db.Model):
     application = db.relationship("ClientApplication", backref=db.backref("whatsapp_journey", uselist=False, cascade="all, delete-orphan"))
 
 
+class ApplicationMemberAddition(db.Model):
+    __tablename__ = 'application_member_additions'
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey('client_applications.id', ondelete='CASCADE'), nullable=False, index=True)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    snapshot = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    revoked_at = db.Column(db.DateTime)
+    delivery_status = db.Column(db.String(80))
+    application = db.relationship('ClientApplication', backref=db.backref('member_additions', lazy=True, cascade='all, delete-orphan'))
+
+
 class BranchFilingOffice(db.Model):
     __tablename__ = 'branch_filing_offices'
     id = db.Column(db.Integer, primary_key=True)

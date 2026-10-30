@@ -431,7 +431,8 @@ def create_app():
     # AUTO_CREATE_TABLES is disabled on a production deployment.
     with app.app_context():
         from app.models import SupportingDocumentReminder, CompanyGroupState, CompanyDocument, HistoricalMemberCover
-        from app.models import BranchFilingOffice, ApplicationFilingDelivery
+        from app.models import BranchFilingOffice, ApplicationFilingDelivery, ApplicationMemberAddition
+        ApplicationMemberAddition.__table__.create(db.engine, checkfirst=True)
         BranchFilingOffice.__table__.create(db.engine, checkfirst=True)
         ApplicationFilingDelivery.__table__.create(db.engine, checkfirst=True)
         from app.services.branch_filing import seed_default_office
@@ -555,6 +556,8 @@ def create_app():
     app.register_blueprint(signing_bp)
     from app.routes.online_application import online_bp
     app.register_blueprint(online_bp)
+    from app.routes.member_additions import member_additions_bp
+    app.register_blueprint(member_additions_bp)
     from app.routes.join import join_bp
     app.register_blueprint(join_bp)
     app.register_blueprint(policies_bp)

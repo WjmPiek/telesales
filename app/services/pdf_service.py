@@ -145,6 +145,10 @@ def _latest_signature_record(app_obj):
 
 
 def _signed_date(app_obj):
+    from app.models import DocumentSignature
+    principal = DocumentSignature.query.filter_by(application_id=app_obj.id, document_type='application:principal').order_by(DocumentSignature.signed_at.desc()).first()
+    if principal and principal.signed_at:
+        return principal.signed_at.strftime('%d/%m/%Y')
     sig = _latest_signature_record(app_obj)
     dt = getattr(sig, "signed_at", None) or getattr(app_obj, "signed_at", None) or datetime.now()
     try:
@@ -557,6 +561,12 @@ def _signature_for_app(app_obj, signature_path_override=None, document_type=None
         return signature_path_override
     if document_type:
         from app.models import DocumentSignature
+        if document_type == 'application':
+            principal = DocumentSignature.query.filter_by(application_id=app_obj.id, document_type='application:principal').order_by(DocumentSignature.signed_at.desc()).first()
+            if principal:
+                return principal.signature_image_path
+            if not app_obj.signed_at:
+                return None
         document_sig = DocumentSignature.query.filter_by(application_id=app_obj.id, document_type=document_type).order_by(DocumentSignature.signed_at.desc()).first()
         if document_sig:
             return document_sig.signature_image_path
