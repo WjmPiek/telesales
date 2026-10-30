@@ -249,3 +249,25 @@ class LapsReportTests(unittest.TestCase):
                         {column['name'] for column in inspect(db.engine).get_columns('lapsed_policies')})
         with db.engine.connect() as conn:
             self.assertEqual(conn.execute(text('SELECT policy_number FROM lapsed_policies')).scalar(), 'OLD-REPORT')
+
+    def test_trailing_formatted_blank_columns_do_not_break_report_import(self):
+        from openpyxl.styles import PatternFill
+        from openpyxl import load_workbook
+        workbook=load_workbook(self.workbook())
+        workbook.active['K1'].fill=PatternFill('solid',fgColor='FFFFFF')
+        output=io.BytesIO();workbook.save(output);output.seek(0)
+        self.login('admin')
+        response=self.client.post('/recovery/import',data={'file':(output,'Northcliff Laps Report.xlsx')})
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(),2)
+
+    def test_unknown_and_empty_workbooks_are_not_reported_as_successful_imports(self):
+        self.login('admin')
+        for headers in [['Unrelated column'],['Policy_Number','Surname','Cell_Number']]:
+            workbook=Workbook();workbook.active.append(headers)
+            output=io.BytesIO();workbook.save(output);output.seek(0)
+            response=self.client.post('/recovery/import',data={'file':(output,'unrecognised.xlsx')})
+            self.assertEqual(response.status_code,302)
+            self.assertEqual(LapsedPolicy.query.count(),2)
+            with self.client.session_transaction() as session:
+                self.assertEqual(session['_flashes'][-1][0],'danger')

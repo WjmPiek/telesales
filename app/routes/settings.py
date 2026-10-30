@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file, current_app
 from flask_login import login_required, current_user
 from app import db
 from app.models import SystemSetting, AuditLog
@@ -317,6 +317,23 @@ def import_historical_member_cover():
     return redirect(url_for('settings.cover_checks'))
 
 
+@settings_bp.route('/data-reset/backup')
+@login_required
+def data_reset_backup():
+    from datetime import datetime
+    from flask import session
+    from app.services.reset_backup import build_reset_backup
+    if not is_super_admin():
+        abort(403)
+    archive, fingerprint = build_reset_backup()
+    session['data_reset_backup_fingerprint'] = fingerprint
+    response = send_file(archive, mimetype='application/zip', as_attachment=True,
+        download_name='telesales-before-reset-' + datetime.utcnow().strftime('%Y%m%d-%H%M%S') + '.zip')
+    response.headers['Cache-Control'] = 'no-store, private'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
 @settings_bp.route('/data-reset', methods=['GET', 'POST'])
 @login_required
 def data_reset():
@@ -333,12 +350,29 @@ def data_reset():
         if request.form.get('confirmation', '').strip() != 'CLEAR ALL TEST DATA':
             flash('Reset cancelled. Enter the exact confirmation phrase.', 'danger')
             return redirect(url_for('settings.data_reset'))
+        fingerprint = session.get('data_reset_backup_fingerprint')
+        if not fingerprint or request.form.get('backup_saved') != 'yes':
+            flash('Download and save the private backup before clearing client data.', 'danger')
+            return redirect(url_for('settings.data_reset'))
+        scheduler = current_app.extensions.get('whatsapp_scheduler')
+        resume_scheduler = bool(scheduler and scheduler.state == 1)
+        if resume_scheduler:
+            scheduler.pause()
         try:
-            counts = reset_operational_data()
+            counts = reset_operational_data(expected_fingerprint=fingerprint, actor_id=current_user.id)
+            session.pop('data_reset_backup_fingerprint', None)
+            session.pop('data_reset_csrf', None)
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), 'danger')
+            return redirect(url_for('settings.data_reset'))
         except Exception:
             db.session.rollback()
             flash('The reset failed and no partial database changes were saved.', 'danger')
             raise
+        finally:
+            if resume_scheduler:
+                scheduler.resume()
         flash(
             'Operational data cleared: '
             f"{counts['applications']} applications, {counts['imported_clients']} imported clients, "

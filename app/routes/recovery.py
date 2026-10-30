@@ -443,23 +443,34 @@ def import_lapsed():
     except Exception as exc:
         flash(str(exc) if isinstance(exc, ValueError) else 'The Excel file could not be read.', 'danger')
         return redirect(url_for('recovery.queue'))
+    try:
+        return _import_recovery_workbook(wb, file.filename)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'danger')
+        return redirect(url_for('recovery.queue'))
+    finally:
+        wb.close()
+
+
+def _import_recovery_workbook(wb, filename):
     from app.services.laps_report import REPORT_HEADERS, header, import_report
     report_headers = {header(cell.value) for cell in wb.active[1]}
     if REPORT_HEADERS.issubset(report_headers):
         try:
-            franchise, created, updated, missing = import_report(wb, file.filename, current_user)
+            franchise, created, updated, missing = import_report(wb, filename, current_user)
             flash(f'{franchise}: imported {created} clients; updated {updated}; {missing} without a valid mobile number. Importing does not send WhatsApp messages.', 'success' if not missing else 'warning')
             return redirect(url_for('recovery.queue', franchise=franchise))
         except ValueError as exc:
             db.session.rollback()
             flash(str(exc), 'danger')
             return redirect(url_for('recovery.queue'))
-        finally:
-            wb.close()
     if "POLICY_IMPORT" in wb.sheetnames:
         return _import_single_sheet_policies(wb)
     ws = wb["CLIENTS"] if "CLIENTS" in wb.sheetnames else wb.active
     headers = [c.value for c in ws[1]]
+    if 'policynumber' not in {_norm_header(value) for value in headers}:
+        raise ValueError('Unrecognised import columns. Use the policy/laps report template here. For name-and-phone lists, choose Import individual clients.')
     # The payment Total in older imports is not an insured benefit. Only the
     # explicit, per-person COVERED_MEMBERS sheet may populate cover history.
     cover_rows = []
@@ -545,6 +556,8 @@ def import_lapsed():
             comments=comments, assigned_agent_id=assigned_agent, recovery_status=recovery_status, next_action_date=next_action
         )
         db.session.add(lp)
+    if count + suspense_count == 0:
+        raise ValueError('The workbook contains no policy rows to import.')
     if cover_rows:
         from app.models import HistoricalMemberCover
         from app.services.company_groups import get_or_create_company

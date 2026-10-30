@@ -1,25 +1,22 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Clear operational data</h2>
+<h2>Clean start</h2>
 <p class="text-muted">Start a clean client import without removing products, member rules, users, settings, WhatsApp template definitions or opt-out suppression records.</p>
 
-<div class="row g-3 mb-4">
-  {% for label, value in counts.items() %}
-  <div class="col-sm-6 col-lg-3"><div class="card h-100"><div class="card-body">
-    <div class="text-muted">{{ label.replace('_', ' ').title() }}</div><h3>{{ value }}</h3>
-  </div></div></div>
-  {% endfor %}
-</div>
+<div class="card card-body mb-3"><h4>Reset preview</h4><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Data</th><th>Records</th><th>Action</th></tr></thead><tbody>{% for label,value in counts.items() %}<tr><td>{{label.replace('_',' ').title()}}</td><td>{{value}}</td><td>{{'Keep' if label.endswith('_kept') else 'Remove'}}</td></tr>{% endfor %}</tbody></table></div></div>
+{% if counts.active_applications %}<div class="alert alert-warning"><strong>{{counts.active_applications}} active application(s) will also be removed.</strong></div>{% endif %}
 
+<section class="card card-body mb-3"><h4>1. Save a backup</h4><p>Includes client records, applications, documents and activity. Keep this private ZIP file; it is separate from your new Excel import.</p><div><a class="btn btn-outline-primary" href="{{url_for('settings.data_reset_backup')}}">Download private backup</a></div></section>
 <div class="alert alert-danger">
-  <h4 class="alert-heading">Permanent reset</h4>
-  <p>This deletes applications and signed documents, imported clients and historical member-cover imports, call/script history, campaign recipients and delivery history, plus WhatsApp messages and conversations. Company document settings remain.</p>
-  <p class="mb-0"><strong>This cannot be undone.</strong></p>
+  <h4 class="alert-heading">2. Clear client and activity data</h4>
+  <p>This deletes applications and signed documents, imported clients and historical member-cover imports, call/script history, campaign recipients and delivery history, plus WhatsApp messages and conversations. Company document settings and reusable campaign/template definitions remain. Campaigns stay unscheduled; archived or deleted campaigns stay archived or deleted.</p>
+  <p class="mb-0"><strong>This cannot be undone from this screen. Backup restoration requires an administrator.</strong></p>
 </div>
 
 <form method="post" class="card border-danger">
   <input type="hidden" name="data_reset_csrf" value="{{ session['data_reset_csrf'] }}">
   <div class="card-body">
+    <label class="d-block mb-3"><input type="checkbox" name="backup_saved" value="yes" required> I have saved the private backup.</label>
     <label class="form-label" for="confirmation">Type <strong>CLEAR ALL TEST DATA</strong> to confirm</label>
     <input class="form-control" id="confirmation" name="confirmation" autocomplete="off" required>
     <button class="btn btn-danger mt-3" type="submit">Permanently clear operational data</button>

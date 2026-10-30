@@ -61,7 +61,8 @@ def parse_report(workbook, filename):
     iterator = sheet.iter_rows(values_only=True)
     original_headers = next(iterator, ())
     headers = [header(value) for value in original_headers]
-    if len(set(headers)) != len(headers) or not REPORT_HEADERS.issubset(headers):
+    named_headers = [name for name in headers if name]
+    if len(set(named_headers)) != len(named_headers) or not REPORT_HEADERS.issubset(named_headers):
         raise ValueError('Expected Policy #, Initial. Surname, Address, Cell# and Last Receipt columns.')
     rows = []
     seen = set()

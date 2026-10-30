@@ -13,7 +13,16 @@ from app.services.whatsapp_service import SendResult
 
 
 class ProspectImportTests(unittest.TestCase):
-    setUp = fixtures.ApplicationFlowTests.setUp
+    def setUp(self):
+        from datetime import datetime
+        license_check = patch('app.module_license.entitlement', return_value={'managed':False,'active':True})
+        license_check.start();self.addCleanup(license_check.stop)
+        fixtures.ApplicationFlowTests.setUp(self)
+        user=db.session.get(User,self.user_id)
+        user.active=True;user.owner_approved_at=datetime.utcnow();db.session.commit()
+        from flask import g
+        def fresh_user():g.pop('_login_user',None)
+        self.app.before_request_funcs.setdefault(None,[]).insert(0,fresh_user)
     tearDown = fixtures.ApplicationFlowTests.tearDown
 
     def workbook(self, rows, headers=("Name", "Cell_Number")):

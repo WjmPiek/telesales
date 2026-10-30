@@ -59,7 +59,7 @@ def import_contacts():
     try:
         if not upload or not (upload.filename or "").lower().endswith(".xlsx"):
             raise ValueError("Choose an .xlsx file using the individual clients template.")
-        if len(upload.read()) > 5 * 1024 * 1024:
+        if len(upload.read(5 * 1024 * 1024 + 1)) > 5 * 1024 * 1024:
             raise ValueError("The import file must be smaller than 5 MB.")
         upload.seek(0)
         wb = load_workbook(upload, read_only=True, data_only=True)
