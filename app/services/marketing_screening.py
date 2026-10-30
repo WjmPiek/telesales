@@ -111,11 +111,11 @@ def clearance(policy):
         if result_status(latest.get(provider)) == 'listed':
             return False, f'Listed on {label}'
     consent = latest.get('whatsapp')
-    if not consent or consent.result != 'granted':
-        return False, 'Explicit WhatsApp marketing consent is missing or withdrawn'
+    if consent and consent.result == 'withdrawn':
+        return False, 'Client withdrew WhatsApp marketing permission'
     configuration = registry_policy()
     if configuration is None:
-        return True, 'Consent recorded; external screening is not configured'
+        return True, 'Eligible to send; external screening is not configured'
     for provider in configuration['required']:
         status = result_status(latest.get(provider))
         if status != 'clear':

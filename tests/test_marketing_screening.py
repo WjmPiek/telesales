@@ -63,13 +63,17 @@ class MarketingScreeningTests(unittest.TestCase):
         db.session.commit()
         return campaign, recipient
 
-    def test_default_preferences_do_not_establish_consent(self):
+    def test_missing_consent_record_does_not_block_campaigns(self):
         lead = self.lead()
-        self.configure()
-        self.evidence(lead)
         self.assertTrue(preference_for(lead).whatsapp_allowed)
-        self.assertIn('consent', clearance(lead)[1])
+        self.assertTrue(clearance(lead)[0])
+        self.assertEqual(MarketingScreening.query.count(), 0)
+
+    def test_recorded_withdrawal_still_blocks_campaigns(self):
+        lead = self.lead()
+        self.evidence(lead, 'whatsapp', 'withdrawn')
         self.assertFalse(clearance(lead)[0])
+        self.assertIn('withdrew', clearance(lead)[1])
 
     def test_optional_external_screening_and_required_expired_checks(self):
         lead = self.lead()
@@ -198,18 +202,17 @@ class MarketingScreeningTests(unittest.TestCase):
         from app.services.marketing_screening import registry_policy
         self.assertEqual(registry_policy()['required'], [])
 
-    def test_common_sender_holds_before_provider_and_allows_only_with_evidence(self):
+    def test_common_sender_still_enforces_configured_register_checks(self):
         from app.routes.communications import _send_to_recipient
         lead = self.lead()
         campaign, recipient = self.campaign(lead)
+        self.configure()
         with self.app.test_request_context(), patch('app.routes.communications.send_whatsapp_template_image',
                 return_value=SimpleNamespace(ok=False, error='Synthetic provider failure', message_id=None, response_json={})) as sender:
             self.assertFalse(_send_to_recipient(campaign, recipient, 'whatsapp')[0])
             self.assertEqual(recipient.whatsapp_status, 'Held')
             sender.assert_not_called()
-            self.configure()
             self.evidence(lead)
-            self.evidence(lead, 'whatsapp', 'granted')
             _send_to_recipient(campaign, recipient, 'whatsapp')
             sender.assert_called_once()
 
@@ -217,6 +220,7 @@ class MarketingScreeningTests(unittest.TestCase):
         from app.services.whatsapp_campaign_engine import process_scheduled_campaigns
         lead = self.lead()
         campaign, recipient = self.campaign(lead)
+        self.configure()
         with self.app.test_request_context(), patch('app.routes.communications._refresh_template_status',
                 return_value=SimpleNamespace(ok=True)), patch('app.routes.communications.send_whatsapp_template_image') as sender:
             process_scheduled_campaigns()
@@ -224,14 +228,41 @@ class MarketingScreeningTests(unittest.TestCase):
             self.assertEqual(campaign.queue_status, 'held')
             self.assertIsNone(campaign.sent_at)
             sender.assert_not_called()
-            self.configure()
             self.evidence(lead)
-            self.evidence(lead, 'whatsapp', 'granted')
             campaign.status, campaign.queue_status = 'Scheduled', 'queued'
             db.session.commit()
             with patch('app.routes.communications._send_to_recipient', return_value=(True, None)) as send:
                 process_scheduled_campaigns()
                 send.assert_called_once()
+
+    def test_campaign_without_consent_record_sends_with_actions_and_honours_opt_out(self):
+        from app.routes.communications import _send_to_recipient
+        from app.services.communication_service import record_opt_out
+        lead = self.lead()
+        campaign, recipient = self.campaign(lead)
+        with self.app.test_request_context(), patch('app.routes.communications.send_whatsapp_template_image',
+                return_value=SimpleNamespace(ok=True, error=None, message_id='synthetic-send', response_json={})) as sender:
+            self.assertTrue(_send_to_recipient(campaign, recipient, 'whatsapp')[0])
+            self.assertEqual(recipient.whatsapp_status, 'Sent')
+            args, kwargs = sender.call_args
+            self.assertEqual(args[4:6], ('callback:synthetic-token', 'optout:synthetic-token'))
+            self.assertEqual(kwargs['join_token'], 'synthetic-token')
+            record_opt_out(recipient, 'whatsapp')
+            self.assertFalse(_send_to_recipient(campaign, recipient, 'whatsapp')[0])
+            self.assertEqual(recipient.whatsapp_status, 'Held')
+            sender.assert_called_once()
+
+    def test_scheduled_campaign_without_consent_record_reaches_provider(self):
+        from app.services.whatsapp_campaign_engine import process_scheduled_campaigns
+        lead = self.lead()
+        campaign, recipient = self.campaign(lead)
+        with self.app.test_request_context(), patch('app.routes.communications._refresh_template_status',
+                return_value=SimpleNamespace(ok=True)), patch('app.routes.communications.send_whatsapp_template_image',
+                return_value=SimpleNamespace(ok=True, error=None, message_id='synthetic-scheduled', response_json={})) as sender:
+            process_scheduled_campaigns()
+            sender.assert_called_once()
+            self.assertEqual(recipient.whatsapp_status, 'Sent')
+            self.assertEqual(campaign.queue_status, 'completed')
 
     def test_explicit_application_consent_is_linked_to_imported_phone(self):
         from app.services.marketing_consent import apply_consent

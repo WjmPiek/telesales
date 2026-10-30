@@ -1,8 +1,8 @@
 {% extends 'base.html' %}{% block content %}
 <h1 class="h3">Marketing screening{% if policy %}: {{ policy.initials or '' }} {{ policy.surname or '' }}{% endif %}</h1>
 <p><a href="{{ url_for('client_files.index') }}">Find clients and filter screening results</a>{% if policy %} · <a href="{{ url_for('client_files.index', policy_id=policy.id) }}">Client file</a> · <a href="{{ url_for('marketing_screening.index') }}">Bulk results and register settings</a>{% endif %}</p>
-<div class="alert alert-info">Live registry access is not connected. Record checks obtained through an authorised member/provider service, or import its results. A number being absent from a register is not marketing consent. WhatsApp marketing also needs explicit permission. Times below are South African time (SAST).</div>
-{% if not configuration %}<p class="alert alert-warning">External screening is not configured. Internal opt-outs and recorded marketing consent are used for campaign checks. This does not establish compliance with any external register obligations. If required registers are configured, missing, expired or failed checks hold marketing.</p>{% endif %}
+<div class="alert alert-info">Live registry access is not connected. Record checks obtained through an authorised member/provider service, or import its results. Times below are South African time (SAST).</div>
+{% if not configuration %}<p class="alert alert-info">External screening is not configured. A separate WhatsApp consent record is optional for campaign sending. Client opt-outs, suppression records, withdrawn WhatsApp permission and known register listings still block messages.</p>{% endif %}
 {% if policy %}
 <p><b>Current number:</b> {{ policy.cell_number or 'Missing' }} · <b>Franchise:</b> {{ policy.franchise or policy.company_name or policy.branch or '' }}</p>
 <p class="alert {{ 'alert-success' if clearance[0] else 'alert-warning' }}">{{ clearance[1] }}</p>
