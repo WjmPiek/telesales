@@ -134,6 +134,8 @@ def save_questionnaire(a, form):
                     db.session.add(AgentNotification(user_id=a.agent_id, title="Client application received",
                         message=f"{a.first_names} {a.surname} completed application {a.application_ref}.",
                         notification_type="application_submitted", entity_type="LapsedPolicy", entity_id=lead.id))
+    from app.services.franchise_routing import route_debit_order_application
+    route_debit_order_application(a)
     a.whatsapp_journey.ready=True
 
 
@@ -186,14 +188,17 @@ def notify_activation(a):
         db.session.commit()
         attachments = list(paths.values())
         cash = str(a.payment_method or '').strip().lower() == 'cash'
-        company_rows = active_company_documents(a, include_bank=cash)
+        stop_order = str(a.payment_method or '').strip().lower() == 'stop order'
+        company_rows = active_company_documents(a, include_bank=cash or stop_order)
         company_has_bank = any(row.category == 'bank_confirmation' for row in company_rows)
+        if stop_order and not company_has_bank:
+            raise ValueError(f'The bank confirmation letter for {a.branch or "this branch"} is not configured.')
         if cash and not company_has_bank:
             bank_letter = business_bank_confirmation_attachment()
             if not bank_letter:
                 raise ValueError('The current business bank confirmation letter is not configured.')
             attachments.append(bank_letter)
-        company_paths, company_folder = materialise_company_documents(a, include_bank=cash)
+        company_paths, company_folder = materialise_company_documents(a, include_bank=cash or stop_order)
         attachments.extend(company_paths)
         subject,body=client_email_content('activation',a)
         sent=send_email(a.document_email or a.email,subject,body,attachments,application_id=a.id)

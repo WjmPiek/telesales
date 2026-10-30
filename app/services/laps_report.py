@@ -99,17 +99,10 @@ def parse_report(workbook, filename):
     return franchise, rows
 
 
-def report_company(franchise, fallback_branch):
-    """Resolve a report's named franchise independently of the uploader's branch."""
-    from app.models import CompanyGroupState
-    from app.services.company_groups import get_or_create_company
-    key = header(franchise)
-    matches = [company for company in CompanyGroupState.query.all()
-               if header(company.branch) == key and header(company.company_name) in
-               {key, 'martinsfunerals' + key, 'martins' + key}]
-    if len(matches) > 1:
-        raise ValueError('More than one company matches this franchise. Correct the company groups before importing.')
-    return matches[0] if matches else get_or_create_company(franchise, fallback_branch)
+def report_company(franchise):
+    """Northcliff reports go to Northcliff; every other franchise goes to Brokers."""
+    from app.services.franchise_routing import destination_company, is_northcliff
+    return destination_company(is_northcliff(franchise))
 
 
 def report_group_repairs():
@@ -140,20 +133,21 @@ def report_group_repairs():
 def import_report(workbook, filename, user):
     from app.services.communication_service import is_suppressed, preference_for
     franchise, rows = parse_report(workbook, filename)
-    company = report_company(franchise, (user.branch or franchise).strip())
+    company = report_company(franchise)
     branch = company.branch
     role = user.role.name.lower().replace('_', ' ') if user.role else ''
     if role not in {'admin', 'super admin'} and branch != (user.branch or '').strip():
         raise ValueError('This report belongs to another branch. Ask an administrator to import it.')
     if company.status != 'Active':
         raise ValueError('This franchise is suspended or deleted. Reactivate it before importing.')
-    existing = {p.policy_number.casefold(): p for p in LapsedPolicy.query.filter_by(company_id=company.id).all() if p.policy_number}
+    existing = {p.policy_number.casefold(): p for p in LapsedPolicy.query.filter_by(company_id=company.id).filter(
+        db.func.lower(LapsedPolicy.franchise) == franchise.lower()).all() if p.policy_number}
     created = updated = missing_mobile = 0
     for data in rows:
         valid_mobile = data.pop('valid_mobile')
         policy = existing.get(data['policy_number'].casefold())
         if policy is None:
-            policy = LapsedPolicy(company_id=company.id, company_name=franchise, franchise=franchise,
+            policy = LapsedPolicy(company_id=company.id, company_name=company.company_name, franchise=franchise,
                                   branch=branch, lead_type='policy', assigned_agent_id=user.id,
                                   recovery_status='Imported', next_action_date=None)
             db.session.add(policy)

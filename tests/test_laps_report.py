@@ -77,8 +77,12 @@ class LapsReportTests(unittest.TestCase):
         from app.models import CompanyGroupState
         self.import_report()
         lead_ids = [self.lead().id, self.lead('TEST-2').id]
-        company = CompanyGroupState(company_name='MARTINS FUNERALS NORTHCLIFF',branch='NORTHCLIFF',status='Active')
-        db.session.add(company); db.session.commit()
+        company_id = self.lead().company_id
+        wrong = CompanyGroupState(company_name='Northcliff',branch='Brokers',status='Active')
+        db.session.add(wrong); db.session.flush()
+        for policy in LapsedPolicy.query.filter(LapsedPolicy.id.in_(lead_ids)).all():
+            policy.company_id=wrong.id; policy.company_name='Northcliff'; policy.branch='Brokers'
+        db.session.commit()
         self.assertEqual(self.client.post('/settings/report-import-groups').status_code,400)
         page=self.client.get('/settings/report-import-groups')
         self.assertIn(b'Correct imported franchise groups',page.data)
@@ -86,7 +90,7 @@ class LapsReportTests(unittest.TestCase):
             csrf=session['report_group_csrf']
         self.client.post('/settings/report-import-groups',data={'csrf':csrf})
         self.assertEqual([self.lead().id,self.lead('TEST-2').id],lead_ids)
-        self.assertEqual(self.lead().company_id,company.id)
+        self.assertEqual(self.lead().company_id,company_id)
         self.assertEqual(self.lead().branch,'NORTHCLIFF')
         self.import_report()
         self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(),2)
@@ -106,19 +110,49 @@ class LapsReportTests(unittest.TestCase):
         db.session.add(CompanyGroupState(company_name='Northcliff',branch='NORTHCLIFF',status='Active'))
         db.session.commit()
         with self.assertRaisesRegex(ValueError,'More than one company'):
-            report_company('Northcliff','Brokers')
+            report_company('Northcliff')
 
     def test_group_repair_skips_clients_already_in_a_campaign(self):
         from app.models import CompanyGroupState
         from app.services.laps_report import report_group_repairs
         self.import_report()
         lead_id=self.lead().id
-        company=CompanyGroupState(company_name='MARTINS FUNERALS NORTHCLIFF',branch='NORTHCLIFF',status='Active')
+        company=CompanyGroupState(company_name='Northcliff',branch='Brokers',status='Active')
         campaign=CommunicationCampaign(name='Existing',message_body='Test',created_by_id=self.user_ids['admin'])
         db.session.add_all([company,campaign]); db.session.flush()
+        for policy in LapsedPolicy.query.filter_by(franchise='Northcliff').all():
+            policy.company_id=company.id; policy.company_name='Northcliff'; policy.branch='Brokers'
         db.session.add(CampaignRecipient(campaign_id=campaign.id,lapsed_policy_id=lead_id,secure_token='repair-test'))
         db.session.commit()
         self.assertEqual(report_group_repairs(),[])
+
+    def test_other_franchises_share_brokers_company_without_merging_policy_numbers(self):
+        from app.services.franchise_routing import destination_company
+        self.import_report('Southridge Laps Report.xlsx')
+        self.import_report('Westville Laps Report.xlsx')
+        brokers=destination_company()
+        self.assertEqual(LapsedPolicy.query.filter_by(company_id=brokers.id,source_type='laps_report').count(),4)
+        self.assertEqual(self.lead(franchise='Southridge').branch,'Brokers')
+        self.import_report('Southridge Laps Report.xlsx')
+        self.assertEqual(LapsedPolicy.query.filter_by(company_id=brokers.id,source_type='laps_report').count(),4)
+
+    def test_only_northcliff_debit_order_application_moves_to_brokers(self):
+        from app.services.franchise_routing import route_debit_order_application
+        self.import_report()
+        lead=self.lead()
+        application=ClientApplication(application_ref='ROUTE-TEST',lapsed_policy_id=lead.id,company_id=lead.company_id,branch=lead.branch,payment_method='Cash')
+        db.session.add(application); db.session.commit()
+        self.assertFalse(route_debit_order_application(application))
+        application.payment_method='Stop Order'
+        self.assertFalse(route_debit_order_application(application))
+        application.payment_method='Debit Order'
+        self.assertTrue(route_debit_order_application(application))
+        db.session.commit()
+        self.assertEqual(application.branch,'Brokers')
+        self.assertEqual(lead.branch,'NORTHCLIFF')
+        self.assertEqual(application.lapsed_policy_id,lead.id)
+        self.assertNotEqual(application.company_id,lead.company_id)
+        self.assertFalse(route_debit_order_application(application))
 
     def test_reimport_updates_in_place_without_resetting_progress_or_opt_out(self):
         self.import_report()

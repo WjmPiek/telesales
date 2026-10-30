@@ -236,6 +236,8 @@ def new_application():
             form_template=form_template,
         )
         try:
+            from app.services.franchise_routing import route_debit_order_application
+            route_debit_order_application(a)
             db.session.add(a)
             db.session.commit()
         except Exception as exc:
