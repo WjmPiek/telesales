@@ -117,6 +117,15 @@ class CampaignDocumentRoutingTests(unittest.TestCase):
                 self.assertEqual(submission_notification_recipients('client@example.com', application), [expected])
             self.assertEqual(submission_notification_recipients('client@example.com', ClientApplication(filing_branch='Inactive')), [])
 
+    def test_staff_prepared_campaign_application_copies_recipient(self):
+        self.login('admin')
+        with patch('app.services.compliance_service.assert_application_rules', return_value=(True, [])):
+            response = self.client.post(f'/online-application/campaign/{self.rid}', data={'product_id': self.pid})
+        self.assertEqual(response.status_code, 302)
+        application = ClientApplication.query.one()
+        self.assertEqual(application.filing_branch, 'Sanel')
+        self.assertEqual(application.email, 'client@example.com')
+
     def test_approved_pack_sends_five_pdfs_to_selected_recipient_once(self):
         application = ClientApplication(application_ref='ROUTING-PACK', status='Active', signed_at=datetime.utcnow(),
                                         filing_branch='Sanel')

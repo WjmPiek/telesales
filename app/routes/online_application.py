@@ -34,9 +34,11 @@ def prepare(recipient_id):
         product=db.session.get(PolicyProduct,request.form.get('product_id',type=int))
         if not product or not product.active:abort(400)
         from app.services.compliance_service import classify_product_template, dob_from_sa_id, assert_application_rules
+        from app.services.branch_filing import filing_branch
         a=ClientApplication(application_ref='WA-'+secrets.token_hex(6).upper(),product=product,agent_id=current_user.id,
           branch=policy.branch,company_id=policy.company_id,lapsed_policy_id=policy.id,first_names=policy.initials,surname=policy.surname,
           id_number=policy.id_number,cell_number=policy.cell_number,email=policy.email_address,
+          filing_branch=filing_branch(recipient.campaign),
           date_of_birth=dob_from_sa_id(policy.id_number),status='Draft',payment_method='Cash',
           address=policy.address,residential_address=policy.address,form_template=classify_product_template(product),
           monthly_premium=product.monthly_premium,total_payment=product.monthly_premium,cover_amount=product.cover_amount,
