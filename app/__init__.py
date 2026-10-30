@@ -431,8 +431,13 @@ def create_app():
     # AUTO_CREATE_TABLES is disabled on a production deployment.
     with app.app_context():
         from app.models import SupportingDocumentReminder, CompanyGroupState, CompanyDocument, HistoricalMemberCover
-        from app.models import BranchFilingOffice, ApplicationFilingDelivery, ApplicationMemberAddition
+        from app.models import BranchFilingOffice, ApplicationFilingDelivery, ApplicationMemberAddition, ApplicationMemberCountReview
         ApplicationMemberAddition.__table__.create(db.engine, checkfirst=True)
+        ApplicationMemberCountReview.__table__.create(db.engine, checkfirst=True)
+        if db.engine.dialect.name == 'postgresql':
+            from sqlalchemy import text
+            with db.engine.begin() as conn:
+                conn.execute(text('ALTER TABLE application_member_additions ALTER COLUMN requested_by_id DROP NOT NULL'))
         BranchFilingOffice.__table__.create(db.engine, checkfirst=True)
         ApplicationFilingDelivery.__table__.create(db.engine, checkfirst=True)
         from app.services.branch_filing import seed_default_office
@@ -517,6 +522,8 @@ def create_app():
                     try:
                         from app.services.document_reminders import process_document_reminders
                         process_document_reminders(limit=25)
+                        from app.services.member_count_review import process_member_count_reminders
+                        process_member_count_reminders(limit=25)
                     except Exception:
                         app.logger.exception("Automatic supporting-document reminders failed")
             scheduler.add_job(_whatsapp_tick, "interval", seconds=60, id="whatsapp_provider_monitor", replace_existing=True, max_instances=1, coalesce=True)

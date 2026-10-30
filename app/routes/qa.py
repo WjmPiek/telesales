@@ -120,6 +120,11 @@ def review_application(app_id):
             return redirect(url_for('qa.review_application', app_id=app.id))
 
         if decision in {'QA Approved', 'Compliance Approved'}:
+            from app.services.member_count_review import count_summary
+            member_count = count_summary(app)
+            if member_count['missing']:
+                flash(f"Approval blocked: {member_count['missing']} requested member(s) still need to be added or the current member count confirmed by the client.", 'danger')
+                return redirect(url_for('qa.review_application', app_id=app.id))
             from app.models import BranchFilingOffice
             from app.services.branch_filing import filing_branch
             selected = (request.form.get('filing_branch') or filing_branch(app)).strip()

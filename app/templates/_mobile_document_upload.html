@@ -1,0 +1,3 @@
+{% macro document_picker(key, name='file', camera_name='camera_file', required=false) -%}
+<div class="mobile-document-picker" style="margin:10px 0"><label for="file_{{key}}">Choose a photo or PDF</label><input id="file_{{key}}" type="file" name="{{name}}" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.heif" {% if required %}required{% endif %} data-original-required="{{'1' if required else '0'}}"><button type="button" class="camera-trigger" data-camera-id="camera_{{key}}" style="margin:8px 0">Take a photo</button><input id="camera_{{key}}" type="file" name="{{camera_name}}" accept="image/*" capture="environment" hidden style="display:none"><p class="selected-document" role="status" style="overflow-wrap:anywhere"></p></div>
+{%- endmacro %}

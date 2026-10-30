@@ -1196,7 +1196,7 @@ class ApplicationMemberAddition(db.Model):
     __tablename__ = 'application_member_additions'
     id = db.Column(db.Integer, primary_key=True)
     application_id = db.Column(db.Integer, db.ForeignKey('client_applications.id', ondelete='CASCADE'), nullable=False, index=True)
-    requested_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
     snapshot = db.Column(db.String(64), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -1206,6 +1206,20 @@ class ApplicationMemberAddition(db.Model):
     revoked_at = db.Column(db.DateTime)
     delivery_status = db.Column(db.String(80))
     application = db.relationship('ClientApplication', backref=db.backref('member_additions', lazy=True, cascade='all, delete-orphan'))
+
+
+class ApplicationMemberCountReview(db.Model):
+    __tablename__ = 'application_member_count_reviews'
+    application_id = db.Column(db.Integer, db.ForeignKey('client_applications.id', ondelete='CASCADE'), primary_key=True)
+    expected_count = db.Column(db.Integer, nullable=False)
+    captured_count = db.Column(db.Integer)
+    first_sent_at = db.Column(db.DateTime)
+    final_sent_at = db.Column(db.DateTime)
+    last_attempt_at = db.Column(db.DateTime)
+    confirmed_at = db.Column(db.DateTime)
+    confirmed_count = db.Column(db.Integer)
+    resolution = db.Column(db.String(80))
+    application = db.relationship('ClientApplication', backref=db.backref('member_count_review', uselist=False, cascade='all, delete-orphan'))
 
 
 class BranchFilingOffice(db.Model):

@@ -33,6 +33,13 @@ STANDARD_BRANCH_CODES={
 
 
 def save_questionnaire(a, form):
+    from app.services.cover_eligibility import application_members
+    existing_people = {(str(person.get('name') or '').strip().casefold(), format_dob(person.get('dob')))
+                       for person in application_members(a)[1:]}
+    legacy_spouse_name = (form.get('spouse_1_full_name') or ' '.join(filter(None, [
+        form.get('spouse_first_names', a.spouse_first_names), form.get('spouse_surname', a.spouse_surname)]))).strip()
+    legacy_spouse_id = (form.get('spouse_1_id_or_dob') or form.get('spouse_id_number', a.spouse_id_number)
+                        or form.get('spouse_date_of_birth', a.spouse_date_of_birth) or '').strip()
     for group, fields in FIELDS:
         for key,label,options,required in fields:
             value=form.get(key,'').strip()
@@ -82,6 +89,19 @@ def save_questionnaire(a, form):
             a.spouse_date_of_birth=format_dob(dob_from_sa_id(identifier) or identifier)
         all_members.extend(benefit_rows)
     a.product_dependents_json=json.dumps(all_members)
+    if limits['plan_type']=='member_product' and (legacy_spouse_name or legacy_spouse_id):
+        duplicate = any(str(row.get('full_name','')).strip().casefold() == legacy_spouse_name.casefold()
+                        or (legacy_spouse_id and row.get('id_or_dob') == legacy_spouse_id) for row in all_members)
+        if not duplicate:
+            if not legacy_spouse_name or not legacy_spouse_id:
+                raise ValueError('Complete the saved spouse’s name and ID or date of birth before saving.')
+            all_members.extend(enrich_rows(a.product, 'productdep', [{'full_name':legacy_spouse_name,
+                'relationship':'Spouse','id_or_dob':legacy_spouse_id}]))
+        if len(all_members) > limits['productdep']:
+            raise ValueError('The saved spouse would exceed the member spaces in this product. Please review the member list with staff.')
+        a.product_dependents_json=json.dumps(all_members)
+    if len(all_members) < len(existing_people):
+        raise ValueError('Saved covered members are missing from this submission. Please restore their details or ask staff to correct the member list. No saved member has been removed.')
     if a.payment_method=='Debit Order':
         if not a.debit_day or not a.first_deduction_date:
             raise ValueError('Select the debit day and first deduction date.')

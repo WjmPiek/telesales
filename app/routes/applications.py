@@ -277,10 +277,12 @@ def view_application(app_id):
     session.setdefault('branch_filing_csrf', secrets.token_urlsafe(32))
     session.setdefault('member_addition_csrf', secrets.token_urlsafe(32))
     from app.services.member_additions import can_add, available_kinds, pending_addition
+    from app.services.member_count_review import count_summary
     return render_template("applications/view.html", app=a, member_benefits=member_benefits,
                            document_summary=document_summary(a), screening=latest_screening(a),
                            allow_member_addition=can_add(a) and bool(available_kinds(a)),
                            pending_member_addition=pending_addition(a),
+                           member_count=count_summary(a),
                            upload_email_event=upload_email_event, office_email_event=office_email_event,
                            office_prompt=False, filing_offices=BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.branch_name).all(),
                            filing_destination=filing_branch(a), filing_email=(filing_office(a).email if filing_office(a) else None), filing_delivery=latest_delivery(a), filing_history=ApplicationFilingDelivery.query.filter_by(application_id=a.id).order_by(ApplicationFilingDelivery.id.desc()).all())

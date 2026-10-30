@@ -194,6 +194,7 @@ def _get_uploaded_file(document_type):
     # Some browsers/form changes may send the file under the document type name.
     return (
         request.files.get("file")
+        or request.files.get('camera_file')
         or request.files.get(document_type)
         or request.files.get(f"file_{document_type}")
     )
@@ -788,6 +789,10 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, remi
             upload_path = adapter.build("signing.supporting_documents", {"token": app_obj.sign_token})
         upload_link = base_url + upload_path
         subject, body = client_email_content("supporting", app_obj, upload_link)
+        required, received, outstanding, docs = _fica_status(app_obj)
+        if outstanding:
+            body += '\n\nOutstanding document uploads:\n' + '\n'.join('- ' + fica_label(app_obj, key) for key in outstanding)
+        body += '\n\nYou can take a clear photo of each ID on your phone or upload a photo/PDF. If a document is not available now, keep this secure link and return when you have it. Documents already received stay saved.'
         from app.services.cover_eligibility import missing_member_ids
         missing_ids = missing_member_ids(app_obj)
         if missing_ids:

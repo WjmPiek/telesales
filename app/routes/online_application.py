@@ -78,7 +78,7 @@ def form(token):
                 changed=False
                 from app.services.document_status_service import required_fica_types
                 for kind in required_fica_types(a):
-                    upload=request.files.get(kind)
+                    upload=request.files.get(kind) or request.files.get('camera_'+kind)
                     if upload and upload.filename:
                         _save_upload(a,kind,upload);changed=True
                 if not changed:raise ValueError('Choose a replacement document to upload.')
@@ -152,7 +152,8 @@ def form(token):
       'productdep':(getattr(rules,'extra_member_min_age',None) if rules else None,getattr(rules,'extra_member_max_age',None) if rules else None,0,70),
     }
     member_age_rules={key:(values[2] if values[0] is None else values[0],values[3] if values[1] is None else values[1]) for key,values in member_age_rules.items()}
-    return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,branch_codes=STANDARD_BRANCH_CODES,
+    from app.services.member_count_review import count_summary
+    return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,branch_codes=STANDARD_BRANCH_CODES,member_count=count_summary(a),
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,signed_docs=signed_documents(a),
       received=_fica_status(a)[1],nonce=session[nonce_key],error=error,selected_members=selected_members,

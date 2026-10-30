@@ -129,7 +129,7 @@ def append_member(application, form):
     else:
         combined[empty] = entry
     application.product_dependents_json = json.dumps(combined)
-    application.total_members = len(application_members(application))
+    application.total_members = max(int(application.total_members or 0), len(application_members(application)))
     ok, errors = assert_application_rules(application)
     if not ok:
         raise ValueError('; '.join(errors))
