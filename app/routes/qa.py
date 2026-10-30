@@ -18,7 +18,7 @@ QA_CHECKLIST = [
     ('debit_order', 'Debit order authority confirmed'),
     ('beneficiary', 'Beneficiary captured/confirmed'),
     ('signature_complete', 'Client signed required documents'),
-    ('fica_complete', 'Required FICA documents received'),
+    ('fica_complete', 'Principal member FICA documents received and accepted'),
     ('contact_details', 'Client contact details verified'),
     ('no_red_flags', 'No unresolved red flags or complaints'),
 ]
@@ -141,9 +141,10 @@ def review_application(app_id):
             from app.services.cover_eligibility import coverage_report, coverage_errors, lock_member_approvals
             lock_member_approvals(app)
             cover_report = coverage_report(app)
-            if cover_report['missing_ids']:
-                flash('Approval blocked: valid South African ID numbers are still required for ' +
-                      ', '.join(cover_report['missing_ids']) + '. The policy remains pending.', 'danger')
+            from app.services.cover_eligibility import activation_identity_errors
+            identity_errors = activation_identity_errors(app)
+            if identity_errors:
+                flash('Approval blocked: ' + '; '.join(identity_errors), 'danger')
                 return redirect(url_for('qa.review_application', app_id=app.id))
             cover_errors = coverage_errors(app, cover_report)
             if cover_errors:
@@ -156,7 +157,7 @@ def review_application(app_id):
                 return redirect(url_for('qa.review_application', app_id=app.id))
             summary = document_summary(app)
             screened, errors = ensure_screened(app)
-            if not summary['complete'] or not screened:
+            if not summary.get('approval_complete', summary['complete']) or not screened:
                 flash('Approval blocked: complete and approve all required documents and the employee FIC check first. ' + '; '.join(errors), 'danger')
                 return redirect(url_for('qa.review_application', app_id=app.id))
 
@@ -213,7 +214,8 @@ def review_application(app_id):
         checklist_defaults['debit_order'] = True
     if app.signed_at:
         checklist_defaults['signature_complete'] = True
-    if all(row['status'] == 'Approved' for row in document_summary(app)['rows'] if row['key'] in document_summary(app)['required_fica_types']):
+    from app.services.document_status_service import approval_fica_types
+    if all(row['status'] == 'Approved' for row in document_summary(app)['rows'] if row['key'] in approval_fica_types(app)):
         checklist_defaults['fica_complete'] = True
     if script and script.status == 'Completed':
         for key in ['popia_confirmed', 'product_explained', 'premium_confirmed', 'waiting_periods', 'debit_order', 'contact_details']:

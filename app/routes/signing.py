@@ -412,7 +412,8 @@ def sign_application(token):
                 row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
                 generate_fica_pdf(app_obj, os.path.join(application_folder(app_obj), f"fica_verification_{app_obj.id}.pdf"))
                 required, received, outstanding, docs = _fica_status(app_obj)
-                app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
+                if app_obj.status != 'Active':
+                    app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
                 db.session.commit()
                 flash(f"{FICA_LABELS.get(doc_type, doc_type)} uploaded successfully: {getattr(row, 'original_filename', None) or 'file received'}", "success")
                 return redirect(url_for("signing.sign_application", token=token))
@@ -645,7 +646,8 @@ def supporting_documents(token):
                     raise ValueError("Invalid document type")
                 row = _save_upload(app_obj, doc_type, _get_uploaded_file(doc_type))
                 required, received, outstanding, docs = _fica_status(app_obj)
-                app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
+                if app_obj.status != 'Active':
+                    app_obj.status = "FICA Outstanding" if outstanding else "FICA Review"
                 from app.services.cover_eligibility import missing_member_ids
                 if not outstanding and not missing_member_ids(app_obj):
                     from app.services.document_reminders import cancel_document_reminders
@@ -658,17 +660,20 @@ def supporting_documents(token):
                 return redirect(url_for("signing.supporting_documents", token=token))
             if action == "complete":
                 required, received, outstanding, docs = _fica_status(app_obj)
-                if outstanding:
+                from app.services.document_status_service import approval_fica_types
+                required_outstanding = [key for key in outstanding if key in approval_fica_types(app_obj)]
+                if required_outstanding:
                     raise ValueError("Please upload every required document before submitting: " +
-                                     ", ".join(allowed[key] for key in outstanding))
-                app_obj.status = "FICA Review"
+                                     ", ".join(allowed[key] for key in required_outstanding))
+                if app_obj.status != 'Active':
+                    app_obj.status = "FICA Review"
                 from app.services.cover_eligibility import missing_member_ids
                 if not missing_member_ids(app_obj):
                     from app.services.document_reminders import cancel_document_reminders
                     cancel_document_reminders(app_obj.id)
                 from app.models import AgentNotification, AuditLog
                 db.session.add(AuditLog(action="Supporting documents completed", entity_type="ClientApplication",
-                                        entity_id=str(app_obj.id), details="Client submitted all member identity documents and proof of address for staff review."))
+                                        entity_id=str(app_obj.id), details="Client submitted available supporting documents; additional member IDs may remain outstanding for follow-up."))
                 if app_obj.agent_id:
                     db.session.add(AgentNotification(user_id=app_obj.agent_id,
                         title="Supporting documents ready for review",
@@ -697,7 +702,10 @@ def supporting_documents(token):
         if not is_valid_sa_id(only_digits(row.get("id_or_dob") or row.get("id_number"))):
             member_rows.append({"index": index, "name": row.get("full_name") or f"Member {index + 1}",
                                 "dob": row.get("date_of_birth") or row.get("id_or_dob")})
+    from app.services.document_status_service import approval_fica_types
+    approval_types = approval_fica_types(app_obj)
     return render_template("sign/supporting_documents.html", app=app_obj, token=token, requirements=requirements,
+                           approval_types=approval_types, required_outstanding=[key for key in outstanding if key in approval_types],
                            received=received, outstanding=outstanding, latest=latest, error=error,
                            missing_id_rows=member_rows, missing_ids=missing_member_ids(app_obj), member_id_nonce=session[nonce_key])
 
@@ -793,13 +801,12 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, remi
         if outstanding:
             body += '\n\nOutstanding document uploads:\n' + '\n'.join('- ' + fica_label(app_obj, key) for key in outstanding)
         body += '\n\nYou can take a clear photo of each ID on your phone or upload a photo/PDF. If a document is not available now, keep this secure link and return when you have it. Documents already received stay saved.'
-        from app.services.cover_eligibility import missing_member_ids
-        missing_ids = missing_member_ids(app_obj)
+        from app.services.cover_eligibility import application_members
+        missing_ids = [member['name'] or member['role'] for member in application_members(app_obj) if not member['id_number']]
         if missing_ids:
-            body += ("\n\nYour policy remains pending because valid South African ID numbers are "
-                     "outstanding for: " + ", ".join(missing_ids) +
+            body += ("\n\nID numbers are still outstanding for follow-up: " + ", ".join(missing_ids) +
                      ". Open the secure link above to enter those ID numbers. "
-                     "The updated application must be signed again before activation.")
+                     "Additional members can be considered for activation using their valid dates of birth while their ID numbers or copies are outstanding. The principal member's FIC check and required documents must still be completed.")
         if reminder_stage:
             subject = ("Final reminder" if reminder_stage == 2 else "Reminder") + ": upload documents for " + app_obj.application_ref
             body = ("This is your final reminder.\n\n" if reminder_stage == 2 else "This is a reminder.\n\n") + body

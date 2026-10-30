@@ -9,7 +9,7 @@ FINAL_STATUSES = {'Active', 'QA Approved', 'Compliance Approved', 'QA Rejected',
 
 def workflow_state(application):
     from app.services.member_count_review import count_summary
-    from app.services.cover_eligibility import application_members
+    from app.services.cover_eligibility import application_members, activation_identity_errors
     from app.services.screening_service import ensure_screened
     summary = document_summary(application)
     active = bool(application.status == 'Active' or (application.whatsapp_journey and application.whatsapp_journey.activated_at))
@@ -21,11 +21,10 @@ def workflow_state(application):
     if count['missing']:
         blockers.append(f"Confirm {count['missing']} missing member(s) with the client.")
     ids = [member['name'] or ('Principal member' if index == 0 else f'Additional member {index}')
-           for index, member in enumerate(application_members(application)) if not member['id_number']]
-    if ids:
-        blockers.append('Capture valid member ID numbers: ' + ', '.join(ids) + '.')
+           for index, member in enumerate(application_members(application)) if index > 0 and not member['id_number']]
+    blockers.extend(activation_identity_errors(application))
     for row in summary['rows']:
-        if (row.get('required') or row['status'] == 'Needs Review') and row['group'] != 'Employee FIC' and row['status'] not in {'Signed', 'Approved'}:
+        if row['approval_required'] and row['group'] != 'Employee FIC' and row['status'] not in {'Signed', 'Approved'}:
             blockers.append(row['label'] + ': ' + row['status'] + '.')
     screened, _ = ensure_screened(application)
     if not screened:
@@ -34,6 +33,7 @@ def workflow_state(application):
                 and row['status'] in {'Missing', 'Rejected', 'Needs Review'}]
     return {'summary': summary, 'blockers': blockers, 'ready': not blockers and not closed,
             'active': active, 'closed': closed, 'client_requests': requests, 'missing_ids': ids,
+            'followups': [row['label'] for row in summary['rows'] if not row['approval_required'] and row['status'] not in {'Signed', 'Approved'}],
             'stage': 4 if active else 3 if not blockers else 2 if application.signed_at else 1}
 
 
@@ -43,7 +43,7 @@ def advance_to_quality(application, *, actor_id=None):
     if state['ready'] and application.status not in {'QA Pending', 'QA Review'}:
         application.status = 'QA Pending'
         db.session.add(AuditLog(user_id=actor_id, action='Ready for quality review', entity_type='ClientApplication',
-            entity_id=str(application.id), details='Required documents accepted, member details confirmed, signatures and FIC check complete. Awaiting a final staff decision.'))
+            entity_id=str(application.id), details='Principal documents and FIC check complete; additional members may use dates of birth with ID follow-ups outstanding. Awaiting a final staff decision.'))
     elif not state['closed'] and not state['ready'] and application.status in {'QA Pending', 'QA Review'}:
         application.status = 'FICA Review'
     return state['ready']

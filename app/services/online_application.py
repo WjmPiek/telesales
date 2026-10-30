@@ -148,13 +148,13 @@ def notify_activation(a):
     from app.services.client_storage import application_folder
     from app.services.email_service import business_bank_confirmation_attachment, client_email_content, send_email
     from app.services.company_documents import active_company_documents, materialise_company_documents
-    from app.services.cover_eligibility import coverage_report
+    from app.services.cover_eligibility import coverage_report, activation_identity_errors
     from app.services.pdf_service import (generate_application_pdf, generate_disclosure_pdf,
                                           generate_popia_pdf, generate_welcome_pack)
     journey=ApplicationJourney.query.filter_by(application_id=a.id).with_for_update().populate_existing().one()
     eligibility = coverage_report(a)
     valid_rules, rule_errors = assert_application_rules(a)
-    if eligibility['missing_ids'] or eligibility['blocked'] or not valid_rules:
+    if activation_identity_errors(a) or eligibility['blocked'] or not valid_rules:
         logging.getLogger(__name__).error('Activation notice blocked by member ID or cover validation for application %s', a.id)
         return False
     if not journey.activated_at or journey.notice_status in {'Sent','Sending'}:

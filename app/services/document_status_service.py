@@ -38,6 +38,11 @@ def required_fica_types(application):
     return [row["key"] for row in required_fica_documents(application)]
 
 
+def approval_fica_types(application):
+    """Only the principal member's identity documents and proof of address block approval."""
+    return [key for key in required_fica_types(application) if key in {'id_copy', 'passport', 'permit_visa', 'proof_of_address'}]
+
+
 def _json_members(raw):
     try:
         rows = json.loads(raw or "[]")
@@ -197,11 +202,18 @@ def document_summary(application):
     missing = [row for row in rows if row["required"] and row["status"] in {"Missing", "Rejected", "Screenshot required"}]
     pending_review = [row for row in rows if row["status"] == "Needs Review"]
     complete = not missing and not pending_review
+    principal_types = set(approval_fica_types(application))
+    for row in rows:
+        row['approval_required'] = bool(row['required'] and
+            (row['group'] in {'Signature', 'Employee FIC'} or row['key'] in principal_types or row['key'] in dict(SIGNATURE_DOCUMENTS)))
+    approval_complete = all(row['status'] in {'Signed', 'Approved', 'Employee checked', 'Reviewed'}
+                            for row in rows if row['approval_required'])
     return {
         "rows": rows,
         "missing": missing,
         "pending_review": pending_review,
         "complete": complete,
+        "approval_complete": approval_complete,
         "completion_percent": round(((len(rows) - len(missing) - len(pending_review)) / len(rows)) * 100) if rows else 0,
         "required_fica_types": required_fica_types(application),
         "fica_labels": FICA_LABELS,

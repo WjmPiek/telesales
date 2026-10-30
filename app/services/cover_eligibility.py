@@ -78,6 +78,20 @@ def missing_member_ids(application):
     return [member["role"] for member in application_members(application) if not member["id_number"]]
 
 
+def activation_identity_errors(application):
+    """Additional members may be activated with a valid DOB instead of an ID."""
+    errors = []
+    for index, member in enumerate(application_members(application)):
+        name = member['name'] or ('Principal member' if index == 0 else f'Additional member {index}')
+        if index == 0 and not member['id_number']:
+            errors.append('A valid principal member ID number is required.')
+        elif index and not member['id_number']:
+            age = age_from_dob(member['dob'])
+            if age is None or age < 0:
+                errors.append(name + ' needs a valid date of birth or ID number.')
+    return errors
+
+
 def replace_missing_member_ids(application, submitted):
     """Fill DOB-only members from the unlocked client portal, never replace an existing ID."""
     from app.services.member_benefits import enrich_rows

@@ -165,7 +165,7 @@ CLIENT_EMAIL_DEFAULTS = {
     "supporting": {
         "label": "Application received and supporting documents requested",
         "subject": "Martin's Funerals - application {application_ref} received",
-        "body": "Dear {client_name},\n\nYour signed application has been received and is awaiting verification. Your policy is not active yet.\n\nPlease use this secure link to upload the South African ID document for every member on the application and the principal member's proof of address:\n\n{link}\n\nYou will need the principal member ID number to unlock the page. Your final approved documents will be emailed only after all required checks are complete and the policy has been activated.",
+        "body": "Dear {client_name},\n\nYour signed application has been received and is awaiting verification. Your policy is not active yet.\n\nPlease use this secure link to upload the principal member's ID document and proof of address. Additional members' IDs can be provided when available; valid dates of birth can be used for activation:\n\n{link}\n\nYou will need the principal member ID number to unlock the page. Your final approved documents will be emailed only after all required checks are complete and the policy has been activated.",
     },
     "receipt": {
         "label": "Signed documents receipt",

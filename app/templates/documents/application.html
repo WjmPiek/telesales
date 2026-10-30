@@ -27,7 +27,7 @@
 {% endif %}
 
 <div class="row g-3 mb-3">
-  <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Completion</div><h3>{{summary.completion_percent}}%</h3></div></div></div>
+  <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Document collection (includes follow-ups)</div><h3>{{summary.completion_percent}}%</h3></div></div></div>
   <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Missing / Rejected</div><h3>{{summary.missing|length}}</h3></div></div></div>
   <div class="col-md-4"><div class="card"><div class="card-body"><div class="text-muted">Needs Review</div><h3>{{summary.pending_review|length}}</h3></div></div></div>
 </div>
@@ -41,7 +41,7 @@
       {% for row in summary.rows %}
         <tr id="document-{{row.key}}">
           <td>{{row.group}}</td>
-          <td>{{row.label}} {% if not row.required %}<span class="text-muted">optional</span>{% endif %}</td>
+          <td>{{row.label}} {% if not row.approval_required %}<span class="text-muted d-block">Follow-up only — does not block activation</span>{% endif %}</td>
           <td>{{status_link(app, row)}}</td>
           <td>{% set stamp = row.signed_at or row.uploaded_at %}{% if stamp %}<time datetime="{{stamp.isoformat()}}"><span class="document-date">{{stamp.strftime('%Y-%m-%d')}}</span><span class="document-time">{{stamp.strftime('%H:%M')}}</span></time>{% endif %}</td>
           <td>

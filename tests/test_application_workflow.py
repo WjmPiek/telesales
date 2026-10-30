@@ -40,7 +40,9 @@ class ApplicationWorkflowTests(unittest.TestCase):
         with self.client.session_transaction() as s:return s['document_request_csrf']
 
     def test_last_accept_routes_to_quality_without_activating_or_sending(self):
-        doc=self.complete_agent_file();doc_id=doc.id
+        self.complete_agent_file()
+        doc=ClientFicaDocument.query.filter_by(application_id=self.aid,document_type='proof_of_address').one()
+        doc.status='Needs Review';db.session.commit();doc_id=doc.id
         self.assertFalse(workflow_state(self.record)['ready'])
         with patch('app.routes.documents.send_email') as mail:
             response=self.client.post(f'/documents/fica/{doc.id}/approve')
@@ -64,7 +66,7 @@ class ApplicationWorkflowTests(unittest.TestCase):
         self.record.total_members=2
         self.record.product_dependents_json=self.record.product_dependents_json.replace('0908155312089','2009-08-15')
         db.session.commit()
-        self.assertFalse(advance_to_quality(self.record))
+        self.assertTrue(advance_to_quality(self.record))
         self.assertTrue(workflow_state(self.record)['missing_ids'])
         self.assertEqual(workflow_state(self.record)['missing_ids'], ['Existing Child'])
 
@@ -116,7 +118,9 @@ class ApplicationWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.get(f'/documents/application/{self.aid}').status_code,403)
 
     def test_qa_queue_separates_ready_from_agent_work_and_closed_files_cannot_change(self):
-        doc=self.complete_agent_file()
+        self.complete_agent_file()
+        doc=ClientFicaDocument.query.filter_by(application_id=self.aid,document_type='proof_of_address').one()
+        doc.status='Needs Review';db.session.commit()
         before=self.client.get('/qa/').data
         self.assertIn(b'Agent check',before)
         self.assertNotIn(b'>Final review</a>',before)
