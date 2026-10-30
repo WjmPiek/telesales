@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Imported franchise groups</h2>
+<p>Match reports imported under the uploader's branch to their existing franchise company. Client details, source rows and import dates stay unchanged.</p>
+{% if plans %}
+<table class="table"><thead><tr><th>Imported group</th><th>Correct franchise</th><th>Clients</th></tr></thead><tbody>
+{% for source,target,rows in plans %}<tr><td>{{source.company_name}} / {{source.branch}}</td><td>{{target.company_name}} / {{target.branch}}</td><td>{{rows|length}}</td></tr>{% endfor %}
+</tbody></table>
+<form method="post"><input type="hidden" name="csrf" value="{{session['report_group_csrf']}}"><button class="btn btn-primary">Correct imported franchise groups</button></form>
+{% else %}<div class="alert alert-success">No imported franchise groups need correction.</div>{% endif %}
+{% endblock %}

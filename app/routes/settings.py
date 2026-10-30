@@ -317,6 +317,36 @@ def import_historical_member_cover():
     return redirect(url_for('settings.cover_checks'))
 
 
+@settings_bp.route('/report-import-groups', methods=['GET', 'POST'])
+@login_required
+def report_import_groups():
+    import secrets
+    from flask import session
+    from app.services.laps_report import report_group_repairs
+    if not is_super_admin():
+        abort(403)
+    plans = report_group_repairs()
+    if request.method == 'POST':
+        if not session.get('report_group_csrf') or not secrets.compare_digest(
+                session['report_group_csrf'], request.form.get('csrf', '')):
+            abort(400)
+        total = 0
+        for source, target, rows in plans:
+            for policy in rows:
+                policy.company_id = target.id
+                policy.company_name = target.company_name
+                policy.branch = target.branch
+            total += len(rows)
+            db.session.add(AuditLog(user_id=current_user.id, action='Repair report import group',
+                entity_type='CompanyGroupState', entity_id=str(target.id),
+                details=f'{len(rows)} imported clients moved from group {source.id} to {target.id}; client IDs and source records retained.'))
+        db.session.commit()
+        flash(f'{total} imported clients linked to their franchise company. No messages were sent.', 'success')
+        return redirect(url_for('settings.report_import_groups'))
+    session.setdefault('report_group_csrf', secrets.token_urlsafe(32))
+    return render_template('settings/report_import_groups.html', plans=plans)
+
+
 @settings_bp.route('/data-reset/backup')
 @login_required
 def data_reset_backup():

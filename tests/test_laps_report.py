@@ -59,6 +59,67 @@ class LapsReportTests(unittest.TestCase):
         self.assertIsNone(missing.last_date_paid)
         self.assertIn('1900-01-01', missing.source_row_json)
 
+    def test_named_franchise_uses_existing_company_instead_of_admin_branch(self):
+        from app.models import CompanyGroupState
+        company = CompanyGroupState(company_name='MARTINS FUNERALS NORTHCLIFF', branch='NORTHCLIFF', status='Active')
+        db.session.add(company); db.session.commit()
+        company_id = company.id
+        self.import_report()
+        lead = self.lead()
+        self.assertEqual((lead.company_id, lead.branch), (company_id, 'NORTHCLIFF'))
+        campaign = CommunicationCampaign(name='Franchise campaign',message_body='Test',company_id=company_id,branch='NORTHCLIFF',created_by_id=self.user_ids['admin'])
+        db.session.add(campaign); db.session.commit()
+        response = self.client.get(f'/communications/{campaign.id}?date_basis=imported&date_from={date.today()}&date_to={date.today()}')
+        self.assertIn(b'VAN DER TEST',response.data)
+        self.assertIn(b'Northcliff',response.data)
+
+    def test_group_repair_is_explicit_authorized_and_keeps_client_ids(self):
+        from app.models import CompanyGroupState
+        self.import_report()
+        lead_ids = [self.lead().id, self.lead('TEST-2').id]
+        company = CompanyGroupState(company_name='MARTINS FUNERALS NORTHCLIFF',branch='NORTHCLIFF',status='Active')
+        db.session.add(company); db.session.commit()
+        self.assertEqual(self.client.post('/settings/report-import-groups').status_code,400)
+        page=self.client.get('/settings/report-import-groups')
+        self.assertIn(b'Correct imported franchise groups',page.data)
+        with self.client.session_transaction() as session:
+            csrf=session['report_group_csrf']
+        self.client.post('/settings/report-import-groups',data={'csrf':csrf})
+        self.assertEqual([self.lead().id,self.lead('TEST-2').id],lead_ids)
+        self.assertEqual(self.lead().company_id,company.id)
+        self.assertEqual(self.lead().branch,'NORTHCLIFF')
+        self.import_report()
+        self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(),2)
+        self.login('manager')
+        self.assertEqual(self.client.get('/settings/report-import-groups').status_code,403)
+
+    def test_report_mapping_rejects_ambiguous_companies_and_cross_branch_staff(self):
+        from app.models import CompanyGroupState
+        from app.services.laps_report import report_company, import_report
+        from openpyxl import load_workbook
+        db.session.add(CompanyGroupState(company_name='MARTINS FUNERALS NORTHCLIFF',branch='NORTHCLIFF',status='Active'))
+        db.session.commit()
+        wb=load_workbook(self.workbook())
+        with self.assertRaisesRegex(ValueError,'another branch'):
+            import_report(wb,'Northcliff Laps Report.xlsx',self.users['manager'])
+        wb.close()
+        db.session.add(CompanyGroupState(company_name='Northcliff',branch='NORTHCLIFF',status='Active'))
+        db.session.commit()
+        with self.assertRaisesRegex(ValueError,'More than one company'):
+            report_company('Northcliff','Brokers')
+
+    def test_group_repair_skips_clients_already_in_a_campaign(self):
+        from app.models import CompanyGroupState
+        from app.services.laps_report import report_group_repairs
+        self.import_report()
+        lead_id=self.lead().id
+        company=CompanyGroupState(company_name='MARTINS FUNERALS NORTHCLIFF',branch='NORTHCLIFF',status='Active')
+        campaign=CommunicationCampaign(name='Existing',message_body='Test',created_by_id=self.user_ids['admin'])
+        db.session.add_all([company,campaign]); db.session.flush()
+        db.session.add(CampaignRecipient(campaign_id=campaign.id,lapsed_policy_id=lead_id,secure_token='repair-test'))
+        db.session.commit()
+        self.assertEqual(report_group_repairs(),[])
+
     def test_reimport_updates_in_place_without_resetting_progress_or_opt_out(self):
         self.import_report()
         lead = self.lead()

@@ -99,12 +99,52 @@ def parse_report(workbook, filename):
     return franchise, rows
 
 
-def import_report(workbook, filename, user):
+def report_company(franchise, fallback_branch):
+    """Resolve a report's named franchise independently of the uploader's branch."""
+    from app.models import CompanyGroupState
     from app.services.company_groups import get_or_create_company
+    key = header(franchise)
+    matches = [company for company in CompanyGroupState.query.all()
+               if header(company.branch) == key and header(company.company_name) in
+               {key, 'martinsfunerals' + key, 'martins' + key}]
+    if len(matches) > 1:
+        raise ValueError('More than one company matches this franchise. Correct the company groups before importing.')
+    return matches[0] if matches else get_or_create_company(franchise, fallback_branch)
+
+
+def report_group_repairs():
+    """Preview only unambiguous, unused report groups created in the uploader's branch."""
+    from app.models import CompanyGroupState, ClientApplication, CampaignRecipient
+    plans = []
+    for source in CompanyGroupState.query.all():
+        rows = LapsedPolicy.query.filter_by(company_id=source.id).all()
+        if not rows or any(p.source_type != 'laps_report' or header(p.franchise) != header(source.company_name) for p in rows):
+            continue
+        key = header(source.company_name)
+        targets = [c for c in CompanyGroupState.query.filter_by(status='Active').all()
+                   if c.id != source.id and header(c.branch) == key and
+                   header(c.company_name) in {key, 'martinsfunerals' + key, 'martins' + key}]
+        if len(targets) != 1:
+            continue
+        ids = [p.id for p in rows]
+        if ClientApplication.query.filter(ClientApplication.lapsed_policy_id.in_(ids)).first() or CampaignRecipient.query.filter(CampaignRecipient.lapsed_policy_id.in_(ids)).first():
+            continue
+        target = targets[0]
+        existing = {p.policy_number.casefold() for p in LapsedPolicy.query.filter_by(company_id=target.id).all() if p.policy_number}
+        if any(p.policy_number and p.policy_number.casefold() in existing for p in rows):
+            continue
+        plans.append((source, target, rows))
+    return plans
+
+
+def import_report(workbook, filename, user):
     from app.services.communication_service import is_suppressed, preference_for
     franchise, rows = parse_report(workbook, filename)
-    branch = (user.branch or franchise).strip()
-    company = get_or_create_company(franchise, branch)
+    company = report_company(franchise, (user.branch or franchise).strip())
+    branch = company.branch
+    role = user.role.name.lower().replace('_', ' ') if user.role else ''
+    if role not in {'admin', 'super admin'} and branch != (user.branch or '').strip():
+        raise ValueError('This report belongs to another branch. Ask an administrator to import it.')
     if company.status != 'Active':
         raise ValueError('This franchise is suspended or deleted. Reactivate it before importing.')
     existing = {p.policy_number.casefold(): p for p in LapsedPolicy.query.filter_by(company_id=company.id).all() if p.policy_number}
