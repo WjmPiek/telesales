@@ -2,12 +2,31 @@
 import json
 import secrets
 from app import db
-from app.models import CampaignRecipient
+from app.models import (CampaignRecipient,CommunicationEvent,CommunicationFollowUp,
+                        WhatsAppMessage,ClientApplication)
 from app.services.campaign_audience import contact_number, SENT_STATUSES
 from app.services.communication_service import preference_for, is_suppressed
 
 
 def select_recipients(campaign, policies):
+    if campaign.audience_type=='individual':
+        if len(policies)!=1: raise ValueError('Choose one individual client.')
+        policy=policies[0]
+        pref=preference_for(policy)
+        if not contact_number(policy) or pref.opted_out_all or not pref.whatsapp_allowed or is_suppressed(policy):
+            return []
+        previous=list(campaign.recipients)
+        if previous and not any(contact_number(r.policy)==contact_number(policy) for r in previous):
+            ids=[r.id for r in previous]
+            history=(any(r.whatsapp_status not in {None,'Not Sent'} or r.response_type or r.responded_at for r in previous)
+                or CommunicationEvent.query.filter(CommunicationEvent.recipient_id.in_(ids),CommunicationEvent.event_type!='recipient_added').first()
+                or CommunicationFollowUp.query.filter(CommunicationFollowUp.recipient_id.in_(ids)).first()
+                or WhatsAppMessage.query.filter(WhatsAppMessage.campaign_recipient_id.in_(ids)).first()
+                or ClientApplication.query.filter(ClientApplication.source_campaign_recipient_id.in_(ids)).first())
+            if history: raise ValueError('This individual message already has client history. Create a new campaign to choose another client.')
+            CommunicationEvent.query.filter(CommunicationEvent.recipient_id.in_(ids)).update({CommunicationEvent.recipient_id:None},synchronize_session=False)
+            for recipient in previous: db.session.delete(recipient)
+            db.session.flush();db.session.expire(campaign,['recipients'])
     existing = {}
     sent = set()
     for recipient in campaign.recipients:

@@ -1157,12 +1157,14 @@ def queue_selection(campaign_id):
     campaign = CommunicationCampaign.query.get_or_404(campaign_id)
     if not _can_use_campaign(campaign): abort(403)
     if campaign.company and campaign.company.status != 'Active': abort(403)
-    if campaign.audience_type != 'group': abort(400)
+    if campaign.audience_type not in {'group','individual'}: abort(400)
     target = url_for('communications.view_campaign', campaign_id=campaign.id)
     if campaign.queue_status in {'queued', 'retry', 'processing'}:
         flash('This campaign already has a queued batch. Wait for it to finish, or pause it before choosing a new batch.', 'warning')
         return redirect(target)
     ids = {int(value) for value in request.form.getlist('policy_ids') if value.isdigit()}
+    if campaign.audience_type=='individual' and len(ids)>1:
+        abort(400, 'Choose only one client for an individual message.')
     if not ids:
         flash('Choose the clients you want to message first.', 'danger')
         return redirect(target)
@@ -1193,7 +1195,10 @@ def queue_selection(campaign_id):
         flash('This campaign already has a queued batch. Wait for it to finish before sending another.', 'warning')
         return redirect(target)
     db.session.expire(campaign, ['recipients'])
-    selected = select_recipients(campaign, policies)
+    try:
+        selected = select_recipients(campaign, policies)
+    except ValueError as exc:
+        db.session.rollback();flash(str(exc),'warning');return redirect(target)
     if not selected:
         db.session.rollback()
         flash('No clients queued: these numbers were already sent this campaign, opted out or have no valid number.', 'warning')

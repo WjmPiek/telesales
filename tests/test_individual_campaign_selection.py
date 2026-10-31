@@ -1,4 +1,8 @@
 import unittest
+import json
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import text
 from tests import test_analytics_security as fixture
@@ -96,3 +100,47 @@ class IndividualCampaignSelectionTests(unittest.TestCase):
         self.assertEqual(self.select(self.lead_ids[1]).status_code, 302)
         self.assertEqual(CampaignRecipient.query.one().lapsed_policy_id, self.lead_ids[0])
         self.assertEqual(CommunicationEvent.query.one().recipient_id, self.recipient_id)
+
+    def queue(self,action='send',ids=None,scheduled_at=''):
+        with patch('app.routes.communications._refresh_template_status',return_value=SimpleNamespace(ok=True)):
+            db.session.get(CommunicationCampaign,self.campaign_id).template_status='Approved';db.session.commit()
+            return self.client.post(f'/communications/{self.campaign_id}/queue-selection',data={
+                'policy_ids':[str(i) for i in (ids if ids is not None else [self.lead_ids[0]])],
+                'selection_action':action,'scheduled_at':scheduled_at})
+
+    def test_individual_uses_same_two_controls_and_queues_exactly_one(self):
+        page=self.client.get(f'/communications/{self.campaign_id}').data
+        self.assertIn(b'data-batch-send-form',page)
+        self.assertIn(b'Send selected now',page)
+        self.assertIn(b'Schedule selected',page)
+        self.assertNotIn(b'Scheduling &amp; campaign actions',page)
+        self.assertNotIn(b'Select this client',page)
+        self.assertEqual(self.queue().status_code,302)
+        c=db.session.get(CommunicationCampaign,self.campaign_id)
+        self.assertEqual(json.loads(c.send_recipient_ids_json),[self.recipient_id])
+        self.assertEqual(c.queue_status,'queued')
+        self.assertEqual(CampaignRecipient.query.count(),1)
+
+    def test_individual_can_schedule_in_sast_without_sending_now(self):
+        self.assertEqual(self.queue('schedule',scheduled_at='2030-10-31T08:00').status_code,302)
+        c=db.session.get(CommunicationCampaign,self.campaign_id)
+        self.assertEqual(c.scheduled_at,datetime(2030,10,31,6))
+        self.assertEqual(c.queue_status,'queued')
+        self.assertEqual(CampaignRecipient.query.one().whatsapp_status,'Not Sent')
+
+    def test_individual_rejects_multiple_and_preserves_history_on_another_number(self):
+        self.assertEqual(self.queue(ids=self.lead_ids).status_code,400)
+        db.session.get(LapsedPolicy,self.lead_ids[1]).cell_number='0831234567'
+        db.session.add(CommunicationEvent(campaign_id=self.campaign_id,recipient_id=self.recipient_id,event_type='sent'))
+        db.session.commit()
+        self.assertEqual(self.queue(ids=[self.lead_ids[1]]).status_code,302)
+        self.assertEqual(CampaignRecipient.query.one().id,self.recipient_id)
+        self.assertEqual(db.session.get(CommunicationCampaign,self.campaign_id).queue_status,'idle')
+
+    def test_individual_queue_can_replace_an_unused_draft_without_orphaning_events(self):
+        db.session.get(LapsedPolicy,self.lead_ids[1]).cell_number='0831234567';db.session.commit()
+        self.assertEqual(self.queue(ids=[self.lead_ids[1]]).status_code,302)
+        self.assertEqual(CampaignRecipient.query.count(),1)
+        self.assertEqual(CampaignRecipient.query.one().lapsed_policy_id,self.lead_ids[1])
+        self.assertIsNone(db.session.get(CommunicationEvent,self.event_id).recipient_id)
+        self.assertNotEqual(CampaignRecipient.query.one().secure_token,'original-client-token')

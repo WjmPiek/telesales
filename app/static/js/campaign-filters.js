@@ -26,7 +26,7 @@
     results.setAttribute('aria-busy', String(value));
     const sending = ['queued','retry','processing'].includes(queue);
     const approved = document.getElementById('sendCampaignButton')?.dataset.approved !== 'false';
-    results.querySelectorAll('button[type="submit"], button:not([type])').forEach(button => button.disabled = value || !selectionCount() || (Boolean(batch) && (sending || !approved)));
+    results.querySelectorAll('button[type="submit"], button:not([type])').forEach(button => button.disabled = value || !selectionCount() || (Boolean(results.querySelector('[data-batch-send-form]')) && (sending || !approved)));
     document.querySelectorAll('form[data-selection-action] button').forEach(button => {
       button.disabled = value || !selectionCount() || sending || !approved;
       button.textContent = button.form.dataset.selectionAction === 'send' ? `Send ${selectionCount() || ''} selected now` : `Schedule ${selectionCount() || ''} selected`;
