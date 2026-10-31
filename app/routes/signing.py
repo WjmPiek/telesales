@@ -2,6 +2,7 @@ from app.services.cdd_service import generate_cdd_pdf, answers_for, save_answers
 from app.services.signature_fields import application_fields, signed_documents, signature_rows
 from app.services.marketing_consent import consent_value, apply_consent
 from app.services.client_storage import application_folder, store_document
+from werkzeug.exceptions import HTTPException
 import os, base64, json, secrets, io
 from pypdf import PdfReader
 from PIL import Image, ImageChops
@@ -11,7 +12,7 @@ from werkzeug.utils import secure_filename
 from app import db
 from sqlalchemy import MetaData, Table
 from sqlalchemy.sql.sqltypes import DateTime, Boolean, Integer, Numeric, Float
-from app.models import ClientApplication, ApplicationSignature, ClientFicaDocument, DocumentSignature
+from app.models import ClientApplication, ApplicationSignature, ClientFicaDocument, DocumentSignature, AuditLog
 from app.services.pdf_service import generate_application_pdf, generate_welcome_pack, generate_popia_pdf, generate_disclosure_pdf, generate_fica_pdf
 from app.services.email_service import send_email
 from app.services.compliance_service import assert_application_rules
@@ -710,6 +711,51 @@ def supporting_documents(token):
                            missing_id_rows=member_rows, missing_ids=missing_member_ids(app_obj), member_id_nonce=session[nonce_key])
 
 
+@signing_bp.route('/<token>/identity-documents', methods=['GET','POST'])
+def identity_documents(token):
+    query=ClientApplication.query.filter_by(sign_token=token)
+    if request.method=='POST': query=query.populate_existing().with_for_update()
+    app_obj=query.first_or_404()
+    if app_obj.sign_token_revoked or app_obj.sign_token_used_at: abort(410)
+    if not session.get(_unlocked_key(app_obj.id)): abort(403)
+    pending=session.get(f'identity_documents_pending_{app_obj.id}')
+    if pending is None or any(key not in _signed_doc_types(app_obj) for key,label in REQUIRED_SIGNATURE_DOCS):
+        return redirect(url_for('online_application.form' if app_obj.whatsapp_journey else 'signing.sign_application',token=token))
+    nonce_key=f'identity_documents_nonce_{app_obj.id}'
+    session.setdefault(nonce_key,secrets.token_urlsafe(24))
+    requirements=required_fica_documents(app_obj)
+    error=None
+    if request.method=='POST':
+        try:
+            if not secrets.compare_digest(session[nonce_key],request.form.get('nonce','')): abort(400)
+            choice=request.form.get('document_choice')
+            if choice not in {'upload','email'}: raise ValueError('Choose photos now or documents by email.')
+            uploaded=0
+            if choice=='upload':
+                for item in requirements:
+                    upload=request.files.get(item['key']) or request.files.get('camera_'+item['key'])
+                    if upload and upload.filename:
+                        _save_upload(app_obj,item['key'],upload);uploaded+=1
+                if not uploaded and not _fica_status(app_obj)[1]:
+                    raise ValueError('Take or choose a document photo, or select the email option to continue.')
+            db.session.add(AuditLog(action='Client ID document choice',entity_type='ClientApplication',
+                entity_id=str(app_obj.id),details=f'{choice}; {uploaded} supporting files uploaded before final submission.'))
+            return finish_application(app_obj,token,identity_choice=choice)
+        except HTTPException:
+            db.session.rollback();raise
+        except ValueError as exc:
+            db.session.rollback();error=str(exc)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception('Pre-submission ID document step failed for application %s',app_obj.id)
+            error='We could not save the documents. Please try again; your signatures are still saved.'
+    from app.services.branch_filing import filing_office
+    office=filing_office(app_obj)
+    return render_template('sign/identity_documents.html',app=app_obj,token=token,requirements=requirements,
+                           received=_fica_status(app_obj)[1],nonce=session[nonce_key],error=error,
+                           office_email=office.email if office else 'wjm@martinsdirect.com')
+
+
 def _reopen_changed_application_for_signature(app_obj, changed, reason='ID correction'):
     """Retain the signed original, then invalidate only the changed application form."""
     import secrets
@@ -830,9 +876,11 @@ def send_supporting_upload_email(app_obj, *, actor_id=None, reminder=False, remi
     return sent
 
 
-def finish_application(app_obj, token):
+def finish_application(app_obj, token, *, identity_choice=None):
     from app.services.delivery_preferences import receipt_address
-    recipient = receipt_address(request.form, app_obj)
+    pending_key=f'identity_documents_pending_{app_obj.id}'
+    pending=session.get(pending_key)
+    recipient = receipt_address({'document_email':pending,'document_email_confirm':pending}, app_obj) if identity_choice and pending is not None else receipt_address(request.form, app_obj)
     ok, errors = assert_application_rules(app_obj)
     if not ok:
         raise ValueError("Application blocked: " + "; ".join(errors))
@@ -841,6 +889,9 @@ def finish_application(app_obj, token):
     required, received, outstanding, docs = _fica_status(app_obj)
     if missing_sigs:
         raise ValueError("Please sign these documents first: " + ", ".join(missing_sigs))
+    if identity_choice not in {'upload','email'}:
+        session[pending_key]=recipient
+        return redirect(url_for('signing.identity_documents',token=token))
     signed_records = {row.document_type: row for row in DocumentSignature.query.filter_by(application_id=app_obj.id).all()}
     sig = signed_records.get("application:principal")
     sig_path = sig.signature_image_path if sig else None
@@ -876,6 +927,8 @@ def finish_application(app_obj, token):
     app_obj.welcome_pack_path = welcome_pdf
     app_obj.popia_pdf_path = popia_pdf
     app_obj.disclosure_pdf_path = disclosure_pdf
+    if app_obj.whatsapp_journey:
+        app_obj.whatsapp_journey.signed_bundle_at=datetime.utcnow()
 
     if sig:
         db.session.add(ApplicationSignature(
@@ -892,6 +945,8 @@ def finish_application(app_obj, token):
         ))
     db.session.commit()
     session.pop(_unlocked_key(app_obj.id), None)
+    session.pop(pending_key,None)
+    session.pop(f'identity_documents_nonce_{app_obj.id}',None)
     upload_email_sent = send_supporting_upload_email(app_obj)
     from app.services.document_reminders import schedule_document_reminders
     schedule_document_reminders(app_obj)

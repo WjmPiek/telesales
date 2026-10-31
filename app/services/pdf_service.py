@@ -429,6 +429,7 @@ def _generate_gold_family_fillable(app_obj, out_path, sig_path):
     # terms live in the standard terms template. Keep them in one reviewable PDF
     # and add a visible client signature record for the terms.
     _append_policy_terms(writer, "single_family")
+    _terms_signature_band(writer.pages[2], app_obj, "single_family")
     _add_terms_page(writer, app_obj, None)
 
     # Do not reuse one signature image for every field. Each signature pad is
@@ -516,21 +517,7 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     for page in reader.pages:
         writer.add_page(page)
     _append_policy_terms(writer, template_choice)
-    # Move the original narrow signature line into a full-height signing band.
-    from pypdf import Transformation
-    terms_page=writer.pages[1]
-    packet=io.BytesIO();clean=canvas.Canvas(packet,pagesize=A4);clean.setFillColorRGB(1,1,1)
-    if template_choice=='member_product':clean.rect(304,A4[1]-437,270,10,fill=1,stroke=0)
-    else:clean.rect(13,A4[1]-833,280,14,fill=1,stroke=0)
-    clean.save();packet.seek(0);terms_page.merge_page(PdfReader(packet).pages[0])
-    terms_page.add_transformation(Transformation().scale(1,0.93).translate(0,A4[1]*0.07))
-    packet=io.BytesIO();band=canvas.Canvas(packet,pagesize=A4);band.setFont('Helvetica-Bold',9)
-    band.drawString(30,A4[1]-788,'Main member signature')
-    band.line(30,A4[1]-828,280,A4[1]-828)
-    if 'debit' in (app_obj.payment_method or '').lower() or any((app_obj.account_number,app_obj.account_holder,app_obj.bank_name)):
-        band.drawString(320,A4[1]-788,"Account holder's signature — debit order")
-        band.line(320,A4[1]-828,570,A4[1]-828)
-    band.save();packet.seek(0);terms_page.merge_page(PdfReader(packet).pages[0])
+    _terms_signature_band(writer.pages[1], app_obj, template_choice)
     _add_terms_page(writer, app_obj, None)
     from app.services.signature_fields import application_fields, signature_rows
     fields, records = application_fields(app_obj), signature_rows(app_obj)
@@ -554,6 +541,23 @@ def generate_application_pdf(app_obj, out_path, signature_path_override=None):
     except Exception:
         pass
     return out_path
+
+
+def _terms_signature_band(terms_page, app_obj, template_choice):
+    """Reserve a readable signing space below the official terms text."""
+    from pypdf import Transformation
+    packet=io.BytesIO();clean=canvas.Canvas(packet,pagesize=A4);clean.setFillColorRGB(1,1,1)
+    if template_choice=='member_product':clean.rect(304,A4[1]-437,270,10,fill=1,stroke=0)
+    else:clean.rect(13,A4[1]-833,280,14,fill=1,stroke=0)
+    clean.save();packet.seek(0);terms_page.merge_page(PdfReader(packet).pages[0])
+    terms_page.add_transformation(Transformation().scale(1,0.93).translate(0,A4[1]*0.07))
+    packet=io.BytesIO();band=canvas.Canvas(packet,pagesize=A4);band.setFont('Helvetica-Bold',9)
+    band.drawString(30,A4[1]-788,'Main member signature')
+    band.line(30,A4[1]-828,280,A4[1]-828)
+    if 'debit' in (app_obj.payment_method or '').lower() or any((app_obj.account_number,app_obj.account_holder,app_obj.bank_name)):
+        band.drawString(320,A4[1]-788,"Account holder's signature — debit order")
+        band.line(320,A4[1]-828,570,A4[1]-828)
+    band.save();packet.seek(0);terms_page.merge_page(PdfReader(packet).pages[0])
 
 
 

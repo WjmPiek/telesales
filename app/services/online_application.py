@@ -33,6 +33,8 @@ STANDARD_BRANCH_CODES={
 
 
 def save_questionnaire(a, form):
+    from app.services.mobile_members import adapt_answers
+    form=adapt_answers(a,form)
     from app.services.cover_eligibility import application_members
     existing_people = {(str(person.get('name') or '').strip().casefold(), format_dob(person.get('dob')))
                        for person in application_members(a)[1:]}

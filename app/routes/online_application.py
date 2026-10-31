@@ -97,9 +97,6 @@ def form(token):
                 completed=signed_documents(a)
                 missing=[label for key,label in REQUIRED_SIGNATURE_DOCS if key not in completed]
                 if missing:raise ValueError('Open and sign these documents first: '+', '.join(missing))
-                a.whatsapp_journey.signed_bundle_at=datetime.utcnow()
-                db.session.add(AuditLog(action='WhatsApp documents completed',entity_type='ClientApplication',entity_id=str(a.id),details='Client signed each highlighted signature space inside every required document and submitted the completed application.'))
-                db.session.flush()
                 return finish_application(a,token)
             raise ValueError('Choose a valid action.')
         except HTTPException:
@@ -153,11 +150,14 @@ def form(token):
     }
     member_age_rules={key:(values[2] if values[0] is None else values[0],values[3] if values[1] is None else values[1]) for key,values in member_age_rules.items()}
     from app.services.member_count_review import count_summary
+    from app.services.mobile_members import member_form,RELATIONSHIPS
+    covered_count,covered_values=member_form(a)
     return render_template('online/form.html',member_values=member_values,member_limits=limits,app=a,token=token,fields=FIELDS,banks=BANKS,branch_codes=STANDARD_BRANCH_CODES,member_count=count_summary(a),
       cdd_fields=[f for f in CDD_FIELDS if f[0] not in {'telephone','residential_address','postal_address','email','birth_date'}],
       cdd=answers_for(a),marketing=consent_value(a),docs=REQUIRED_SIGNATURE_DOCS,signed_docs=signed_documents(a),
       received=_fica_status(a)[1],nonce=session[nonce_key],error=error,selected_members=selected_members,
       principal_dob=principal_dob,principal_age=principal_age,member_age_rules=member_age_rules,
+      covered_count=covered_count,covered_values=covered_values,relationships=RELATIONSHIPS,
       google_maps_api_key=current_app.config.get('GOOGLE_MAPS_API_KEY') or __import__('os').getenv('GOOGLE_MAPS_API_KEY',''))
 
 

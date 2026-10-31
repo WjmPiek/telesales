@@ -15,10 +15,12 @@ def application_fields(a):
     if application_template(a) == 'gold_family_fillable':
         fields = [
             dict(key='application:principal', label='Policyholder / principal member signature', page=2, rect=[155, 73, 315, 97]),
+            dict(key='application:policy_terms', label='Main member signature - policy terms (page 3)', page=3, rect=[30, A4[1]-826, 280, A4[1]-792]),
             dict(key='application:terms', label='Policy terms and conditions signature', page=4, rect=[145, 410, 365, 485]),
         ]
         if 'debit' in (a.payment_method or '').lower() or any((a.account_number, a.account_holder, a.bank_name)):
             fields.append(dict(key='application:account', label='Debit-order account holder signature', page=2, rect=[155, 28, 315, 52]))
+            fields.append(dict(key='application:policy_terms_account', label='Account holder signature - policy terms (page 3)', page=3, rect=[320, A4[1]-826, 570, A4[1]-792]))
         return fields
     member = application_template(a) == 'member_product'
     def box(key, label, page, left, top, right, bottom):

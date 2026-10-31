@@ -63,6 +63,8 @@ def save_answers(a, form):
             try:datetime.strptime(value,'%Y-%m-%d')
             except ValueError:raise ValueError('Enter date of birth as YYYY-MM-DD.')
         values[key]=value
+    if not values['postal_address']:
+        values['postal_address']=values['residential_address']
     row=ApplicationCDD.query.filter_by(application_id=a.id).first()
     if not row:
         row=ApplicationCDD(application_id=a.id);db.session.add(row)
