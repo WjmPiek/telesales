@@ -112,8 +112,7 @@
       if (event.submitter?.value === 'schedule') {
         const date = target.elements.namedItem('scheduled_at');
         if (!date.value) {
-          event.preventDefault(); date.setCustomValidity('Choose a future date and time in SAST.'); date.reportValidity();
-          date.addEventListener('input', () => date.setCustomValidity(''), {once: true});
+          event.preventDefault(); alert('Choose a future date and time in SAST.'); date.focus();
         }
       } else if (!confirm('Send this campaign to this client now?')) event.preventDefault();
       return;
