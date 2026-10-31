@@ -1125,6 +1125,64 @@ def send_campaign(campaign_id):
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
 
+@communications_bp.route("/<int:campaign_id>/queue-selection", methods=["POST"])
+@login_required
+def queue_selection(campaign_id):
+    campaign = CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
+    if campaign.company and campaign.company.status != 'Active': abort(403)
+    if campaign.audience_type != 'group': abort(400)
+    target = url_for('communications.view_campaign', campaign_id=campaign.id)
+    if campaign.queue_status in {'queued', 'retry', 'processing'}:
+        flash('This campaign already has a queued batch. Wait for it to finish, or pause it before choosing a new batch.', 'warning')
+        return redirect(target)
+    ids = {int(value) for value in request.form.getlist('policy_ids') if value.isdigit()}
+    if not ids:
+        flash('Choose the clients you want to message first.', 'danger')
+        return redirect(target)
+    action = request.form.get('selection_action', 'send')
+    scheduled = datetime.utcnow()
+    if action == 'schedule':
+        try:
+            scheduled = parse_schedule(request.form.get('scheduled_at', ''))
+            if scheduled <= datetime.utcnow(): raise ValueError()
+        except ValueError:
+            flash('Choose a future send date and time in SAST.', 'danger')
+            return redirect(target)
+    elif action != 'send':
+        abort(400)
+    policies = scope_by_branch(LapsedPolicy.query, LapsedPolicy,
+                               agent_col=LapsedPolicy.assigned_agent_id).filter(LapsedPolicy.id.in_(ids))
+    if campaign.company:
+        policies = _company_leads(policies, campaign.company)
+    policies = policies.order_by(LapsedPolicy.id).all()
+    if {p.id for p in policies} != ids: abort(403)
+    result = _refresh_template_status(campaign)
+    if not result.ok or campaign.template_status != 'Approved':
+        flash('Sending blocked: the WhatsApp template must be approved. ' + (result.error or ''), 'danger')
+        return redirect(target)
+    from app.services.campaign_selection import select_recipients
+    campaign = CommunicationCampaign.query.filter_by(id=campaign.id).populate_existing().with_for_update().one()
+    if campaign.queue_status in {'queued', 'retry', 'processing'}:
+        flash('This campaign already has a queued batch. Wait for it to finish before sending another.', 'warning')
+        return redirect(target)
+    db.session.expire(campaign, ['recipients'])
+    selected = select_recipients(campaign, policies)
+    if not selected:
+        db.session.rollback()
+        flash('No clients queued: these numbers were already sent this campaign, opted out or have no valid number.', 'warning')
+        return redirect(target)
+    campaign.scheduled_at = scheduled
+    campaign.status = 'Scheduled'
+    campaign.queue_status = 'queued'
+    audit('campaign_selection_queued', 'campaign', campaign.id, current_user.id,
+          json.dumps({'recipient_ids': selected, 'scheduled_utc': scheduled.isoformat()}))
+    db.session.commit()
+    when = f'for {schedule_sast(scheduled)} SAST' if action == 'schedule' else 'to send now'
+    flash(f'{len(selected)} selected client(s) queued {when}. Other clients will not be sent this batch.', 'success')
+    return redirect(target)
+
+
 
 @communications_bp.route("/<int:campaign_id>/schedule-follow-up", methods=["POST"])
 @login_required

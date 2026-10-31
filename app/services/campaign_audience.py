@@ -24,6 +24,6 @@ def audience_rows(policies, recipients):
         allowed=bool(number and not pref.opted_out_all and pref.whatsapp_allowed and not is_suppressed(policy))
         states[policy.id]={'number':number or '', 'sent':number in sent,
             'status':sent.get(number), 'selected':number in existing,
-            'selectable':allowed and number not in existing}
+            'selectable':allowed and number not in sent}
         unique.append(policy)
     return unique,states

@@ -830,6 +830,7 @@ class CommunicationCampaign(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     sent_at = db.Column(db.DateTime)
     scheduled_at = db.Column(db.DateTime, index=True)
+    send_recipient_ids_json = db.Column(db.Text)
     queue_status = db.Column(db.String(30), default="idle", nullable=False, index=True)
     archived_at = db.Column(db.DateTime)
     deleted_at = db.Column(db.DateTime)

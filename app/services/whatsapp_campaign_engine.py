@@ -42,13 +42,15 @@ def process_scheduled_campaigns(limit=10):
                 if not result.ok or campaign.template_status != "Approved":
                     raise RuntimeError(result.error or f"Template status is {campaign.template_status}")
             sent = 0
-            for recipient in campaign.recipients:
+            from app.services.campaign_selection import queued_recipients
+            recipients = queued_recipients(campaign)
+            for recipient in recipients:
                 if campaign.send_whatsapp and recipient.whatsapp_status in {None, "Not Sent", "Failed", "Held"}:
                     ok, _ = _send_to_recipient(campaign, recipient, "whatsapp")
                     sent += int(ok)
                 db.session.commit()
-            held = sum(r.whatsapp_status == 'Held' for r in campaign.recipients)
-            failed = sum(r.whatsapp_status == 'Failed' for r in campaign.recipients)
+            held = sum(r.whatsapp_status == 'Held' for r in recipients)
+            failed = sum(r.whatsapp_status == 'Failed' for r in recipients)
             needs_attention = bool(held or failed)
             campaign.status = "Needs attention" if needs_attention else "Sent"
             campaign.queue_status = "held" if held else ("failed" if failed else "completed")
@@ -68,4 +70,3 @@ def process_scheduled_campaigns(limit=10):
             db.session.commit()
             stats["failed"] += 1
     return stats
-

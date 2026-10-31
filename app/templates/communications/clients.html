@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<style>.whatsapp-client-sent>td{background:#e5f5e9;color:#146c43}</style>
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <div><h2>WhatsApp client list</h2><p class="text-muted mb-0">Messages, delivery and client responses.</p></div>
   <a class="btn btn-outline-primary" href="{{ url_for('communications.index') }}">Campaigns</a>
@@ -23,7 +24,7 @@
 </form>
 <div class="card"><div class="table-responsive"><table class="table align-middle mb-0">
   <thead><tr><th>Client</th><th>Branch</th><th>Latest message</th><th>Response</th><th>History</th></tr></thead><tbody>
-  {% for row in rows %}<tr>
+  {% for row in rows %}<tr{% if row.sent %} class="whatsapp-client-sent"{% endif %}>
     <td><strong>{{ row.name }}</strong><div class="small text-muted">{{ row.policy.cell_number or 'No phone number' }}</div></td>
     <td>{{ row.branches|sort|join(', ') }}</td>
     <td><span class="badge {% if row.status in ['Sent','Delivered','Read'] %}text-bg-success{% elif row.status in ['Failed','Held'] %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ row.status }}</span>

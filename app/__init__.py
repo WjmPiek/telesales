@@ -103,6 +103,7 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_submitted_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approval_notified_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS send_recipient_ids_json TEXT",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS queue_status VARCHAR(30) DEFAULT 'idle'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
