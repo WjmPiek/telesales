@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div><h2>WhatsApp client list</h2><p class="text-muted mb-0">Messages, delivery and client responses.</p></div>
+  <a class="btn btn-outline-primary" href="{{ url_for('communications.index') }}">Campaigns</a>
+</div>
+<div class="stat-grid mb-3">
+  {% for label,key,value in [('Clients','',summary.total),('Sent','sent',summary.sent),('Delivered / read','delivered',summary.delivered),('Call me back','callback',summary.callback),('Opted out','opted_out',summary.opted_out)] %}
+  <a class="stat-card text-decoration-none" href="{{ url_for('communications.whatsapp_clients',status=key) }}"><div>{{ label }}</div><strong>{{ value }}</strong></a>
+  {% endfor %}
+</div>
+<form method="get" class="card card-body mb-3" id="whatsappClientFilters">
+  <div class="row g-3 align-items-end">
+    <div class="col-lg-4"><label for="clientSearch" class="form-label">Find client</label><input id="clientSearch" name="q" value="{{ q }}" class="form-control" placeholder="Name, number or policy"></div>
+    <div class="col-lg-2"><label for="clientStatus" class="form-label">Status / response</label><select id="clientStatus" name="status" class="form-select" onchange="this.form.submit()">
+      {% for value,label in [('','All clients'),('sent','Sent'),('delivered','Delivered / read'),('read','Read'),('not_sent','Not sent'),('failed','Failed / held'),('callback','Call me back'),('opted_out','Opted out')] %}<option value="{{ value }}" {% if status==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></div>
+    <div class="col-lg-2"><label for="clientBranch" class="form-label">Branch</label><select id="clientBranch" name="branch" class="form-select" onchange="this.form.submit()"><option value="">All branches</option>{% for b in branches %}<option {% if branch==b %}selected{% endif %}>{{ b }}</option>{% endfor %}</select></div>
+    <div class="col-lg-3"><label for="clientCampaign" class="form-label">Campaign</label><select id="clientCampaign" name="campaign" class="form-select" onchange="this.form.submit()"><option value="">All campaigns</option>{% for c in campaigns %}<option value="{{ c.id }}" {% if campaign_id==c.id %}selected{% endif %}>#{{ c.id }} · {{ c.name }}</option>{% endfor %}</select></div>
+    <div class="col-lg-1"><button class="btn btn-primary">Search</button></div>
+  </div>
+  <div class="mt-2 small text-muted">{{ total }} matching client(s) · One row per phone number. <a href="{{ url_for('communications.whatsapp_clients') }}">Clear filters</a></div>
+</form>
+<div class="card"><div class="table-responsive"><table class="table align-middle mb-0">
+  <thead><tr><th>Client</th><th>Branch</th><th>Latest message</th><th>Response</th><th>History</th></tr></thead><tbody>
+  {% for row in rows %}<tr>
+    <td><strong>{{ row.name }}</strong><div class="small text-muted">{{ row.policy.cell_number or 'No phone number' }}</div></td>
+    <td>{{ row.branches|sort|join(', ') }}</td>
+    <td><span class="badge {% if row.status in ['Sent','Delivered','Read'] %}text-bg-success{% elif row.status in ['Failed','Held'] %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ row.status }}</span>
+      {% if row.latest %}<div class="small mt-1"><a href="{{ url_for('communications.view_campaign',campaign_id=row.latest.campaign_id) }}">Campaign #{{ row.latest.campaign_id }}</a></div>{% endif %}
+    </td>
+    <td>{% if row.opted_out %}<span class="badge text-bg-danger">Opted out</span>{% endif %}
+      {% if row.callback %}<a class="badge text-bg-warning text-decoration-none" href="{{ url_for('recovery.callbacks') }}">Call me back</a>{% endif %}
+      {% if not row.opted_out and not row.callback %}<span class="text-muted">{{ row.latest.response_type|replace('_',' ')|title if row.latest and row.latest.response_type else 'No response' }}</span>{% endif %}
+    </td>
+    <td>{% if row.history %}<details><summary>{{ row.history|length }} campaign(s)</summary><div class="mt-2" style="min-width:220px;max-width:360px">
+      {% for h in row.history %}<div class="border-bottom pb-2 mb-2 small"><a href="{{ url_for('communications.campaign_report',campaign_id=h.campaign_id) }}">#{{ h.campaign_id }} · {{ h.campaign.name }}</a><div>{{ h.whatsapp_status or 'Not Sent' }}{% if h.response_type %} · {{ h.response_type|replace('_',' ')|title }}{% endif %}</div><div class="text-muted">Selected: {{ schedule_sast(h.created_at) }} SAST{% if h.responded_at %}<br>Response: {{ schedule_sast(h.responded_at) }} SAST{% endif %}</div></div>{% endfor %}
+    </div></details>{% else %}<span class="text-muted">No messages selected</span>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="5" class="text-muted text-center py-4">No clients match these filters.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+<div class="d-flex justify-content-between align-items-center mt-3"><span class="text-muted small">Page {{ page }} of {{ pages }}</span><div>
+{% if page>1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('communications.whatsapp_clients',q=q,status=status,branch=branch,campaign=campaign_id,page=page-1) }}">Previous</a>{% endif %}
+{% if page<pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('communications.whatsapp_clients',q=q,status=status,branch=branch,campaign=campaign_id,page=page+1) }}">Next</a>{% endif %}
+</div></div>
+{% endblock %}

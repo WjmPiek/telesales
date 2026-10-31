@@ -25,6 +25,7 @@ from app.services.whatsapp_service import normalize_phone, send_whatsapp_text, s
 from app.services.whatsapp_enterprise import submit_campaign_template, sync_campaign_template, queue_provider_job
 from app.services.whatsapp_campaign_engine import audit
 from app.services.branch_access import scope_by_branch
+from app.services.campaign_schedule import parse_schedule, schedule_sast
 
 communications_bp = Blueprint("communications", __name__, url_prefix="/communications")
 
@@ -158,7 +159,7 @@ def _company_context():
     if not current_user.is_authenticated:
         return {}
     offices = BranchFilingOffice.query.filter_by(active=True).order_by(BranchFilingOffice.is_default.desc(), BranchFilingOffice.branch_name).all()
-    return {"campaign_companies": _available_companies(), "document_offices": offices,
+    return {"campaign_companies": _available_companies(), "document_offices": offices, "schedule_sast": schedule_sast,
             "document_routing_csrf": session.setdefault("document_routing_csrf", secrets.token_urlsafe(32))}
 
 
@@ -1269,6 +1270,50 @@ def suppression_list():
     return render_template("communications/suppression.html", items=items)
 
 
+@communications_bp.route("/clients")
+@login_required
+def whatsapp_clients():
+    from app.services.whatsapp_clients import client_rows
+    policies = scope_by_branch(LapsedPolicy.query, LapsedPolicy,
+                              agent_col=LapsedPolicy.assigned_agent_id).order_by(LapsedPolicy.id.desc()).all()
+    campaigns_q = CommunicationCampaign.query.filter(CommunicationCampaign.deleted_at.is_(None))
+    if _is_manager():
+        if current_user.role.name.lower().replace('_', ' ') not in {'admin', 'super admin'}:
+            campaigns_q = campaigns_q.filter(CommunicationCampaign.branch == current_user.branch)
+    else:
+        campaigns_q = campaigns_q.filter(CommunicationCampaign.company_id.in_([c.id for c in _available_companies()]))
+    campaigns = campaigns_q.order_by(CommunicationCampaign.created_at.desc()).all()
+    rows = client_rows(policies, [c.id for c in campaigns])
+    summary = dict(total=len(rows), sent=sum(r['sent'] for r in rows),
+                   delivered=sum(r['delivered'] for r in rows),
+                   opted_out=sum(r['opted_out'] for r in rows), callback=sum(r['callback'] for r in rows))
+    branches = sorted({b for row in rows for b in row['branches'] if b})
+    query = (request.args.get('q') or '').strip()
+    status = request.args.get('status', '')
+    branch = request.args.get('branch', '')
+    campaign_id = request.args.get('campaign', type=int)
+    checks = {'sent': lambda r: r['sent'], 'delivered': lambda r: r['delivered'],
+              'read': lambda r: any(h.whatsapp_status == 'Read' for h in r['history']),
+              'callback': lambda r: r['callback'], 'opted_out': lambda r: r['opted_out'],
+              'not_sent': lambda r: not r['sent'],
+              'failed': lambda r: any(h.whatsapp_status in {'Failed', 'Held'} for h in r['history'])}
+    if branch:
+        rows = [r for r in rows if branch in r['branches']]
+    if query:
+        rows = [r for r in rows if query.lower() in (r['name'] + ' ' + (r['policy'].cell_number or '') + ' ' + r['phone'] + ' ' + (r['policy'].policy_number or '')).lower()]
+    if status in checks:
+        rows = [r for r in rows if checks[status](r)]
+    if campaign_id:
+        rows = [r for r in rows if any(h.campaign_id == campaign_id for h in r['history'])]
+    total = len(rows)
+    page = max(1, request.args.get('page', 1, type=int))
+    page = min(page, max(1, (total + 49) // 50))
+    return render_template('communications/clients.html', rows=rows[(page-1)*50:page*50],
+                           summary=summary, total=total, page=page, pages=max(1, (total+49)//50),
+                           campaigns=campaigns, branches=branches, q=query, status=status,
+                           branch=branch, campaign_id=campaign_id)
+
+
 @communications_bp.route("/<int:campaign_id>/schedule", methods=["POST"])
 @login_required
 def schedule_campaign(campaign_id):
@@ -1277,19 +1322,25 @@ def schedule_campaign(campaign_id):
     if campaign.company and campaign.company.status != "Active": abort(403)
     raw = (request.form.get("scheduled_at") or "").strip()
     try:
-        scheduled = datetime.fromisoformat(raw)
+        scheduled = parse_schedule(raw)
     except ValueError:
         flash("Choose a valid campaign date and time.", "danger")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     if scheduled <= datetime.utcnow():
         flash("Scheduled time must be in the future.", "danger")
         return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    if not campaign.recipients:
+        flash("Select and add clients before scheduling this campaign.", "danger")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
+    if campaign.queue_status == 'processing':
+        flash("This campaign is already processing.", "info")
+        return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
     campaign.scheduled_at = scheduled
     campaign.status = "Scheduled"
     campaign.queue_status = "queued"
     audit("campaign_scheduled", "campaign", campaign.id, current_user.id, scheduled.isoformat())
     db.session.commit()
-    flash("Campaign added to the automatic send queue.", "success")
+    flash(f"Campaign scheduled for {schedule_sast(scheduled)} SAST. It will send automatically; you do not need to press Send.", "success")
     return redirect(url_for("communications.view_campaign", campaign_id=campaign.id))
 
 
