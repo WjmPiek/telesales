@@ -1,5 +1,4 @@
 """Read-only, phone-deduplicated client communication directory."""
-from collections import defaultdict
 from datetime import datetime
 from sqlalchemy.orm import joinedload
 from app import db
@@ -29,7 +28,8 @@ def client_rows(policies, campaign_ids):
         if contact_hash(normalize_phone(policy.cell_number)) in phone_hashes or contact_hash(normalize_email(policy.email_address)) in email_hashes:
             groups[policy_keys[policy.id]]['opted_out'] = True
     recipients = CampaignRecipient.query.options(joinedload(CampaignRecipient.campaign)).filter(
-        CampaignRecipient.lapsed_policy_id.in_(policy_keys), CampaignRecipient.campaign_id.in_(campaign_ids)
+        CampaignRecipient.lapsed_policy_id.in_(policy_keys), CampaignRecipient.campaign_id.in_(campaign_ids),
+        CampaignRecipient.whatsapp_status.in_(['Sent', 'Delivered', 'Read', 'Failed', 'Held'])
     ).order_by(CampaignRecipient.created_at.desc(), CampaignRecipient.id.desc()).all()
     for recipient in recipients:
         groups[policy_keys[recipient.lapsed_policy_id]]['history'].append(recipient)
@@ -43,4 +43,5 @@ def client_rows(policies, campaign_ids):
         row['opted_out'] |= any(r.response_type == 'opt_out' for r in history)
         row['name'] = f"{row['policy'].initials or ''} {row['policy'].surname or ''}".strip() or 'Unnamed client'
         row['last_at'] = max((r.responded_at or r.created_at for r in history), default=None)
-    return sorted(groups.values(), key=lambda r: (r['last_at'] or datetime.min, r['policy'].id), reverse=True)
+    return sorted((row for row in groups.values() if row['history']),
+                  key=lambda r: (r['last_at'] or datetime.min, r['policy'].id), reverse=True)

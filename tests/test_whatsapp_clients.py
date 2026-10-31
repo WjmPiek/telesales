@@ -46,3 +46,34 @@ class WhatsAppClientTests(unittest.TestCase):
         self.assertNotIn(b'Private Otherbranch',self.client.get('/communications/clients?branch=B').data)
         self.login('unassigned')
         self.assertNotIn(b'Bob Callback',self.client.get('/communications/clients').data)
+
+    def test_unsent_drafts_are_hidden_and_failed_attempts_can_be_retried(self):
+        self.seed()
+        campaign=CommunicationCampaign.query.filter_by(branch='A').first()
+        for name,status,phone in [('Onlydraft','Not Sent','0851234567'),
+                                  ('Failedattempt','Failed','0861234567'),
+                                  ('Heldattempt','Held','0871234567'),
+                                  ('Neverselected',None,'0881234567')]:
+            p=LapsedPolicy(initials=name,surname='Example',branch='A',cell_number=phone)
+            db.session.add(p);db.session.flush()
+            if status:
+                db.session.add(CampaignRecipient(campaign_id=campaign.id,lapsed_policy_id=p.id,
+                    secure_token=name,whatsapp_status=status))
+        # A newer draft for an already contacted phone must not hide its delivery.
+        c=CommunicationCampaign(name='Unsent draft',message_body='Test',branch='A',created_by_id=self.user_ids['admin'])
+        db.session.add(c);db.session.flush()
+        alice=LapsedPolicy.query.filter_by(initials='Alice').first()
+        db.session.add(CampaignRecipient(campaign_id=c.id,lapsed_policy_id=alice.id,secure_token='newdraft',whatsapp_status='Not Sent'))
+        db.session.commit();self.login('admin')
+        page=self.client.get('/communications/clients').data
+        self.assertNotIn(b'Onlydraft Example',page)
+        self.assertNotIn(b'Neverselected Example',page)
+        self.assertNotIn(b'Unsent draft',page.split(b'<tbody>')[-1])
+        self.assertIn(b'Failedattempt Example',page)
+        self.assertIn(b'Heldattempt Example',page)
+        self.assertIn(b'Retry failed message',page)
+        self.assertIn(b'Delivered</span>',page)
+        failed=self.client.get('/communications/clients?status=failed').data
+        self.assertIn(b'Failedattempt Example',failed)
+        self.assertNotIn(b'Bob Callback',failed)
+        self.assertNotIn(b'Onlydraft Example',failed)

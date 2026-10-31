@@ -1343,6 +1343,7 @@ def whatsapp_clients():
     campaigns = campaigns_q.order_by(CommunicationCampaign.created_at.desc()).all()
     rows = client_rows(policies, [c.id for c in campaigns])
     summary = dict(total=len(rows), sent=sum(r['sent'] for r in rows),
+                   undelivered=sum(any(h.whatsapp_status in {'Sent', 'Failed', 'Held'} for h in r['history']) for r in rows),
                    delivered=sum(r['delivered'] for r in rows),
                    opted_out=sum(r['opted_out'] for r in rows), callback=sum(r['callback'] for r in rows))
     branches = sorted({b for row in rows for b in row['branches'] if b})
@@ -1353,7 +1354,8 @@ def whatsapp_clients():
     checks = {'sent': lambda r: r['sent'], 'delivered': lambda r: r['delivered'],
               'read': lambda r: any(h.whatsapp_status == 'Read' for h in r['history']),
               'callback': lambda r: r['callback'], 'opted_out': lambda r: r['opted_out'],
-              'not_sent': lambda r: not r['sent'],
+              'not_sent': lambda r: any(h.whatsapp_status in {'Failed', 'Held'} for h in r['history']),
+              'undelivered': lambda r: any(h.whatsapp_status in {'Sent', 'Failed', 'Held'} for h in r['history']),
               'failed': lambda r: any(h.whatsapp_status in {'Failed', 'Held'} for h in r['history'])}
     if branch:
         rows = [r for r in rows if branch in r['branches']]
