@@ -131,6 +131,9 @@ def _is_manager():
 
 def _available_companies():
     q = CompanyGroupState.query.filter_by(status="Active")
+    from app.services.company_consolidation import enabled
+    if enabled():
+        q=q.filter(CompanyGroupState.company_name.in_(["Martin's Brokers", "Martin's Northcliff"]))
     if _is_manager():
         if current_user.role and current_user.role.name.lower().replace("_", " ") not in {"admin", "super admin"}:
             q = q.filter(CompanyGroupState.branch == current_user.branch)
@@ -486,6 +489,10 @@ def create_campaign():
         company_id = request.form.get("company_id", type=int)
         document_office = _document_office(request.form.get("filing_branch"))
         company = db.session.get(CompanyGroupState, company_id) if company_id else None
+        from app.services.company_consolidation import enabled
+        if enabled() and not company:
+            flash('Choose Martin\'s Brokers or Martin\'s Northcliff before creating the campaign.', 'danger')
+            return redirect(url_for('communications.create_campaign',template_id=template_id))
         if company_id and (not company or company.id not in {item.id for item in companies}):
             abort(403)
         if not _is_manager() and not company:
@@ -713,6 +720,25 @@ def campaign_application_qr(campaign_id):
     output.seek(0)
     filename = secure_filename(f"{campaign.name}-application-qr.png") or f"campaign-{campaign.id}-application-qr.png"
     return send_file(output, mimetype="image/png", download_name=filename, as_attachment=request.args.get("download") == "1")
+
+
+@communications_bp.route('/<int:campaign_id>/company', methods=['POST'])
+@login_required
+def change_campaign_company(campaign_id):
+    campaign=CommunicationCampaign.query.get_or_404(campaign_id)
+    if not _can_use_campaign(campaign): abort(403)
+    target=db.session.get(CompanyGroupState,request.form.get('company_id',type=int))
+    if not target or target.id not in {c.id for c in _available_companies()}: abort(403)
+    if campaign.queue_status in {'queued','retry','processing'} or any(
+            r.whatsapp_status not in {None,'Not Sent'} or r.response_type for r in campaign.recipients):
+        flash('This campaign already has a send history or queued batch. Create a new campaign for a different company.', 'warning')
+    elif any(r.policy.company_id != target.id for r in campaign.recipients):
+        flash('The selected clients belong to another company. Create a new campaign for the other company.', 'warning')
+    else:
+        campaign.company_id=target.id;campaign.branch=target.branch
+        audit('campaign_company_changed','campaign',campaign.id,current_user.id,target.company_name)
+        db.session.commit();flash('Campaign company and office contact updated.', 'success')
+    return redirect(url_for('communications.view_campaign',campaign_id=campaign.id))
 
 
 

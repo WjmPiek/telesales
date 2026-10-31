@@ -15,6 +15,10 @@ def company_is_suspended(policy):
 
 
 def get_or_create_company(name, branch):
+    from app.services.company_consolidation import enabled
+    if enabled():
+        from app.services.franchise_routing import destination_company, is_northcliff
+        return destination_company(is_northcliff(name) or is_northcliff(branch))
     name = (name or branch or "Unknown Company").strip()
     branch = (branch or "").strip()
     company = CompanyGroupState.query.filter_by(company_name=name, branch=branch).first()

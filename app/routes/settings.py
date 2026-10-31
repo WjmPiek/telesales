@@ -156,7 +156,7 @@ def company_documents():
     from app.routes.auth import _is_user_management_owner
     if not _is_user_management_owner(current_user):
         abort(403)
-    companies = CompanyGroupState.query.order_by(CompanyGroupState.company_name, CompanyGroupState.branch).all()
+    companies = CompanyGroupState.query.filter_by(status='Active').order_by(CompanyGroupState.company_name, CompanyGroupState.branch).all()
     if request.method == 'POST':
         company = db.session.get(CompanyGroupState, request.form.get('company_id', type=int))
         category = request.form.get('category')
@@ -249,7 +249,7 @@ def cover_checks():
                 details=f"Matched {len(report['members'][0]['existing_policies'])} applications; imported lead matches {report['imported_matches_without_cover']}."))
             db.session.commit()
     from app.models import CompanyGroupState
-    companies = CompanyGroupState.query.order_by(CompanyGroupState.company_name, CompanyGroupState.branch).all()
+    companies = CompanyGroupState.query.filter_by(status='Active').order_by(CompanyGroupState.company_name, CompanyGroupState.branch).all()
     return render_template('settings/cover_checks.html', identifier=identifier, report=report, companies=companies)
 
 
@@ -345,6 +345,26 @@ def report_import_groups():
         return redirect(url_for('settings.report_import_groups'))
     session.setdefault('report_group_csrf', secrets.token_urlsafe(32))
     return render_template('settings/report_import_groups.html', plans=plans)
+
+
+@settings_bp.route('/company-consolidation',methods=['GET','POST'])
+@login_required
+def company_consolidation():
+    import secrets
+    from flask import session
+    from app.services.company_consolidation import preview,consolidate
+    if not is_super_admin(): abort(403)
+    if request.method=='POST':
+        if not session.get('company_consolidation_csrf') or not secrets.compare_digest(
+                session['company_consolidation_csrf'],request.form.get('csrf','')): abort(400)
+        try:
+            consolidate(current_user.id);db.session.commit()
+            flash('Companies consolidated into Martin\'s Brokers and Martin\'s Northcliff. Client records and history retained; unused groups removed from active lists. No messages were sent.','success')
+        except ValueError as exc:
+            db.session.rollback();flash(str(exc),'danger')
+        return redirect(url_for('settings.company_consolidation'))
+    session.setdefault('company_consolidation_csrf',secrets.token_urlsafe(32))
+    return render_template('settings/company_consolidation.html',rows=preview(),csrf=session['company_consolidation_csrf'])
 
 
 @settings_bp.route('/data-reset/backup')

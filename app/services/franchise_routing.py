@@ -21,7 +21,7 @@ def destination_company(northcliff=False):
     if matches:
         company = matches[0]
     else:
-        company = CompanyGroupState(company_name="Martin's Funerals NORTHCLIFF" if northcliff else "Martin's Brokers",branch=branch,status='Active')
+        company = CompanyGroupState(company_name="Martin's Northcliff" if northcliff else "Martin's Brokers",branch=branch,status='Active')
         db.session.add(company); db.session.flush()
     if company.status != 'Active':
         raise ValueError('This franchise is suspended or deleted. Reactivate it before continuing.')
