@@ -1,0 +1,9 @@
+{% set already_sent = r.whatsapp_status in ['Sent', 'Delivered', 'Read'] %}
+{% set queued = campaign.queue_status in ['queued', 'retry', 'processing'] %}
+<form method="post" action="{{ url_for('communications.queue_selection', campaign_id=campaign.id) }}" data-recipient-send-form data-row-locked="{{ 'true' if already_sent else 'false' }}" class="d-flex flex-wrap align-items-end gap-2">
+  <input type="hidden" name="policy_ids" value="{{ r.lapsed_policy_id }}">
+  <button type="submit" name="selection_action" value="send" class="btn btn-success text-nowrap" {% if already_sent or queued or campaign.template_status != 'Approved' %}disabled{% endif %}>Send Now</button>
+  <div><label for="recipient-send-time-{{ r.id }}" class="small">Date and time (SAST)</label><input id="recipient-send-time-{{ r.id }}" type="datetime-local" name="scheduled_at" class="form-control" aria-label="Schedule date and time for {{ r.policy.initials }} {{ r.policy.surname }}" {% if already_sent or queued %}disabled{% endif %}></div>
+  <button type="submit" name="selection_action" value="schedule" class="btn btn-primary text-nowrap" {% if already_sent or queued or campaign.template_status != 'Approved' %}disabled{% endif %}>Schedule Date</button>
+</form>
+{% if already_sent %}<small class="text-success">Already sent</small>{% elif queued %}<small class="text-muted">Campaign queued{% if campaign.scheduled_at %} · {{ schedule_sast(campaign.scheduled_at) }} SAST{% endif %}</small>{% endif %}

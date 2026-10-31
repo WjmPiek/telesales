@@ -26,6 +26,9 @@
     results.setAttribute('aria-busy', String(value));
     const sending = ['queued','retry','processing'].includes(queue);
     const approved = document.getElementById('sendCampaignButton')?.dataset.approved !== 'false';
+    document.querySelectorAll('[data-recipient-send-form]').forEach(row => {
+      row.querySelectorAll('button').forEach(button => button.disabled = value || row.dataset.rowLocked === 'true' || sending || !approved);
+    });
     results.querySelectorAll('button[type="submit"], button:not([type])').forEach(button => button.disabled = value || !selectionCount() || (Boolean(results.querySelector('[data-batch-send-form]')) && (sending || !approved)));
     document.querySelectorAll('form[data-selection-action] button').forEach(button => {
       button.disabled = value || !selectionCount() || sending || !approved;
@@ -105,6 +108,16 @@
   document.addEventListener('DOMContentLoaded', updateSelection);
   document.addEventListener('submit', event => {
     const target = event.target;
+    if (target.matches('[data-recipient-send-form]')) {
+      if (event.submitter?.value === 'schedule') {
+        const date = target.elements.namedItem('scheduled_at');
+        if (!date.value) {
+          event.preventDefault(); date.setCustomValidity('Choose a future date and time in SAST.'); date.reportValidity();
+          date.addEventListener('input', () => date.setCustomValidity(''), {once: true});
+        }
+      } else if (!confirm('Send this campaign to this client now?')) event.preventDefault();
+      return;
+    }
     if (!target.matches('[data-batch-send-form], [data-selection-action]')) return;
     const inputs = Array.from(results.querySelectorAll('input[name="policy_ids"]:checked:not(:disabled)'));
     if (!inputs.length) { event.preventDefault(); status.textContent = 'Choose clients before sending or scheduling.'; return; }

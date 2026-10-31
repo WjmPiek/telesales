@@ -82,3 +82,25 @@ class CampaignBatchTests(unittest.TestCase):
         self.assertEqual(len(selected),3)
         policy_ids={r.lapsed_policy_id for r in CampaignRecipient.query.filter(CampaignRecipient.id.in_(selected))}
         self.assertNotIn(ids[2],policy_ids)
+
+    def test_recipient_row_controls_queue_only_that_row(self):
+        import re
+        cid, ids = self.seed()
+        page = self.client.get(f'/communications/{cid}').data.decode()
+        forms = re.findall(r'<form[^>]*data-recipient-send-form.*?</form>', page, re.S)
+        self.assertEqual(len(forms), 20)
+        for form in forms:
+            self.assertIn(f'action="/communications/{cid}/queue-selection"', form)
+            row_ids = re.findall(r'name="policy_ids" value="(\d+)"', form)
+            self.assertEqual(len(row_ids), 1)
+            self.assertIn(int(row_ids[0]), ids)
+            self.assertIn('>Send Now</button>', form)
+            self.assertIn('>Schedule Date</button>', form)
+            self.assertNotIn('data-batch-send-form', form)
+        self.queue(cid, [ids[7]], selection_action='schedule', scheduled_at='2030-10-31T08:00')
+        campaign = db.session.get(CommunicationCampaign, cid)
+        chosen = CampaignRecipient.query.filter_by(campaign_id=cid, lapsed_policy_id=ids[7]).one()
+        self.assertEqual(json.loads(campaign.send_recipient_ids_json), [chosen.id])
+        self.assertEqual(campaign.scheduled_at, datetime(2030,10,31,6))
+        queued_page = self.client.get(f'/communications/{cid}').data.decode()
+        self.assertIn('Campaign queued', queued_page)
