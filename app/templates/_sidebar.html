@@ -1,6 +1,8 @@
 {% set endpoint = request.endpoint or '' %}
 {% macro nav_link(label, target) -%}
-<a href="{{ url_for(target) }}"{% if endpoint == target %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
+{% set compact_labels = {'Bank confirmation letters': 'Bank confirmations', 'Company client documents': 'Client documents', 'Documents & signatures': 'Documents & signing', 'Branch filing directory': 'Branch directory'} %}
+{% set display_label = compact_labels.get(label, label) %}
+<a href="{{ url_for(target) }}"{% if display_label != label %} title="{{ label }}" aria-label="{{ label }}"{% endif %}{% if endpoint == target %} class="active" aria-current="page"{% endif %}>{{ display_label }}</a>
 {%- endmacro %}
 <div class="sidebar-section">
   <a class="side-link{% if endpoint == 'recovery.callbacks' %} active{% endif %}" href="{{ url_for('recovery.callbacks') }}"><span class="ms-nav-icon" aria-hidden="true">H</span><span>Home</span></a>
