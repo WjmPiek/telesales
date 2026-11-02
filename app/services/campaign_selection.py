@@ -4,7 +4,7 @@ import secrets
 from app import db
 from app.models import (CampaignRecipient,CommunicationEvent,CommunicationFollowUp,
                         WhatsAppMessage,ClientApplication)
-from app.services.campaign_audience import contact_number, SENT_STATUSES
+from app.services.campaign_audience import contact_number, SENT_STATUSES, contact_history
 from app.services.communication_service import preference_for, is_suppressed
 
 
@@ -28,7 +28,7 @@ def select_recipients(campaign, policies):
             for recipient in previous: db.session.delete(recipient)
             db.session.flush();db.session.expire(campaign,['recipients'])
     existing = {}
-    sent = set()
+    sent, _ = contact_history()
     for recipient in campaign.recipients:
         number = contact_number(recipient.policy)
         if recipient.whatsapp_status in SENT_STATUSES:

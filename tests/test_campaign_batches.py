@@ -52,6 +52,17 @@ class CampaignBatchTests(unittest.TestCase):
 
     def test_ten_is_exact_even_with_twenty_saved_recipients(self): self.assert_batch(10)
 
+    def test_whole_list_is_available_and_can_be_queued(self):
+        cid,ids=self.seed()
+        extra=[LapsedPolicy(initials='Whole',surname=str(i),branch='A',cell_number='083'+str(i).zfill(7)) for i in range(501)]
+        db.session.add_all(extra);db.session.commit()
+        page=self.client.get(f'/communications/{cid}').data
+        picker=page.split(b'data-client-results>')[1].split(b'</tbody>')[0]
+        # The fixture also has two contacts without a phone (disabled rows).
+        self.assertEqual(picker.count(b'name="policy_ids"'),523)
+        self.queue(cid,ids+[p.id for p in extra])
+        self.assertEqual(len(json.loads(db.session.get(CommunicationCampaign,cid).send_recipient_ids_json)),521)
+
     def test_schedule_freezes_selection_and_sast_without_sending_early(self):
         cid,ids=self.seed()
         self.queue(cid,ids[:5],selection_action='schedule',scheduled_at='2030-10-31T08:00')

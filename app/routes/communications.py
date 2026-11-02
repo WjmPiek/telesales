@@ -688,7 +688,7 @@ def view_campaign(campaign_id):
     from app.services.client_directory import filter_policy_query, filter_context
     directory_options = filter_context(leads_query, request.args)
     leads_query = filter_policy_query(leads_query, request.args)
-    leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc(),LapsedPolicy.id.desc()).limit(500).all()
+    leads = leads_query.filter(LapsedPolicy.recovery_status != "Opted Out").order_by(LapsedPolicy.imported_at.desc(),LapsedPolicy.id.desc()).all()
     from app.services.campaign_audience import audience_rows
     leads,audience_states=audience_rows(leads,recipients)
     metrics = {
@@ -1201,7 +1201,7 @@ def queue_selection(campaign_id):
         db.session.rollback();flash(str(exc),'warning');return redirect(target)
     if not selected:
         db.session.rollback()
-        flash('No clients queued: these numbers were already sent this campaign, opted out or have no valid number.', 'warning')
+        flash('No clients queued: these numbers were already messaged, opted out or have no valid number.', 'warning')
         return redirect(target)
     campaign.scheduled_at = scheduled
     campaign.status = 'Scheduled'

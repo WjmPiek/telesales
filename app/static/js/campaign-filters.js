@@ -18,7 +18,7 @@
   function applyBatch() {
     if (batch && batch.value !== 'manual') {
       const inputs = Array.from(results.querySelectorAll('input[name="policy_ids"]:not(:disabled)'));
-      inputs.forEach((input, index) => input.checked = index < Number(batch.value));
+      inputs.forEach((input, index) => input.checked = batch.value === 'all' || index < Number(batch.value));
     }
     updateSelection();
   }
