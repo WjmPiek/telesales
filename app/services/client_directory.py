@@ -19,6 +19,8 @@ DATE_LABELS = {'receipt': 'Last receipt date', 'imported': 'Import date',
                'application': 'Application started', 'joined': 'New policy start date'}
 CONTACT_LABELS = {'consented': 'Marketing consent recorded', 'opted_out': 'Opted out / stop marketing',
                   'unknown': 'Marketing consent not recorded'}
+DELIVERY_LABELS = {'not_sent':'Not sent', 'sent':'Sent / delivered / read', 'delivered':'Delivered / read',
+                   'read':'Read', 'failed':'Failed / held', 'opted_out':'Opted out'}
 
 
 def contact_permission_expression(base):
@@ -80,7 +82,9 @@ def process_expressions(base):
 
 def filter_values(values):
     selected = {key: (values.get(key) or '').strip() for key in
-                ('q', 'franchise', 'year', 'month', 'date_from', 'date_to', 'process', 'branch', 'status', 'lead_type', 'registry', 'screening', 'contact_permission')}
+                ('q', 'franchise', 'year', 'month', 'date_from', 'date_to', 'process', 'branch', 'status', 'lead_type', 'registry', 'screening', 'contact_permission', 'source_file', 'delivery')}
+    if selected['delivery'] and selected['delivery'] not in DELIVERY_LABELS:
+        abort(400, 'Choose a valid WhatsApp delivery status.')
     if selected['contact_permission'] and selected['contact_permission'] not in CONTACT_LABELS:
         abort(400, 'Choose a valid contact permission.')
     from app.services.marketing_screening import REGISTRIES, RESULTS
@@ -139,6 +143,18 @@ def filter_policy_query(base, values, include_process=True):
                                    LapsedPolicy.id_number, LapsedPolicy.email_address, LapsedPolicy.address)]))
     if selected['franchise']:
         query = query.filter(franchise_column() == selected['franchise'])
+    if selected['source_file']:
+        query = query.filter(LapsedPolicy.source_filename == selected['source_file'])
+    if selected['delivery']:
+        from app.services.whatsapp_clients import directory_delivery
+        rows = directory_delivery(base.all())
+        key = selected['delivery']
+        def matches(row):
+            checks = {'not_sent': not row['sent'], 'sent': row['sent'], 'delivered': row['delivered'],
+                      'read': row['delivery_key'] == 'read', 'opted_out': row['opted_out'],
+                      'failed': any(h.whatsapp_status in {'Failed', 'Held'} for h in row['history'])}
+            return checks[key]
+        query = query.filter(LapsedPolicy.id.in_([pid for pid, row in rows.items() if matches(row)]))
     for key, column in [('branch', LapsedPolicy.branch), ('status', LapsedPolicy.recovery_status), ('lead_type', LapsedPolicy.lead_type)]:
         if selected[key]:
             query = query.filter(column == selected[key])
@@ -191,15 +207,20 @@ def filter_context(base, values):
     if selected['year']:
         years = sorted(set(years) | {int(selected['year'])}, reverse=True)
     from app.services.marketing_screening import REGISTRIES, RESULTS
+    source_files = [r[0] for r in base.order_by(None).with_entities(LapsedPolicy.source_filename).filter(
+        LapsedPolicy.source_filename.isnot(None), LapsedPolicy.source_filename != '').distinct().order_by(LapsedPolicy.source_filename)]
     return dict(screening_registries=REGISTRIES, screening_results=RESULTS, contact_labels=CONTACT_LABELS,
+                delivery_labels=DELIVERY_LABELS, directory_source_files=source_files,
                 directory_filters=selected, directory_franchises=franchises, directory_years=years,
                 directory_months=[(number, calendar.month_name[number]) for number in range(1, 13)],
                 process_labels=PROCESS_LABELS, date_labels=DATE_LABELS)
 
 
 def directory_context(values):
+    from app.services.campaign_schedule import schedule_sast
     base = scoped_policies()
     context = filter_context(base, values)
+    context['schedule_sast'] = schedule_sast
     state = process_expressions(base)
     counts_query = filter_policy_query(base, values, include_process=False)
     counts = dict(counts_query.with_entities(state, func.count(LapsedPolicy.id)).group_by(state).all())
@@ -217,4 +238,14 @@ def directory_context(values):
     ids = [policy.id for policy, _ in records]
     context['contact_permissions'] = dict(base.filter(LapsedPolicy.id.in_(ids)).with_entities(
         LapsedPolicy.id, contact_permission_expression(base)).all()) if ids else {}
+    from app.services.whatsapp_clients import directory_delivery
+    # Include accessible duplicates so an earlier send to the same number is visible.
+    all_delivery = directory_delivery(base.all())
+    context['directory_delivery'] = {pid: all_delivery[pid] for pid in ids}
+    context['directory_imports'] = (base.order_by(None).with_entities(
+        LapsedPolicy.source_filename.label('filename'),
+        func.count(LapsedPolicy.id).label('clients'), func.min(LapsedPolicy.imported_at).label('imported_at'))
+        .filter(LapsedPolicy.source_filename.isnot(None), LapsedPolicy.source_filename != '')
+        .group_by(LapsedPolicy.source_filename)
+        .order_by(func.max(LapsedPolicy.imported_at).desc()).limit(20).all())
     return context

@@ -2,6 +2,7 @@
 import io
 import re
 import secrets
+from pathlib import PurePosixPath
 
 from flask import Blueprint, abort, flash, redirect, request, send_file, url_for
 from flask_login import current_user, login_required
@@ -123,6 +124,7 @@ def import_contacts():
                 continue
             seen.add(key)
             lead = LapsedPolicy(lead_type="prospect", member_id="PROSPECT-" + secrets.token_hex(12),
+                                source_type='prospect_import', source_filename=PurePosixPath(upload.filename.replace('\\', '/')).name[:255],
                                 initials=first, surname=surname, cell_number=phone,
                                 branch=company.branch, company_id=company.id, company_name=company.company_name,
                                 franchise=company.company_name, assigned_agent_id=current_user.id,
@@ -139,7 +141,7 @@ def import_contacts():
         flash("No contacts imported. The database could not save this import; please retry.", "danger")
         return redirect(url_for("recovery.queue"))
     flash(f"Imported {created} individual clients; skipped {skipped} duplicate contacts. Create a campaign and select Individual clients only.", "success")
-    return redirect(url_for("recovery.queue"))
+    return redirect(url_for("recovery.queue", source_file=PurePosixPath(upload.filename.replace('\\', '/')).name[:255]))
 
 
 @prospects_bp.app_context_processor

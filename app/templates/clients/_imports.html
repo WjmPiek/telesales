@@ -1,0 +1,8 @@
+{% if directory_imports %}
+<section class="card card-body mb-3" aria-label="Saved imports">
+<h2 class="h5">Your imported files</h2>
+<p class="small text-muted">Open a file below to see its saved client details and message status. Imports do not send messages.</p>
+<div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Imported file</th><th>Client records</th><th>View</th></tr></thead><tbody>
+{% for item in directory_imports %}<tr><td>{{item.filename}}</td><td>{{item.clients}}</td><td><a href="{{url_for('client_files.index',source_file=item.filename)}}">Client details</a> · <a href="{{url_for('communications.whatsapp_clients',source_file=item.filename)}}">Sent / not sent</a></td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endif %}
