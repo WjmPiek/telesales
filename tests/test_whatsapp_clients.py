@@ -47,7 +47,7 @@ class WhatsAppClientTests(unittest.TestCase):
         self.login('unassigned')
         self.assertNotIn(b'Bob Callback',self.client.get('/communications/clients').data)
 
-    def test_unsent_drafts_are_hidden_and_failed_attempts_can_be_retried(self):
+    def test_all_imported_clients_are_visible_and_failed_attempts_can_be_retried(self):
         self.seed()
         campaign=CommunicationCampaign.query.filter_by(branch='A').first()
         for name,status,phone in [('Onlydraft','Not Sent','0851234567'),
@@ -66,8 +66,8 @@ class WhatsAppClientTests(unittest.TestCase):
         db.session.add(CampaignRecipient(campaign_id=c.id,lapsed_policy_id=alice.id,secure_token='newdraft',whatsapp_status='Not Sent'))
         db.session.commit();self.login('admin')
         page=self.client.get('/communications/clients').data
-        self.assertNotIn(b'Onlydraft Example',page)
-        self.assertNotIn(b'Neverselected Example',page)
+        self.assertIn(b'Onlydraft Example',page)
+        self.assertIn(b'Neverselected Example',page)
         self.assertNotIn(b'Unsent draft',page.split(b'<tbody>')[-1])
         self.assertIn(b'Failedattempt Example',page)
         self.assertIn(b'Heldattempt Example',page)

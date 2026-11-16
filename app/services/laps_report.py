@@ -130,10 +130,10 @@ def report_group_repairs():
     return plans
 
 
-def import_report(workbook, filename, user):
+def import_report(workbook, filename, user, *, company_override=None, commit=True):
     from app.services.communication_service import is_suppressed, preference_for
     franchise, rows = parse_report(workbook, filename)
-    company = report_company(franchise)
+    company = company_override or report_company(franchise)
     branch = company.branch
     role = user.role.name.lower().replace('_', ' ') if user.role else ''
     if role not in {'admin', 'super admin'} and branch != (user.branch or '').strip():
@@ -190,7 +190,8 @@ def import_report(workbook, filename, user):
             policy.suspense_reason = None
     db.session.add(AuditLog(user_id=user.id, action='LAPS_REPORT_IMPORT', entity_type='CompanyGroupState',
                            entity_id=str(company.id), details=f'{created} created; {updated} updated; {missing_mobile} missing valid mobile numbers.'))
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return franchise, created, updated, missing_mobile
 
 

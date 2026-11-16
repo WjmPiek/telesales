@@ -445,6 +445,10 @@ def create_app():
         seed_default_office()
         SupportingDocumentReminder.__table__.create(db.engine, checkfirst=True)
         CompanyGroupState.__table__.create(db.engine, checkfirst=True)
+        from app.models import ClientImportBatch, ClientImportRow, ClientImportCampaign
+        ClientImportBatch.__table__.create(db.engine, checkfirst=True)
+        ClientImportRow.__table__.create(db.engine, checkfirst=True)
+        ClientImportCampaign.__table__.create(db.engine, checkfirst=True)
         CompanyDocument.__table__.create(db.engine, checkfirst=True)
         HistoricalMemberCover.__table__.create(db.engine, checkfirst=True)
         from app.models import MarketingScreening
@@ -556,6 +560,8 @@ def create_app():
 
     from app.routes.client_files import client_files_bp
     app.register_blueprint(client_files_bp)
+    from app.routes.sales import sales_bp
+    app.register_blueprint(sales_bp)
     from app.routes.marketing_screening import screening_bp
     app.register_blueprint(screening_bp)
     app.register_blueprint(auth_bp)

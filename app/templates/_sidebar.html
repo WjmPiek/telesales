@@ -1,82 +1,17 @@
 {% set endpoint = request.endpoint or '' %}
-{% macro nav_link(label, target) -%}
-{% set compact_labels = {'Bank confirmation letters': 'Bank confirmations', 'Company client documents': 'Client documents', 'Documents & signatures': 'Documents & signing', 'Branch filing directory': 'Branch directory'} %}
-{% set display_label = compact_labels.get(label, label) %}
-<a href="{{ url_for(target) }}"{% if display_label != label %} title="{{ label }}" aria-label="{{ label }}"{% endif %}{% if endpoint == target %} class="active" aria-current="page"{% endif %}>{{ display_label }}</a>
-{%- endmacro %}
+{% macro nav_link(label,target) -%}<a href="{{url_for(target)}}"{% if endpoint==target %} class="active" aria-current="page"{% endif %}>{{label}}</a>{%- endmacro %}
 <div class="sidebar-section">
-  <a class="side-link{% if endpoint == 'recovery.callbacks' %} active{% endif %}" href="{{ url_for('recovery.callbacks') }}"><span class="ms-nav-icon" aria-hidden="true">H</span><span>Home</span></a>
-  <details class="side-group"{% if request.blueprint in ['recovery', 'allocation', 'client_files'] %} open{% endif %}>
-    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">C</span><span>Clients</span></summary>
-    <div class="side-submenu">
-      {{ nav_link('Find client / client file', 'client_files.index') }}
-      {{ nav_link('Client list & import', 'recovery.queue') }}
-      {{ nav_link('Next client', 'recovery.next_client') }}
-      {{ nav_link('Callbacks', 'recovery.callbacks') }}
-      {{ nav_link('Not finalised', 'recovery.not_finalised') }}
-      {{ nav_link('Call scripts', 'recovery.script_records') }}
-      {% if admin_role %}{{ nav_link('Suspense', 'recovery.suspense') }}{% endif %}
-      {% if admin_role or manager_role %}{{ nav_link('Assign clients', 'allocation.index') }}{% endif %}
-    </div>
-  </details>
-  {% if admin_role or manager_role %}
-  <details class="side-group"{% if request.blueprint in ['communications', 'whatsapp'] and endpoint not in ['communications.notifications', 'communications.whatsapp_analytics', 'communications.whatsapp_audit'] %} open{% endif %}>
-    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp</span></summary>
-    <div class="side-submenu">
-      {{ nav_link('Overview', 'communications.whatsapp_dashboard') }}
-      {{ nav_link('Client list', 'communications.whatsapp_clients') }}
-      {{ nav_link('Conversations', 'whatsapp.inbox') }}
-      {{ nav_link('Campaigns', 'communications.index') }}
-      {{ nav_link('Templates', 'communications.template_library') }}
-      {{ nav_link('Opt-outs', 'communications.suppression_list') }}
-      {{ nav_link('WhatsApp settings', 'communications.whatsapp_settings') }}
-    </div>
-  </details>
-  {% else %}<a class="side-link" href="{{ url_for('whatsapp.inbox') }}"><span class="ms-nav-icon" aria-hidden="true">W</span><span>WhatsApp</span></a><div class="side-submenu">{{ nav_link('Client list', 'communications.whatsapp_clients') }}{{ nav_link('My company campaigns', 'communications.index') }}</div>{% endif %}
-  <details class="side-group"{% if request.blueprint in ['applications', 'documents', 'qa', 'signing'] %} open{% endif %}>
-    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Applications</span></summary>
-    <div class="side-submenu">
-      {{ nav_link('Application list', 'applications.list_applications') }}
-      {{ nav_link('Documents & signatures', 'documents.document_dashboard') }}
-      {% if admin_role or manager_role %}{{ nav_link('Quality review', 'qa.qa_dashboard') }}{% endif %}
-    </div>
-  </details>
-  {% if admin_role or manager_role %}
-  <details class="side-group"{% if request.blueprint in ['reports', 'wallboard', 'targets', 'analytics'] or endpoint in ['security_center.audit_reports', 'settings.cover_checks', 'communications.whatsapp_analytics', 'communications.whatsapp_audit'] %} open{% endif %}>
-    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">R</span><span>Reports</span></summary>
-    <div class="side-submenu">
-      {{ nav_link('Performance reports', 'reports.index') }}
-      {{ nav_link('Branch filing report', 'reports.branch_filing_report') }}
-      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Audit reports', 'security_center.audit_reports') }}{% endif %}
-      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Member cover checks', 'settings.cover_checks') }}{% endif %}
-      {{ nav_link('WhatsApp analytics', 'communications.whatsapp_analytics') }}
-      {{ nav_link('WhatsApp audit', 'communications.whatsapp_audit') }}
-      {{ nav_link('Call analytics', 'analytics.index') }}
-      {% if admin_role %}{{ nav_link('Live team performance', 'wallboard.index') }}{{ nav_link('Sales targets', 'targets.index') }}{% endif %}
-    </div>
-  </details>
-  <details class="side-group"{% if (request.blueprint in ['auth', 'policies', 'settings', 'security_center', 'role_portals'] or endpoint in ['main.franchise_details', 'main.franchise_employees']) and endpoint not in ['security_center.audit_reports', 'settings.cover_checks'] %} open{% endif %}>
-    <summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Administration</span></summary>
-    <div class="side-submenu">
-      {{ nav_link('Company details', 'main.franchise_details') }}
-      {% if admin_role %}
-      {{ nav_link('Admin Portal', 'role_portals.admin_home') }}
-
-      {{ nav_link('Users & employees', 'auth.users_manage') }}
-      {{ nav_link('Roles & permissions', 'auth.users_roles') }}
-      {{ nav_link('Policy products', 'policies.list_products') }}
-      {{ nav_link('Legacy franchises', 'auth.old_franchises') }}
-      {{ nav_link('Security', 'security_center.index') }}
-      {{ nav_link('System settings', 'settings.index') }}
-      {{ nav_link('Email templates', 'settings.email_templates') }}
-      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Branch filing directory', 'settings.branch_filing_directory') }}{% endif %}
-      {{ nav_link('Bank confirmation letters', 'settings.bank_confirmation_letters') }}
-      {% if current_user.email|lower == 'wjm@martinsdirect.com' %}{{ nav_link('Company client documents', 'settings.company_documents') }}{% endif %}
-
-      {{ nav_link('Script Setup', 'recovery.admin_script_questions') }}
-      {% else %}{{ nav_link('Employees', 'main.franchise_employees') }}{% endif %}
-    </div>
-  </details>
-  {% endif %}
-  <a class="side-link{% if endpoint == 'communications.notifications' %} active{% endif %}" href="{{ url_for('communications.notifications') }}"><span class="ms-nav-icon" aria-hidden="true">N</span><span>Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</span></a>
+<a class="side-link{% if request.blueprint=='sales' %} active{% endif %}" href="{{url_for('sales.imports')}}"><span class="ms-nav-icon" aria-hidden="true">I</span><span>Import</span></a>
+<a class="side-link" href="{{url_for('communications.whatsapp_clients')}}"><span class="ms-nav-icon" aria-hidden="true">C</span><span>Clients &amp; messages</span></a>
+<a class="side-link" href="{{url_for('recovery.callbacks')}}"><span class="ms-nav-icon" aria-hidden="true">T</span><span>Calls</span></a>
+<a class="side-link" href="{{url_for('applications.list_applications')}}"><span class="ms-nav-icon" aria-hidden="true">A</span><span>Applications</span></a>
+{% if admin_role or manager_role %}<details class="side-group"><summary class="side-toggle"><span class="ms-nav-icon" aria-hidden="true">S</span><span>Settings</span></summary><div class="side-submenu">
+{{nav_link('WhatsApp templates','communications.template_library')}}
+{{nav_link('WhatsApp settings','communications.whatsapp_settings')}}
+{{nav_link('Branch documents','settings.branch_filing_directory')}}
+{{nav_link('Products','policies.list_products')}}
+{{nav_link('Quality review','qa.qa_dashboard')}}
+{{nav_link('Reports','reports.index')}}
+{{nav_link('Administration','settings.index')}}
+</div></details>{% endif %}
 </div>

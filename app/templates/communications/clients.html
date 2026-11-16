@@ -2,32 +2,34 @@
 {% block content %}
 <style>.whatsapp-client-sent>td{background:#e5f5e9;color:#146c43}</style>
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-  <div><h2>WhatsApp client list</h2><p class="text-muted mb-0">Sent messages and unsuccessful send attempts only.</p></div>
-  <a class="btn btn-outline-primary" href="{{ url_for('communications.index') }}">Campaigns</a>
+  <div><h2>Clients and WhatsApp messages</h2>{% if batch %}<p class="mb-1"><strong>{{batch.company.company_name}} &middot; {{batch.description}}</strong> &middot; <a href="{{url_for('sales.clients',batch_id=batch.id)}}">Back to this file</a></p>{% endif %}<p class="text-muted mb-0">All saved clients, their imported details, and who has or has not been sent a message.</p></div>
+  <div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{{ url_for('sales.imports') }}">Import / view files</a><a class="btn btn-outline-primary" href="{{ url_for('communications.index') }}">Campaigns</a></div>
 </div>
 <div class="stat-grid mb-3">
-  {% for label,key,value in [('Contacted clients','',summary.total),('Not delivered','undelivered',summary.undelivered),('Delivered / read','delivered',summary.delivered),('Call me back','callback',summary.callback),('Opted out','opted_out',summary.opted_out)] %}
-  <a class="stat-card text-decoration-none" href="{{ url_for('communications.whatsapp_clients',status=key) }}"><div>{{ label }}</div><strong>{{ value }}</strong></a>
+  {% for label,key,value in [('All clients','',summary.total),('Sent','sent',summary.sent),('Not sent','not_sent',summary.not_sent),('Failed / held','failed',summary.failed),('Delivered / read','delivered',summary.delivered),('Opted out','opted_out',summary.opted_out)] %}
+  <a class="stat-card text-decoration-none" href="{{ url_for('communications.whatsapp_clients',status=key,source_file=source_file,franchise=franchise,branch=branch,q=q,campaign=campaign_id or '',batch_id=batch.id if batch else '',sent_from=sent_from,sent_to=sent_to) }}"><div>{{ label }}</div><strong>{{ value }}</strong></a>
   {% endfor %}
 </div>
 <form method="get" class="card card-body mb-3" id="whatsappClientFilters">
-  <div class="row g-3 align-items-end">
+  {% if batch %}<input type="hidden" name="batch_id" value="{{batch.id}}">{% endif %}<div class="row g-3 align-items-end">
     <div class="col-lg-4"><label for="clientSearch" class="form-label">Find client</label><input id="clientSearch" name="q" value="{{ q }}" class="form-control" placeholder="Name, number or policy"></div>
     <div class="col-lg-2"><label for="clientStatus" class="form-label">Status / response</label><select id="clientStatus" name="status" class="form-select" onchange="this.form.submit()">
-      {% for value,label in [('','All contacted clients'),('sent','Sent'),('delivered','Delivered / read'),('read','Read'),('undelivered','Not delivered'),('failed','Failed / held — retry'),('callback','Call me back'),('opted_out','Opted out')] %}<option value="{{ value }}" {% if status==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      {% for value,label in [('','All clients'),('not_sent','Not sent'),('sent','Sent'),('delivered','Delivered / read'),('read','Read'),('undelivered','Not delivered'),('failed','Failed / held — retry'),('callback','Call me back'),('opted_out','Opted out')] %}<option value="{{ value }}" {% if status==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
     </select></div>
     <div class="col-lg-2"><label for="clientBranch" class="form-label">Branch</label><select id="clientBranch" name="branch" class="form-select" onchange="this.form.submit()"><option value="">All branches</option>{% for b in branches %}<option {% if branch==b %}selected{% endif %}>{{ b }}</option>{% endfor %}</select></div>
     <div class="col-lg-3"><label for="clientCampaign" class="form-label">Campaign</label><select id="clientCampaign" name="campaign" class="form-select" onchange="this.form.submit()"><option value="">All campaigns</option>{% for c in campaigns %}<option value="{{ c.id }}" {% if campaign_id==c.id %}selected{% endif %}>#{{ c.id }} · {{ c.name }}</option>{% endfor %}</select></div>
-    <div class="col-lg-1"><button class="btn btn-primary">Search</button></div>
+    <div class="col-lg-6"><label class="form-label" for="importedFile">Imported file</label><select class="form-select" id="importedFile" name="source_file" onchange="this.form.submit()"><option value="">All files</option>{% for filename in source_files %}<option {% if source_file==filename %}selected{% endif %}>{{filename}}</option>{% endfor %}</select></div>
+    <div class="col-lg-4"><label class="form-label" for="clientFranchise">Franchise holder</label><select class="form-select" id="clientFranchise" name="franchise" onchange="this.form.submit()"><option value="">All franchises</option>{% for name in franchises %}<option {% if franchise==name %}selected{% endif %}>{{name}}</option>{% endfor %}</select></div>
+    <div class="col-lg-3"><label class="form-label" for="sent-from">Messages from (SAST)</label><input class="form-control" type="date" name="sent_from" id="sent-from" value="{{sent_from}}"></div><div class="col-lg-3"><label class="form-label" for="sent-to">Messages to (SAST)</label><input class="form-control" type="date" name="sent_to" id="sent-to" value="{{sent_to}}"></div><div class="col-lg-2"><button class="btn btn-primary">Search</button></div>
   </div>
   <div class="mt-2 small text-muted">{{ total }} matching client(s) · One row per phone number. <a href="{{ url_for('communications.whatsapp_clients') }}">Clear filters</a></div>
 </form>
-<div class="card"><div class="table-responsive"><table class="table align-middle mb-0">
-  <thead><tr><th>Client</th><th>Branch</th><th>Latest message</th><th>Response</th><th>History</th></tr></thead><tbody>
+{% if batch %}<form method="post" action="{{url_for('sales.retry_failed',batch_id=batch.id)}}" class="mb-3" onsubmit="return confirm('Resend the failed messages for this file and date range?')"><input type="hidden" name="sales_csrf" value="{{session.sales_csrf}}"><input type="hidden" name="sent_from" value="{{sent_from}}"><input type="hidden" name="sent_to" value="{{sent_to}}"><button class="btn btn-outline-danger">Resend failed messages</button></form>{% endif %}<div class="card"><div class="table-responsive"><table class="table align-middle mb-0">
+  <thead><tr><th>Client / imported details</th><th>Franchise / branch</th><th>WhatsApp status</th><th>Response</th><th>History</th></tr></thead><tbody>
   {% for row in rows %}<tr{% if row.status in ['Sent','Delivered','Read'] %} class="whatsapp-client-sent"{% endif %}>
-    <td><strong>{{ row.name }}</strong><div class="small text-muted">{{ row.policy.cell_number or 'No phone number' }}</div></td>
-    <td>{{ row.branches|sort|join(', ') }}</td>
-    <td><span class="badge {% if row.status in ['Sent','Delivered','Read'] %}text-bg-success{% elif row.status in ['Failed','Held'] %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ row.status }}</span>
+    <td><strong>{{ row.name }}</strong><div>{{ row.policy.cell_number or 'No phone number' }}</div><div class="small">Policy: {{row.policy.policy_number or 'Individual client'}}<br>{{row.policy.address or ''}}<br>Last receipt: {{row.policy.last_date_paid or 'Unknown'}}{% if row.policy.receipt_number %} · {{row.policy.receipt_number}}{% endif %}</div>{% for name in row.source_files|sort %}<div class="small text-muted">{{name}}</div>{% endfor %}<a href="{{url_for('client_files.index',policy_id=row.policy.id)}}">Open client file</a></td>
+    <td>{{row.franchises|sort|join(', ')}}<div class="small text-muted">{{ row.branches|sort|join(', ') }}</div></td>
+    <td><span class="badge {% if row.sent %}text-bg-success{% elif row.status in ['Failed','Held'] %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ row.delivery_label }}</span>{% if row.sent and row.status in ['Failed','Held'] %}<div class="small text-danger">Latest attempt: {{row.status}}</div>{% endif %}{% if row.last_sent_at %}<div class="small">Sent: {{schedule_sast(row.last_sent_at)}} SAST</div>{% endif %}
       {% if row.latest %}<div class="small mt-1"><a href="{{ url_for('communications.view_campaign',campaign_id=row.latest.campaign_id) }}">Campaign #{{ row.latest.campaign_id }}</a></div>{% endif %}
     </td>
     <td>{% if row.opted_out %}<span class="badge text-bg-danger">Opted out</span>{% endif %}
@@ -38,11 +40,11 @@
       {% for h in row.history %}<div class="border-bottom pb-2 mb-2 small"><a href="{{ url_for('communications.campaign_report',campaign_id=h.campaign_id) }}">#{{ h.campaign_id }} · {{ h.campaign.name }}</a><div>{{ h.whatsapp_status }}{% if h.response_type %} · {{ h.response_type|replace('_',' ')|title }}{% endif %}</div><div class="text-muted">Selected: {{ schedule_sast(h.created_at) }} SAST{% if h.responded_at %}<br>Response: {{ schedule_sast(h.responded_at) }} SAST{% endif %}</div>
       {% if h.whatsapp_status in ['Failed','Held'] and not row.opted_out and h.campaign.queue_status not in ['queued','retry','processing'] %}<form class="mt-2" method="post" action="{{ url_for('communications.queue_selection' if h.campaign.audience_type == 'group' else 'communications.send_campaign',campaign_id=h.campaign_id) }}" onsubmit="return confirm('Retry this failed message for this client?')"><input type="hidden" name="policy_ids" value="{{ h.lapsed_policy_id }}"><input type="hidden" name="selection_action" value="send"><button class="btn btn-sm btn-outline-danger">Retry failed message</button></form>{% endif %}
       </div>{% endfor %}
-    </div></details>{% else %}<span class="text-muted">No messages selected</span>{% endif %}</td>
+    </div></details>{% else %}<span class="text-muted">No message sent</span>{% endif %}</td>
   </tr>{% else %}<tr><td colspan="5" class="text-muted text-center py-4">No clients match these filters.</td></tr>{% endfor %}
   </tbody></table></div></div>
 <div class="d-flex justify-content-between align-items-center mt-3"><span class="text-muted small">Page {{ page }} of {{ pages }}</span><div>
-{% if page>1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('communications.whatsapp_clients',q=q,status=status,branch=branch,campaign=campaign_id,page=page-1) }}">Previous</a>{% endif %}
-{% if page<pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('communications.whatsapp_clients',q=q,status=status,branch=branch,campaign=campaign_id,page=page+1) }}">Next</a>{% endif %}
+{% if page>1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('communications.whatsapp_clients',q=q,status=status,branch=branch,campaign=campaign_id,source_file=source_file,franchise=franchise,batch_id=batch.id if batch else '',sent_from=sent_from,sent_to=sent_to,page=page-1) }}">Previous</a>{% endif %}
+{% if page<pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('communications.whatsapp_clients',q=q,status=status,branch=branch,campaign=campaign_id,source_file=source_file,franchise=franchise,batch_id=batch.id if batch else '',sent_from=sent_from,sent_to=sent_to,page=page+1) }}">Next</a>{% endif %}
 </div></div>
 {% endblock %}

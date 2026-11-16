@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block content %}<h1 class="h3">{{'Messages scheduled' if scheduled else 'Sending messages'}}</h1><p id="progress" role="status">{% if scheduled %}{{count}} message(s) scheduled for {{schedule_sast(campaign.scheduled_at)}} SAST.{% else %}Your selected clients are being processed. Please wait for the result.{% endif %}</p><a href="{{url_for('communications.whatsapp_clients',batch_id=batch.id)}}">View client results</a>
+<script>
+const results={{url_for('communications.whatsapp_clients',batch_id=batch.id)|tojson}};
+{% if scheduled %}window.alert({{('Messages scheduled for ' + schedule_sast(campaign.scheduled_at) + ' SAST.')|tojson}});window.location.replace(results);
+{% else %}
+async function check(){try{const response=await fetch({{url_for('sales.progress',campaign_id=campaign.id)|tojson}},{cache:'no-store'});if(!response.ok)throw new Error();const data=await response.json();document.getElementById('progress').textContent=`${data.sent} sent; ${data.failed} failed; ${data.held} held; ${data.total} selected.`;if(data.done){window.alert(`${data.sent} message(s) sent. ${data.failed} failed; ${data.held} held.`);window.location.replace(data.results);return}}catch(error){document.getElementById('progress').textContent='Waiting for the send result. You can also open View client results.'}setTimeout(check,3000)}check();
+{% endif %}</script>{% endblock %}

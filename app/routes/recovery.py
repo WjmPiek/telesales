@@ -460,7 +460,8 @@ def _import_recovery_workbook(wb, filename):
         try:
             franchise, created, updated, missing = import_report(wb, filename, current_user)
             flash(f'{franchise}: imported {created} clients; updated {updated}; {missing} without a valid mobile number. Importing does not send WhatsApp messages.', 'success' if not missing else 'warning')
-            return redirect(url_for('recovery.queue', franchise=franchise))
+            from pathlib import PurePosixPath
+            return redirect(url_for('recovery.queue', source_file=PurePosixPath(filename.replace('\\', '/')).name[:255]))
         except ValueError as exc:
             db.session.rollback()
             flash(str(exc), 'danger')
