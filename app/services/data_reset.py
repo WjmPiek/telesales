@@ -38,6 +38,9 @@ from app.models import (
     HistoricalMemberCover,
     LapsedPolicy,
     MarketingScreening,
+    ClientImportBatch,
+    ClientImportRow,
+    ClientImportCampaign,
     RecoveryCallLog,
     SupportingDocumentReminder,
     TelesalesScriptSession,
@@ -197,6 +200,9 @@ def reset_operational_data(*, expected_fingerprint=None, actor_id=None):
     RecoveryCallLog.query.delete(synchronize_session=False)
     ContactCommunicationPreference.query.delete(synchronize_session=False)
     HistoricalMemberCover.query.delete(synchronize_session=False)
+    ClientImportCampaign.query.delete(synchronize_session=False)
+    ClientImportRow.query.delete(synchronize_session=False)
+    ClientImportBatch.query.delete(synchronize_session=False)
     MarketingScreening.query.delete(synchronize_session=False)
     LapsedPolicy.query.delete(synchronize_session=False)
 

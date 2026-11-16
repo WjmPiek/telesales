@@ -1,5 +1,5 @@
 """Read-only, phone-deduplicated client communication directory."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 from app import db
@@ -17,6 +17,18 @@ def visible_campaigns():
     else:
         query = query.filter(CommunicationCampaign.company_id.in_([c.id for c in _available_companies()]))
     return query.order_by(CommunicationCampaign.created_at.desc()).all()
+
+
+def message_date_range(values):
+    start, end = values.get('sent_from',''), values.get('sent_to','')
+    try:
+        low=datetime.strptime(start,'%Y-%m-%d')-timedelta(hours=2) if start else None
+        high=datetime.strptime(end,'%Y-%m-%d')+timedelta(days=1,hours=-2) if end else None
+        if low and high and low>=high:
+            raise ValueError()
+        return low,high
+    except ValueError:
+        raise ValueError('Choose a valid message date range in South African time.')
 
 
 def client_rows(policies, campaign_ids, *, include_uncontacted=False):
@@ -59,6 +71,11 @@ def client_rows(policies, campaign_ids, *, include_uncontacted=False):
     sent_at = dict(db.session.query(WhatsAppMessage.campaign_recipient_id, func.max(WhatsAppMessage.created_at)).filter(
         WhatsAppMessage.campaign_recipient_id.in_(recipient_ids), WhatsAppMessage.direction == 'outbound',
         WhatsAppMessage.status.in_(['sent', 'delivered', 'read'])).group_by(WhatsAppMessage.campaign_recipient_id).all()) if recipient_ids else {}
+    message_dates={}
+    if recipient_ids:
+        for recipient_id, at in db.session.query(WhatsAppMessage.campaign_recipient_id,WhatsAppMessage.created_at).filter(
+                WhatsAppMessage.campaign_recipient_id.in_(recipient_ids),WhatsAppMessage.direction=='outbound'):
+            message_dates.setdefault(recipient_id,[]).append(at)
     for row in groups.values():
         history = row['history']
         row['latest'] = history[0] if history else None
@@ -70,6 +87,7 @@ def client_rows(policies, campaign_ids, *, include_uncontacted=False):
         row['name'] = f"{row['policy'].initials or ''} {row['policy'].surname or ''}".strip() or 'Unnamed client'
         row['last_at'] = max((r.responded_at or r.created_at for r in history), default=None)
         row['last_sent_at'] = max((sent_at[r.id] for r in history if r.id in sent_at), default=None)
+        row['message_dates'] = [at for r in history for at in message_dates.get(r.id,[])]
         row['delivery_key'] = ('read' if any(r.whatsapp_status == 'Read' for r in history) else
             'delivered' if row['delivered'] else 'sent' if row['sent'] else
             'failed' if row['status'] == 'Failed' else 'held' if row['status'] == 'Held' else 'not_sent')

@@ -842,6 +842,35 @@ class CommunicationCampaign(db.Model):
     product = db.relationship("PolicyProduct")
     company = db.relationship("CompanyGroupState")
 
+class ClientImportBatch(db.Model):
+    __tablename__ = 'client_import_batches'
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.String(255), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey('company_group_states.id'), nullable=False)
+    filing_branch = db.Column(db.String(120))
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    file_data = db.deferred(db.Column(db.LargeBinary))
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    company = db.relationship('CompanyGroupState')
+
+
+class ClientImportRow(db.Model):
+    __tablename__ = 'client_import_rows'
+    id = db.Column(db.Integer, primary_key=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey('client_import_batches.id'), nullable=False, index=True)
+    policy_id = db.Column(db.Integer, db.ForeignKey('lapsed_policies.id'), nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint('batch_id', 'policy_id', name='uq_import_batch_policy'),)
+
+
+class ClientImportCampaign(db.Model):
+    __tablename__ = 'client_import_campaigns'
+    id = db.Column(db.Integer, primary_key=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey('client_import_batches.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('communication_campaigns.id'), nullable=False, unique=True)
+
+
 class CampaignRecipient(db.Model):
     __tablename__ = "campaign_recipients"
     id = db.Column(db.Integer, primary_key=True)
