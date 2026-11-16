@@ -27,7 +27,7 @@ def protect():
         session.setdefault('sales_csrf', secrets.token_urlsafe(32))
         if request.method == 'POST':
             token = request.form.get('sales_csrf', '')
-            if not secrets.compare_digest(session['sales_csrf'], token):
+            if not token.isascii() or not secrets.compare_digest(session['sales_csrf'], token):
                 abort(400, 'Refresh this page before continuing.')
             if request.content_length and request.content_length > 11 * 1024 * 1024:
                 abort(413)
@@ -271,7 +271,7 @@ def submit(batch_id):
     template=WhatsAppTemplate.query.filter_by(id=draft.get('template'),status='Approved').first_or_404()
     product=PolicyProduct.query.filter_by(id=draft.get('product'),active=True).first_or_404()
     source=template.campaign
-    campaign=CommunicationCampaign(name=batch.description,subject=batch.description,message_body=template.body_text,
+    campaign=CommunicationCampaign(name=batch.description[:160],subject=batch.description,message_body=template.body_text,
         company_id=batch.company_id,branch=batch.company.branch,filing_branch=batch.filing_branch,
         product_id=product.id,audience_type=draft['audience'],created_by_id=current_user.id,
         whatsapp_template_name=template.name,whatsapp_template_language=template.language,
