@@ -210,7 +210,10 @@ def clients(batch_id):
         except (ValueError,TypeError):
             sources[policy.id]={}
     from app.services.whatsapp_clients import directory_delivery
-    return render('clients',batch=batch,policies=policies,delivery=directory_delivery(policies),sources=sources,call_mode=request.args.get('mode')=='call')
+    campaigns = CommunicationCampaign.query.join(ClientImportCampaign).filter(
+        ClientImportCampaign.batch_id==batch.id, CommunicationCampaign.deleted_at.is_(None)).order_by(CommunicationCampaign.id.desc()).all()
+    return render('clients',batch=batch,policies=policies,delivery=directory_delivery(policies),sources=sources,
+                  send_batches=[(c,send_progress(c)) for c in campaigns],call_mode=request.args.get('mode')=='call')
 
 
 @sales_bp.route('/imports/<int:batch_id>/download')
@@ -339,13 +342,69 @@ def select(campaign_id):
 @login_required
 def progress(campaign_id):
     batch,campaign=campaign_record(campaign_id)
-    from app.services.campaign_selection import queued_recipients
-    recipients=queued_recipients(campaign)
-    return jsonify(done=campaign.queue_status not in {'queued','retry','processing'},
+    return jsonify(**send_progress(campaign),results=url_for('communications.whatsapp_clients',batch_id=batch.id),
+                   manage=url_for('.send_status',campaign_id=campaign.id))
+
+
+def send_progress(campaign):
+    from app.services.campaign_send_lock import sender_active
+    recipients=list(campaign.recipients)
+    interrupted=campaign.queue_status=='processing' and not sender_active(campaign)
+    return dict(done=campaign.queue_status not in {'queued','retry','processing'} or interrupted,
+        interrupted=interrupted, queue_status=campaign.queue_status,
         sent=sum(r.whatsapp_status in {'Sent','Delivered','Read'} for r in recipients),
         failed=sum(r.whatsapp_status=='Failed' for r in recipients),
         held=sum(r.whatsapp_status in {'Held','Skipped'} for r in recipients),
-        total=len(recipients),results=url_for('communications.whatsapp_clients',batch_id=batch.id))
+        unsent=sum(r.whatsapp_status in {None,'Not Sent'} for r in recipients),
+        review=sum(r.whatsapp_status=='Sending' for r in recipients),total=len(recipients))
+
+
+@sales_bp.route('/campaign/<int:campaign_id>/status')
+@login_required
+def send_status(campaign_id):
+    batch,campaign=campaign_record(campaign_id)
+    return render('send_status',batch=batch,campaign=campaign,progress=send_progress(campaign))
+
+
+@sales_bp.route('/campaign/<int:campaign_id>/resume',methods=['POST'])
+@login_required
+def resume_unsent(campaign_id):
+    from app.services.campaign_send_lock import campaign_send_lock
+    from app.services.campaign_selection import queued_recipients
+    from app.routes.communications import _refresh_template_status
+    from app.models import WhatsAppMessage
+    batch,campaign=campaign_record(campaign_id)
+    try:
+        with campaign_send_lock(campaign.id) as acquired:
+            if not acquired:
+                raise ValueError('Messages are still sending. No second sender was started.')
+            campaign=CommunicationCampaign.query.filter_by(id=campaign.id).populate_existing().with_for_update().one()
+            if campaign.queue_status in {'queued','retry'}:
+                raise ValueError('This batch is already queued or scheduled.')
+            if batch.company.status!='Active':
+                raise ValueError('This branch is not active.')
+            recipients=queued_recipients(campaign)
+            permitted={p.id for p in batch_policies(batch).all()}
+            if any(r.lapsed_policy_id not in permitted for r in recipients):
+                abort(403)
+            accepted={rid for rid, in db.session.query(WhatsAppMessage.campaign_recipient_id).filter(
+                WhatsAppMessage.campaign_recipient_id.in_([r.id for r in recipients]),
+                WhatsAppMessage.direction=='outbound',WhatsAppMessage.status.in_(['sent','delivered','read']))}
+            pending=[r.id for r in recipients if r.whatsapp_status in {None,'Not Sent'} and r.id not in accepted]
+            if not pending:
+                raise ValueError('There are no unsent messages to resume. Failed messages can be retried from Message results.')
+            live=_refresh_template_status(campaign)
+            if not live.ok or campaign.template_status!='Approved':
+                raise ValueError(live.error or 'The WhatsApp template must be approved before resuming.')
+            campaign.send_recipient_ids_json=json.dumps(pending)
+            campaign.queue_status='queued';campaign.status='Scheduled';campaign.scheduled_at=datetime.utcnow()
+            db.session.add(AuditLog(user_id=current_user.id,action='CAMPAIGN_UNSENT_RESUMED',entity_type='CommunicationCampaign',
+                entity_id=str(campaign.id),details=f'{len(pending)} previously unsent messages queued'))
+            db.session.commit()
+            flash(f'{len(pending)} unsent messages queued. Successful messages will not be resent.','success')
+    except ValueError as exc:
+        db.session.rollback();flash(str(exc),'warning')
+    return redirect(url_for('.send_status',campaign_id=campaign.id))
 
 
 @sales_bp.route('/imports/<int:batch_id>/retry',methods=['POST'])

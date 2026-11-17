@@ -65,7 +65,7 @@ def client_rows(policies, campaign_ids, *, include_uncontacted=False):
     for recipient in recipients:
         row = groups[policy_keys[recipient.lapsed_policy_id]]
         row['selections'].append(recipient)
-        if recipient.whatsapp_status in {'Sent', 'Delivered', 'Read', 'Failed', 'Held'}:
+        if recipient.whatsapp_status in {'Sent', 'Delivered', 'Read', 'Failed', 'Held', 'Sending'}:
             row['history'].append(recipient)
     recipient_ids = [r.id for r in recipients]
     sent_at = dict(db.session.query(WhatsAppMessage.campaign_recipient_id, func.max(WhatsAppMessage.created_at)).filter(
@@ -90,9 +90,9 @@ def client_rows(policies, campaign_ids, *, include_uncontacted=False):
         row['message_dates'] = [at for r in history for at in message_dates.get(r.id,[])]
         row['delivery_key'] = ('read' if any(r.whatsapp_status == 'Read' for r in history) else
             'delivered' if row['delivered'] else 'sent' if row['sent'] else
-            'failed' if row['status'] == 'Failed' else 'held' if row['status'] == 'Held' else 'not_sent')
+            'failed' if row['status'] == 'Failed' else 'held' if row['status'] == 'Held' else 'review' if row['status'] == 'Sending' else 'not_sent')
         row['delivery_label'] = {'read':'Read', 'delivered':'Delivered', 'sent':'Sent',
-            'failed':'Failed', 'held':'Held — not sent', 'not_sent':'Not sent'}[row['delivery_key']]
+            'failed':'Failed', 'held':'Held — not sent', 'review':'Sending / interrupted attempt — needs checking', 'not_sent':'Not sent'}[row['delivery_key']]
     return sorted((row for row in groups.values() if include_uncontacted or row['history']),
                   key=lambda r: (r['sent'], r['delivery_key'] in {'failed', 'held'}, -r['policy'].id))
 
