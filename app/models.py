@@ -810,7 +810,7 @@ class CommunicationCampaign(db.Model):
     template_allow_category_change = db.Column(db.Boolean, default=True, nullable=False)
     image_filename = db.Column(db.String(255))
     image_url = db.Column(db.String(1000))
-    image_data = db.Column(db.LargeBinary)
+    image_data = db.deferred(db.Column(db.LargeBinary))
     image_mimetype = db.Column(db.String(100))
     audience_type = db.Column(db.String(20), default="group", nullable=False)
     template_status = db.Column(db.String(30), default="Pending", nullable=False)

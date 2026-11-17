@@ -47,6 +47,38 @@ class WhatsAppClientTests(unittest.TestCase):
         self.login('unassigned')
         self.assertNotIn(b'Bob Callback',self.client.get('/communications/clients').data)
 
+    def test_large_recipient_history_does_not_load_repeated_campaign_images(self):
+        from sqlalchemy import event, inspect
+        self.seed(); self.login('admin')
+        campaign = CommunicationCampaign.query.filter_by(branch='A').first()
+        cid = campaign.id
+        payload = b'test-image-content' * 10000
+        campaign.image_data = payload
+        campaign.image_mimetype = 'image/png'
+        clients = [LapsedPolicy(initials='Test', surname=f'Large history {i}', branch='A',
+                                cell_number=f'082{i:07d}') for i in range(100)]
+        db.session.add_all(clients); db.session.flush()
+        db.session.add_all([CampaignRecipient(campaign_id=cid, lapsed_policy_id=policy.id,
+            secure_token=f'large-history-{i}', whatsapp_status='Sent') for i, policy in enumerate(clients)])
+        db.session.commit()
+        statements = []
+        def record(connection, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+        event.listen(db.engine, 'before_cursor_execute', record)
+        try:
+            response = self.client.get('/communications/clients')
+        finally:
+            event.remove(db.engine, 'before_cursor_execute', record)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(any('image_data' in sql.lower() for sql in statements))
+        loaded = db.session.get(CommunicationCampaign, cid)
+        self.assertIn('image_data', inspect(loaded).unloaded)
+        # Deferred image data remains available for downloads and template copies.
+        self.assertEqual(loaded.image_data, payload)
+        image = self.client.get(f'/communications/{cid}/image')
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(image.data, payload)
+
     def test_all_imported_clients_are_visible_and_failed_attempts_can_be_retried(self):
         self.seed()
         campaign=CommunicationCampaign.query.filter_by(branch='A').first()
