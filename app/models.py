@@ -899,7 +899,24 @@ class CallbackEmailNotification(db.Model):
     requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     attempted_at = db.Column(db.DateTime)
     accepted_at = db.Column(db.DateTime)
+    attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    next_attempt_at = db.Column(db.DateTime)
     recipient = db.relationship('CampaignRecipient')
+
+
+class ApplicationSubmissionNotification(db.Model):
+    __tablename__ = 'application_submission_notifications'
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(db.Integer, db.ForeignKey('client_applications.id', ondelete='CASCADE'), nullable=False, index=True)
+    to_email = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(40), nullable=False, default='Pending', index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    attempted_at = db.Column(db.DateTime)
+    accepted_at = db.Column(db.DateTime)
+    attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    next_attempt_at = db.Column(db.DateTime)
+    application = db.relationship('ClientApplication')
+    __table_args__ = (db.UniqueConstraint('application_id','to_email',name='uq_submission_notification_email'),)
 
 
 class ContactCommunicationPreference(db.Model):

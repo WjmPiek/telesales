@@ -954,28 +954,7 @@ def finish_application(app_obj, token, *, identity_choice=None):
     from app.services.application_workflow import advance_to_quality
     advance_to_quality(app_obj)
     db.session.commit()
-    from app.services.email_service import submission_notification_recipients
-    for office_email in submission_notification_recipients(recipient, application=app_obj):
-        app_link = current_app.config['BASE_URL'].rstrip('/') + url_for('client_files.index', application_id=app_obj.id)
-        from app.services.email_service import signing_email_html
-        office_body = "The client has submitted the signed application."
-        from app.services.application_sources import application_sources
-        from app.services.campaign_schedule import schedule_sast
-        source = application_sources([app_obj])[app_obj.id]
-        office_body += (f'\n\nBranch: {app_obj.branch or "Not recorded"}\n'
-                        f'Documents go to: {app_obj.filing_branch or "Default office"}\n'
-                        f'Import: {source["import_description"] or source["filename"] or "Not linked to an import"}\n'
-                        f'Submitted: {schedule_sast(app_obj.signed_at)} SAST')
-        if outstanding:
-            office_body += "\n\nThe following supporting documents will be uploaded through the client's secure follow-up link: " + ", ".join(fica_label(app_obj, t) for t in outstanding) + "."
-        else:
-            office_body += " Supporting documents were uploaded with the application."
-        office_body += "\n\nOpen the client file (staff login required):\n\n" + app_link
-        accepted = send_email(office_email, "Signed documents received: " + app_obj.application_ref,
-                   office_body, html_body=signing_email_html(app_obj,app_link,office_body), application_id=app_obj.id)
-        from app.models import AuditLog
-        db.session.add(AuditLog(action='APPLICATION_SUBMISSION_EMAIL',entity_type='ClientApplication',
-            entity_id=str(app_obj.id),details=json.dumps({'to':office_email,
-            'status':'Accepted by mail server' if accepted else 'Failed'})))
+    from app.services.response_reconciliation import queue_submission_notifications
+    queue_submission_notifications(app_obj)
     db.session.commit()
     return render_template("sign/complete.html", app=app_obj, upload_email_sent=upload_email_sent)

@@ -64,8 +64,11 @@ class SubmissionNotificationTests(unittest.TestCase):
                 ('app.services.document_reminders.schedule_document_reminders',None),
             ]:
                 stack.enter_context(patch(name, return_value=value))
-            delivery = stack.enter_context(patch('app.routes.signing.send_email', return_value=True))
+            delivery = stack.enter_context(patch('app.services.email_service.send_email', return_value=True))
             finish_application(db.session.get(ClientApplication, app_id), 'test-only-token', identity_choice='email')
+            delivery.assert_not_called()
+            from app.services.response_reconciliation import process_submission_emails
+            process_submission_emails()
             self.assertEqual([call.args[0] for call in delivery.call_args_list],
                              ['office@example.com','wjm@martinsdirect.com'])
             for call in delivery.call_args_list:
