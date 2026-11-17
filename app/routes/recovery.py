@@ -242,19 +242,30 @@ def callbacks():
     """Phase 2 callback worklist: overdue, today, upcoming and unscheduled follow-ups."""
     now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
     today = now.date()
-    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback').order_by(LapsedPolicy.next_action_date.asc(), LapsedPolicy.callback_at.asc()).all()
+    from app.services.callback_overview import overview_context
+    context, policy_ids, applications, policies = overview_context()
+    rows = open_recovery_query().filter(LapsedPolicy.id.in_(policy_ids), LapsedPolicy.recovery_status == 'Callback').order_by(LapsedPolicy.next_action_date.asc(), LapsedPolicy.callback_at.asc()).all()
     overdue = [p for p in rows if (p.callback_at and p.callback_at <= now) or (not p.callback_at and p.next_action_date and p.next_action_date < today)]
     due_today = [p for p in rows if p not in overdue and not p.callback_at and p.next_action_date == today]
     upcoming = [p for p in rows if p not in overdue and ((p.callback_at and p.callback_at > now) or (p.next_action_date and p.next_action_date > today))]
-    unscheduled = [p for p in rows if not p.next_action_date]
-    submitted_applications = scope_by_branch(
-        ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id
-    ).filter(
-        ClientApplication.status.in_(["Signed", "FICA Outstanding", "FICA Review", "QA Pending"]),
-        ClientApplication.signed_at.isnot(None),
-    ).order_by(ClientApplication.signed_at.desc()).limit(100).all()
-    return render_template('recovery/callbacks.html', overdue=overdue, due_today=due_today, upcoming=upcoming,
-                           unscheduled=unscheduled, submitted_applications=submitted_applications, today=today)
+    unscheduled = [p for p in rows if not p.next_action_date and not p.callback_at]
+    submitted_applications = sorted((a for a in applications if a.signed_at and
+        a.status in {"Signed", "FICA Outstanding", "FICA Review", "QA Pending"}),
+        key=lambda a: a.signed_at, reverse=True)
+    groups = []
+    for branch in context['branches']:
+        if context['selected_branch'] and branch != context['selected_branch']:
+            continue
+        def in_branch(p):
+            return (p.branch or 'Unassigned') == branch
+        group = dict(branch=branch,
+            submitted_applications=[a for a in submitted_applications if
+                (policies[a.lapsed_policy_id].branch or 'Unassigned' if a.lapsed_policy_id in policies else a.branch or 'Unassigned') == branch],
+            overdue=[p for p in overdue if in_branch(p)], due_today=[p for p in due_today if in_branch(p)],
+            upcoming=[p for p in upcoming if in_branch(p)], unscheduled=[p for p in unscheduled if in_branch(p)])
+        if any(group[key] for key in ('submitted_applications','overdue','due_today','upcoming','unscheduled')) or context['selected_branch']:
+            groups.append(group)
+    return render_template('recovery/callbacks.html', groups=groups, today=today, **context)
 
 
 @recovery_bp.route('/callback-reminders')
