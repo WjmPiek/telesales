@@ -54,6 +54,25 @@ def receipt_date(value, epoch):
     return result if result.year > 1900 else None
 
 
+def contact_key(value):
+    """Match local/international spellings of a number, including Excel numbers."""
+    from app.routes.prospects import prospect_phone
+    return prospect_phone(value) or re.sub(r'\D', '', text(value))
+
+
+def imported_contact(policy):
+    # Submitted applications may change the live cell number. Match the original
+    # imported number so a re-import retains the application and client record.
+    try:
+        source = json.loads(policy.source_row_json or '{}')
+        for name, value in source.items():
+            if header(name) == 'cell':
+                return contact_key(value)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return contact_key(policy.cell_number)
+
+
 def parse_report(workbook, filename):
     from app.routes.prospects import prospect_phone
     franchise = franchise_from_filename(filename)
@@ -79,9 +98,10 @@ def parse_report(workbook, filename):
         initials, _, surname = full_name.partition(' ')
         if not surname or len(initials) > 50 or len(surname) > 120 or len(text(data.get('receipt'))) > 80:
             raise ValueError(f'Row {number}: check the initials, surname and receipt number lengths.')
-        if policy.casefold() in seen:
-            raise ValueError(f'Row {number}: the policy number is duplicated in this report.')
-        seen.add(policy.casefold())
+        client_key = (policy.casefold(), contact_key(data.get('cell')))
+        if client_key in seen:
+            raise ValueError(f'Row {number}: the policy number and contact number are duplicated in this report.')
+        seen.add(client_key)
         try:
             last_paid = receipt_date(data.get('lastreceipt'), workbook.epoch)
         except (ValueError, TypeError, OverflowError) as exc:
@@ -130,7 +150,7 @@ def report_group_repairs():
     return plans
 
 
-def import_report(workbook, filename, user, *, company_override=None, commit=True):
+def import_report(workbook, filename, user, *, company_override=None, commit=True, policies_out=None):
     from app.services.communication_service import is_suppressed, preference_for
     franchise, rows = parse_report(workbook, filename)
     company = company_override or report_company(franchise)
@@ -140,18 +160,19 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
         raise ValueError('This report belongs to another branch. Ask an administrator to import it.')
     if company.status != 'Active':
         raise ValueError('This franchise is suspended or deleted. Reactivate it before importing.')
-    existing = {p.policy_number.casefold(): p for p in LapsedPolicy.query.filter_by(company_id=company.id).filter(
+    existing = {(p.policy_number.casefold(), imported_contact(p)): p for p in LapsedPolicy.query.filter_by(company_id=company.id).filter(
         db.func.lower(LapsedPolicy.franchise) == franchise.lower()).all() if p.policy_number}
     created = updated = missing_mobile = 0
     for data in rows:
         valid_mobile = data.pop('valid_mobile')
-        policy = existing.get(data['policy_number'].casefold())
+        client_key = (data['policy_number'].casefold(), contact_key(data['cell_number']))
+        policy = existing.get(client_key)
         if policy is None:
             policy = LapsedPolicy(company_id=company.id, company_name=company.company_name, franchise=franchise,
                                   branch=branch, lead_type='policy', assigned_agent_id=user.id,
                                   recovery_status='Imported', next_action_date=None)
             db.session.add(policy)
-            existing[data['policy_number'].casefold()] = policy
+            existing[client_key] = policy
             created += 1
         else:
             updated += 1
@@ -164,6 +185,8 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
         policy.source_type = 'laps_report'
         policy.source_filename = PurePosixPath(filename.replace('\\', '/')).name[:255]
         db.session.flush()
+        if policies_out is not None:
+            policies_out.append(policy)
         # Re-import refreshes source history without reverting submitted form details.
         from app.models import ClientApplication, ApplicationJourney
         from app.services.client_merge import merge_application_details

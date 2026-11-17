@@ -103,14 +103,12 @@ def imports():
             filename = PurePosixPath(upload.filename.replace('\\','/')).name[:255]
             workbook = load_workbook(io.BytesIO(content),data_only=True,read_only=True)
             try:
-                from app.services.laps_report import REPORT_HEADERS, header, import_report, parse_report
+                from app.services.laps_report import REPORT_HEADERS, header, import_report
                 headers = [header(c.value) for c in workbook.active[1]]
                 if REPORT_HEADERS.issubset(headers):
-                    franchise, parsed = parse_report(workbook, filename)
-                    import_report(workbook, filename, current_user, company_override=company, commit=False)
-                    policies = LapsedPolicy.query.filter_by(company_id=company.id).filter(
-                        db.func.lower(LapsedPolicy.franchise)==franchise.lower(),
-                        LapsedPolicy.policy_number.in_([r['policy_number'] for r in parsed])).all()
+                    policies = []
+                    import_report(workbook, filename, current_user, company_override=company,
+                                  commit=False, policies_out=policies)
                 elif headers == ['name','cellnumber']:
                     policies = import_names(workbook, company, filename)
                 else:
