@@ -904,6 +904,29 @@ class CallbackEmailNotification(db.Model):
     recipient = db.relationship('CampaignRecipient')
 
 
+class CallbackEmailCopy(db.Model):
+    __tablename__ = 'callback_email_copies'
+    id = db.Column(db.Integer, primary_key=True)
+    notification_id = db.Column(db.Integer, db.ForeignKey('callback_email_notifications.id',ondelete='CASCADE'), nullable=False)
+    to_email = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(40), nullable=False, default='Pending', index=True)
+    attempted_at = db.Column(db.DateTime)
+    accepted_at = db.Column(db.DateTime)
+    attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    next_attempt_at = db.Column(db.DateTime)
+    notification = db.relationship('CallbackEmailNotification')
+    __table_args__ = (db.UniqueConstraint('notification_id','to_email',name='uq_callback_notification_copy'),)
+
+    @property
+    def recipient(self): return self.notification.recipient
+    @property
+    def branch(self): return self.notification.branch
+    @property
+    def import_description(self): return self.notification.import_description
+    @property
+    def requested_at(self): return self.notification.requested_at
+
+
 class ApplicationSubmissionNotification(db.Model):
     __tablename__ = 'application_submission_notifications'
     id = db.Column(db.Integer, primary_key=True)

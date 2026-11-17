@@ -20,19 +20,23 @@ def queue_callback_email(recipient):
 
 
 def process_callback_emails(limit=10):
+    from app.models import CallbackEmailCopy
+    return _process_callback_jobs(CallbackEmailNotification,limit)+_process_callback_jobs(CallbackEmailCopy,limit)
+
+
+def _process_callback_jobs(model,limit):
     from app.services.email_service import send_email
     from app.services.marketing_consent import telephone_blocked
     from app.services.response_reconciliation import due_jobs
-    ids=[row.id for row in due_jobs(CallbackEmailNotification).order_by(
-        CallbackEmailNotification.id).limit(limit).all()]
+    ids=[row.id for row in due_jobs(model).order_by(model.id).limit(limit).all()]
     processed=0
     for notification_id in ids:
-        claimed=due_jobs(CallbackEmailNotification).filter_by(id=notification_id).update(
-            {'status':'Sending','attempted_at':datetime.utcnow(),'attempts':CallbackEmailNotification.attempts+1},synchronize_session=False)
+        claimed=due_jobs(model).filter_by(id=notification_id).update(
+            {'status':'Sending','attempted_at':datetime.utcnow(),'attempts':model.attempts+1},synchronize_session=False)
         db.session.commit()
         if not claimed:
             continue
-        item=db.session.get(CallbackEmailNotification,notification_id)
+        item=db.session.get(model,notification_id)
         policy=item.recipient.policy
         if telephone_blocked(policy):
             item.status='Cancelled';db.session.commit();continue
