@@ -65,12 +65,14 @@ class SubmissionNotificationTests(unittest.TestCase):
             ]:
                 stack.enter_context(patch(name, return_value=value))
             delivery = stack.enter_context(patch('app.routes.signing.send_email', return_value=True))
-            finish_application(db.session.get(ClientApplication, app_id), 'test-only-token')
+            finish_application(db.session.get(ClientApplication, app_id), 'test-only-token', identity_choice='email')
             self.assertEqual([call.args[0] for call in delivery.call_args_list],
                              ['office@example.com','wjm@martinsdirect.com'])
             for call in delivery.call_args_list:
                 self.assertIn('Signed documents received: NOTIFY-TEST',call.args[1])
                 self.assertIn(f'/client-files/?application_id={app_id}',call.args[2])
+                self.assertIn('Branch: A',call.args[2])
+                self.assertIn('Submitted:',call.args[2])
                 self.assertNotIn('test-only-token',call.args[2])
                 self.assertEqual(call.kwargs['application_id'],app_id)
                 self.assertNotIn('attachments',call.kwargs)

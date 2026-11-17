@@ -81,6 +81,8 @@ def record_callback(recipient, channel):
             entity_id=policy.id,
         ))
     db.session.add(AuditLog(action="CAMPAIGN_CALLBACK_REQUESTED", entity_type="LapsedPolicy", entity_id=str(policy.id), details=f"Channel: {channel}; campaign: {recipient.campaign_id}"))
+    from app.services.callback_notifications import queue_callback_email
+    queue_callback_email(recipient)
     return policy
 
 

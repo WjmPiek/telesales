@@ -39,12 +39,27 @@ def _is_admin():
 def list_applications():
     status_filter = (request.args.get("status") or "").strip().lower()
     q = scope_by_branch(ClientApplication.query, ClientApplication, agent_col=ClientApplication.agent_id)
+    branches=[b for b, in q.with_entities(ClientApplication.branch).distinct().order_by(ClientApplication.branch) if b]
+    branch=(request.args.get('branch') or '').strip()
+    source_file=(request.args.get('source_file') or '').strip()
+    if branch:
+        q=q.filter(ClientApplication.branch==branch)
+    source_files=[name for name, in q.join(LapsedPolicy,ClientApplication.lapsed_policy_id==LapsedPolicy.id
+        ).with_entities(LapsedPolicy.source_filename).filter(LapsedPolicy.source_filename.isnot(None)
+        ).distinct().order_by(LapsedPolicy.source_filename) if name]
+    if source_file:
+        q=q.filter(ClientApplication.lapsed_policy.has(LapsedPolicy.source_filename==source_file))
     if status_filter in {"unsigned", "pending_signature", "pending-signature"}:
         q = q.filter(ClientApplication.signed_at.is_(None))
     elif status_filter:
         q = q.filter(ClientApplication.status.ilike(status_filter.replace("_", " ")))
-    apps = q.order_by(ClientApplication.created_at.desc()).limit(200).all()
-    return render_template("applications/list.html", apps=apps, status_filter=status_filter)
+    from sqlalchemy.orm import joinedload
+    apps = q.options(joinedload(ClientApplication.lapsed_policy)).order_by(ClientApplication.created_at.desc()).limit(200).all()
+    from app.services.application_sources import application_sources
+    from app.services.campaign_schedule import schedule_sast
+    return render_template("applications/list.html", apps=apps, status_filter=status_filter,
+        sources=application_sources(apps),branches=branches,branch=branch,source_file=source_file,
+        source_files=source_files,schedule_sast=schedule_sast)
 
 @applications_bp.route("/new", methods=["GET", "POST"])
 @login_required

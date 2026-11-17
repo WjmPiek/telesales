@@ -183,6 +183,8 @@ def reset_operational_data(*, expected_fingerprint=None, actor_id=None):
     WhatsAppWebhookEvent.query.delete(synchronize_session=False)
     CommunicationFollowUp.query.delete(synchronize_session=False)
     CommunicationEvent.query.delete(synchronize_session=False)
+    from app.models import CallbackEmailNotification
+    CallbackEmailNotification.query.delete(synchronize_session=False)
     CampaignRecipient.query.delete(synchronize_session=False)
     WhatsAppProviderJob.query.delete(synchronize_session=False)
     WhatsAppProviderLog.query.delete(synchronize_session=False)

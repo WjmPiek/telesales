@@ -449,6 +449,8 @@ def create_app():
         ClientImportBatch.__table__.create(db.engine, checkfirst=True)
         ClientImportRow.__table__.create(db.engine, checkfirst=True)
         ClientImportCampaign.__table__.create(db.engine, checkfirst=True)
+        from app.models import CallbackEmailNotification
+        CallbackEmailNotification.__table__.create(db.engine, checkfirst=True)
         CompanyDocument.__table__.create(db.engine, checkfirst=True)
         HistoricalMemberCover.__table__.create(db.engine, checkfirst=True)
         from app.models import MarketingScreening
@@ -532,6 +534,16 @@ def create_app():
                     except Exception:
                         app.logger.exception("Automatic supporting-document reminders failed")
             scheduler.add_job(_whatsapp_tick, "interval", seconds=60, id="whatsapp_provider_monitor", replace_existing=True, max_instances=1, coalesce=True)
+            def _callback_email_tick():
+                with app.app_context():
+                    try:
+                        from app.services.callback_notifications import process_callback_emails
+                        process_callback_emails(limit=10)
+                    except Exception:
+                        db.session.rollback()
+                        app.logger.exception('Callback branch email delivery failed')
+            scheduler.add_job(_callback_email_tick, 'interval', seconds=60, id='callback_branch_email',
+                              replace_existing=True, max_instances=1, coalesce=True)
             scheduler.start()
             app.extensions["whatsapp_scheduler"] = scheduler
         except Exception:
