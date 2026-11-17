@@ -235,9 +235,10 @@ def templates(batch_id):
 
 def draft_values(batch, template):
     audience=request.form.get('audience','group')
-    product=PolicyProduct.query.filter_by(id=request.form.get('product_id',type=int),active=True).first()
-    if audience not in {'individual','group'} or not product:
-        raise ValueError('Choose an audience and an active policy product.')
+    product_id=request.form.get('product_id', '').strip()
+    product=PolicyProduct.query.filter_by(id=request.form.get('product_id',type=int),active=True).first() if product_id else None
+    if audience not in {'individual','group'} or (product_id and not product):
+        raise ValueError('Choose a valid audience or policy product.')
     if not batch.filing_branch or not BranchFilingOffice.query.filter_by(branch_name=batch.filing_branch,active=True).first():
         raise ValueError('This branch needs a document recipient. Configure its branch filing destination before sending.')
     return audience,product
@@ -248,15 +249,14 @@ def draft_values(batch, template):
 def campaign_setup(batch_id,template_id):
     batch=batch_record(batch_id)
     template=WhatsAppTemplate.query.filter_by(id=template_id,status='Approved').first_or_404()
-    products=PolicyProduct.query.filter_by(active=True).order_by(PolicyProduct.product_name).all()
     if request.method=='POST':
         try:
             audience,product=draft_values(batch,template)
-            session['sales_preview']={'batch':batch.id,'template':template.id,'audience':audience,'product':product.id,'nonce':secrets.token_urlsafe(24)}
+            session['sales_preview']={'batch':batch.id,'template':template.id,'audience':audience,'product':product.id if product else None,'nonce':secrets.token_urlsafe(24)}
             return render('preview',batch=batch,template=template,audience=audience,product=product)
         except ValueError as exc:
             flash(str(exc),'danger')
-    return render('setup',batch=batch,template=template,products=products)
+    return render('setup',batch=batch,template=template)
 
 
 @sales_bp.route('/imports/<int:batch_id>/submit',methods=['POST'])
@@ -267,11 +267,11 @@ def submit(batch_id):
     if draft.get('batch')!=batch.id or draft.get('nonce')!=request.form.get('nonce'):
         abort(400,'Preview this file before submitting.')
     template=WhatsAppTemplate.query.filter_by(id=draft.get('template'),status='Approved').first_or_404()
-    product=PolicyProduct.query.filter_by(id=draft.get('product'),active=True).first_or_404()
+    product=PolicyProduct.query.filter_by(id=draft['product'],active=True).first_or_404() if draft.get('product') else None
     source=template.campaign
     campaign=CommunicationCampaign(name=batch.description[:160],subject=batch.description,message_body=template.body_text,
         company_id=batch.company_id,branch=batch.company.branch,filing_branch=batch.filing_branch,
-        product_id=product.id,audience_type=draft['audience'],created_by_id=current_user.id,
+        product_id=product.id if product else None,audience_type=draft['audience'],created_by_id=current_user.id,
         whatsapp_template_name=template.name,whatsapp_template_language=template.language,
         template_category=template.category,template_status='Approved',template_provider_id=template.provider_template_id,
         template_buttons_json=template.buttons_json,template_footer=template.footer_text,

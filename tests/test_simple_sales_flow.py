@@ -128,6 +128,45 @@ class SimpleSalesFlowTests(unittest.TestCase):
         progress=self.client.get(f'/sales/campaign/{cid}/progress').json
         self.assertTrue(progress['done']);self.assertEqual(progress['sent'],1)
 
+    def test_no_product_needed_and_all_available_import_clients_start_selected(self):
+        import re
+        self.seed()
+        db.session.get(PolicyProduct, self.product_id).active = False
+        db.session.commit()
+        rows = [
+            ['ALL-1', '1', 'A FIRST', '', '0821234567', '', datetime(2023,6,1), 1, ''],
+            ['ALL-2', '2', 'B SECOND', '', '0821234568', '', datetime(2023,6,1), 1, ''],
+            ['ALL-3', '3', 'C NO MOBILE', '', '', '', datetime(2023,6,1), 1, ''],
+        ]
+        response = self.client.post('/sales/imports', data={'sales_csrf':self.token,
+            'company_id':self.company_ids[0], 'description':'All clients test',
+            'file':(self.workbook(rows),'Krugersdorp Laps Report.xlsx')})
+        self.assertEqual(response.status_code,302)
+        batch = ClientImportBatch.query.order_by(ClientImportBatch.id.desc()).first()
+        path = f'/sales/imports/{batch.id}/campaign/{self.template_id}'
+        html = self.client.get(path).get_data(as_text=True)
+        self.assertIn('All available clients in this imported file', html)
+        self.assertNotIn('name="product_id"', html)
+        self.assertEqual(self.client.post(path, data={'sales_csrf':self.token,'audience':'group'}).status_code,200)
+        with self.client.session_transaction() as session:
+            nonce = session['sales_preview']['nonce']
+            self.assertIsNone(session['sales_preview']['product'])
+        response = self.client.post(f'/sales/imports/{batch.id}/submit', data={'sales_csrf':self.token,'nonce':nonce})
+        self.assertEqual(response.status_code,302)
+        campaign = CommunicationCampaign.query.join(ClientImportCampaign).filter(ClientImportCampaign.batch_id==batch.id).one()
+        self.assertIsNone(campaign.product_id)
+        html = self.client.get(response.location).get_data(as_text=True)
+        boxes = re.findall(r'<input[^>]*name="policy_ids"[^>]*>', html)
+        selected = [re.search(r'value="(\d+)"', box).group(1) for box in boxes if 'checked' in box]
+        self.assertEqual(len(selected),2)
+        self.assertEqual(sum('disabled' in box for box in boxes),1)
+        with patch('app.routes.communications._refresh_template_status',return_value=SimpleNamespace(ok=True)), \
+             patch('app.routes.communications.send_whatsapp_template_image') as provider:
+            response = self.client.post(response.location,data={'sales_csrf':self.token,'policy_ids':selected,'action':'send'})
+            self.assertEqual(response.status_code,200)
+            provider.assert_not_called()
+        self.assertEqual(CampaignRecipient.query.filter_by(campaign_id=campaign.id).count(),2)
+
     def test_foreign_file_client_and_csrf_are_rejected(self):
         self.seed();bid,_=self.upload();cid,path=self.create_campaign(bid)
         foreign=LapsedPolicy(initials='Foreign',surname='Client',cell_number='0821112222',branch='Brokers',company_id=self.company_ids[0])
