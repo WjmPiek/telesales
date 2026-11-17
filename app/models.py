@@ -888,6 +888,20 @@ class CampaignRecipient(db.Model):
     policy = db.relationship("LapsedPolicy")
     __table_args__ = (db.UniqueConstraint("campaign_id", "lapsed_policy_id", name="uq_campaign_policy"),)
 
+class CallbackEmailNotification(db.Model):
+    __tablename__ = 'callback_email_notifications'
+    id = db.Column(db.Integer, primary_key=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('campaign_recipients.id', ondelete='CASCADE'), nullable=False, unique=True)
+    branch = db.Column(db.String(120))
+    import_description = db.Column(db.String(255))
+    to_email = db.Column(db.String(255))
+    status = db.Column(db.String(40), nullable=False, default='Pending', index=True)
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    attempted_at = db.Column(db.DateTime)
+    accepted_at = db.Column(db.DateTime)
+    recipient = db.relationship('CampaignRecipient')
+
+
 class ContactCommunicationPreference(db.Model):
     __tablename__ = "contact_communication_preferences"
     id = db.Column(db.Integer, primary_key=True)

@@ -16,7 +16,7 @@ def submission_notification_recipients(client_email='', application=None):
     if application is not None and application.filing_branch:
         from app.services.branch_filing import filing_office
         office = filing_office(application)
-        configured = [office.email] if office else []
+        configured = ([office.email] if office else []) + [os.getenv('APPLICATION_SUBMISSION_NOTIFY', '').replace(';', ',')]
     for _, address in getaddresses(configured):
         address = address.strip()
         key = address.casefold()

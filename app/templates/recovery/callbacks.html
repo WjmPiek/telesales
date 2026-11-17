@@ -28,7 +28,7 @@
   <div class="card-body p-0">
     <table class="table table-sm table-striped align-middle mb-0">
       <tr>
-        <th>Due</th><th>Policy</th><th>Client</th><th>Cell</th><th>Branch</th><th>Status</th><th>Actions</th>
+        <th>Due</th><th>Policy</th><th>Client</th><th>Cell</th><th>Branch</th><th>Status</th><th>Branch email</th><th>Actions</th>
       </tr>
       {% for p in policies %}
       <tr class="{{ row_class }}">
@@ -38,6 +38,7 @@
         <td>{{ p.cell_number }}</td>
         <td>{{ p.branch or p.franchise }}</td>
         <td><span class="badge bg-secondary">{{ p.recovery_status }}</span></td>
+        <td>{% set notice=callback_emails.get(p.id) %}{% if notice %}{{notice.status}}<div class="small">{{notice.email or 'No branch email configured'}}</div>{% else %}No recorded callback email{% endif %}</td>
         <td>
           <a class="btn btn-sm btn-primary" href="{{ url_for('recovery.log_call', policy_id=p.id) }}">Call Now</a>
           <a class="btn btn-sm btn-outline-primary" href="{{ url_for('recovery.start_script', policy_id=p.id) }}">Sales Script</a>
@@ -45,7 +46,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-muted">Nothing in this section.</td></tr>
+      <tr><td colspan="8" class="text-muted">Nothing in this section.</td></tr>
       {% endfor %}
     </table>
   </div>

@@ -1,10 +1,13 @@
 {% extends 'base.html' %}{% block content %}
 <div class="d-flex justify-content-between"><h3>Applications</h3><a class="btn btn-primary" href="{{url_for('applications.new_application')}}">New Application</a></div>
-<table class="table table-sm table-striped align-middle">
-  <tr><th>Ref</th><th>Client</th><th>Status</th><th>Premium</th><th></th></tr>
+<p class="small text-muted">Draft means the client has started but has not submitted the signed application. All dates below are SAST.</p>
+<form method="get" class="d-flex flex-wrap gap-2 mb-3"><select class="form-select" name="branch" aria-label="Branch" style="max-width:220px"><option value="">All branches</option>{% for b in branches %}<option {{'selected' if branch==b else ''}}>{{b}}</option>{% endfor %}</select><select name="status" class="form-select" aria-label="Application status" style="max-width:220px"><option value="">All statuses</option>{% for value,label in [('draft','Draft / started'),('unsigned','Not yet signed'),('signed','Signed / submitted'),('active','Active')] %}<option value="{{value}}" {{'selected' if status_filter==value else ''}}>{{label}}</option>{% endfor %}</select><select class="form-select" style="max-width:300px" name="source_file" aria-label="Imported file"><option value="">All imported files</option>{% for filename in source_files %}<option value="{{filename}}" {{'selected' if source_file==filename else ''}}>{{filename}}</option>{% endfor %}</select><button class="btn btn-primary">Apply</button><a href="{{url_for('applications.list_applications')}}">Clear</a></form>
+<div class="table-responsive"><table class="table table-sm table-striped align-middle">
+  <tr><th>Ref</th><th>Client</th><th>Branch / import</th><th>Invitation sent</th><th>Started</th><th>Signed / submitted</th><th>Status</th><th>Branch email</th><th>Premium</th><th></th></tr>
   {% for a in apps %}
   <tr>
-    <td>{{a.application_ref}}</td><td>{{a.first_names}} {{a.surname}}</td><td>{{a.status}}</td><td>{{a.monthly_premium}}</td>
+    {% set source=sources[a.id] %}
+    <td>{{a.application_ref}}</td><td>{{a.first_names}} {{a.surname}}</td><td><b>{{source.branch or 'Not recorded'}}</b>{% if source.source_branch and source.source_branch!=source.branch %}<div>Original branch: {{source.source_branch}}</div>{% endif %}<div>{{source.import_description}}</div><div class="small text-muted">{{source.filename or 'No imported file linked'}}</div></td><td>{{schedule_sast(source.invited_at) or 'Not recorded'}}</td><td>{{schedule_sast(a.created_at)}}</td><td>{{schedule_sast(a.signed_at) if a.signed_at else 'Not submitted'}}</td><td>{{a.status}}</td><td>{{source.filing_branch}}<div class="small">{{source.email_to}}</div><div>{{source.email_status}}</div>{% if source.email_at %}<div class="small">{{schedule_sast(source.email_at)}}</div>{% endif %}</td><td>{{a.monthly_premium}}</td>
     <td class="text-end">
       <a class="btn btn-sm btn-outline-primary" href="{{url_for('applications.view_application',app_id=a.id)}}">Open</a>
       {% if current_user.role and current_user.role.name|lower == 'admin' %}
@@ -14,6 +17,7 @@
       {% endif %}
     </td>
   </tr>
+  {% if source.email_attempts %}<tr><td colspan="10"><details><summary>Email delivery attempts</summary>{% for attempt in source.email_attempts %}<div>{{attempt.to}}: {{attempt.status}} · {{schedule_sast(attempt.at)}} SAST</div>{% endfor %}</details></td></tr>{% endif %}
   {% endfor %}
-</table>
+</table></div>
 {% endblock %}
