@@ -4,11 +4,12 @@ from datetime import datetime, timedelta
 from flask import current_app
 from sqlalchemy import inspect, text, or_
 from app import db
-from app.models import (ApplicationSubmissionNotification, CallbackEmailNotification, ClientApplication,
+from app.models import (ApplicationSubmissionNotification, CallbackEmailNotification, CallbackEmailCopy, ClientApplication, CommunicationCampaign,
                         CampaignRecipient, AuditLog)
 
 
 def ensure_notification_tables():
+    CallbackEmailCopy.__table__.create(db.engine,checkfirst=True)
     ApplicationSubmissionNotification.__table__.create(db.engine,checkfirst=True)
     columns={c['name'] for c in inspect(db.engine).get_columns('callback_email_notifications')}
     with db.engine.begin() as conn:
@@ -65,6 +66,22 @@ def reconcile_branch_notifications():
         office=BranchFilingOffice.query.filter_by(branch_key=(notice.recipient.campaign.filing_branch or '').lower(),active=True).first()
         if office and office.email:
             notice.to_email=office.email;notice.status='Pending'
+    from app.services.email_service import office_notification_copies
+    for email in office_notification_copies("Martin's Brokers"):
+        missing=CallbackEmailNotification.query.join(CampaignRecipient).join(CommunicationCampaign).filter(
+            db.func.lower(CommunicationCampaign.filing_branch).in_(["martin's brokers",'brokers']),
+            or_(CallbackEmailNotification.to_email!=email,CallbackEmailNotification.to_email.is_(None)),
+            ~CallbackEmailCopy.query.filter(CallbackEmailCopy.notification_id==CallbackEmailNotification.id,
+                CallbackEmailCopy.to_email==email).exists())
+        for notice in missing:
+            insert_once(CallbackEmailCopy,dict(notification_id=notice.id,to_email=email,status='Pending',attempts=0),
+                ['notification_id','to_email'])
+        missing_app=ClientApplication.query.filter(ClientApplication.signed_at.isnot(None),
+            db.func.lower(ClientApplication.filing_branch).in_(["martin's brokers",'brokers']),
+            ~ApplicationSubmissionNotification.query.filter(ApplicationSubmissionNotification.application_id==ClientApplication.id,
+                ApplicationSubmissionNotification.to_email==email).exists())
+        for application in missing_app:
+            queue_submission_notifications(application)
     for application in ClientApplication.query.filter(ClientApplication.signed_at.isnot(None),
             ~ClientApplication.id.in_(db.session.query(ApplicationSubmissionNotification.application_id))).all():
         queue_submission_notifications(application)
@@ -73,7 +90,7 @@ def reconcile_branch_notifications():
         if ApplicationSubmissionNotification.query.filter(ApplicationSubmissionNotification.application_id==notice.application_id,
                 ApplicationSubmissionNotification.to_email!='').first():
             notice.status='Routing updated'
-    for model in (CallbackEmailNotification,ApplicationSubmissionNotification):
+    for model in (CallbackEmailNotification,CallbackEmailCopy,ApplicationSubmissionNotification):
         # The caller holds the notification-worker advisory lock. A stale send
         # therefore belongs to a dead worker, never an active SMTP attempt.
         for notice in model.query.filter(model.status=='Sending',

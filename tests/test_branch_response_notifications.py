@@ -5,7 +5,7 @@ from unittest.mock import patch
 import test_analytics_security as fixtures
 from app import db
 from app.models import (LapsedPolicy,CompanyGroupState,BranchFilingOffice,CommunicationCampaign,CampaignRecipient,
-    ClientImportBatch,ClientImportRow,ClientImportCampaign,CallbackEmailNotification,ClientApplication,ApplicationSubmissionNotification,
+    ClientImportBatch,ClientImportRow,ClientImportCampaign,CallbackEmailNotification,CallbackEmailCopy,ClientApplication,ApplicationSubmissionNotification,
     ClientCommunication,WhatsAppContact,WhatsAppConversation,WhatsAppMessage,AuditLog)
 from app.services.communication_service import record_callback
 from app.services.callback_notifications import process_callback_emails
@@ -187,3 +187,32 @@ class BranchResponseNotificationTests(unittest.TestCase):
         with campaign_send_lock(-1),patch('app.services.email_service.send_email') as send:
             reconcile_branch_notifications();process_callback_emails();send.assert_not_called()
         self.assertEqual(CallbackEmailNotification.query.one().status,'Failed')
+
+    def test_brokers_reception_receives_history_copy_without_resending_primary(self):
+        from app.services.response_reconciliation import reconcile_branch_notifications
+        _,recipient=self.seed();record_callback(recipient,'whatsapp');db.session.commit()
+        with patch('app.services.email_service.send_email',return_value=True):process_callback_emails()
+        with patch.dict(os.environ,{'BROKERS_NOTIFICATION_CC':'reception@example.test; reception@example.test'}):
+            reconcile_branch_notifications();reconcile_branch_notifications()
+            self.assertEqual(CallbackEmailCopy.query.count(),1)
+            with patch('app.services.email_service.send_email',return_value=True) as send:
+                process_callback_emails();reconcile_branch_notifications();process_callback_emails()
+                self.assertEqual(send.call_count,1)
+                self.assertEqual(send.call_args.args[0],'reception@example.test')
+                self.assertIn('Krugersdorp November',send.call_args.args[2])
+            self.login('admin')
+            self.assertIn(b'reception@example.test',self.client.get('/recovery/callbacks').data)
+        self.assertEqual(CallbackEmailNotification.query.one().to_email,'brokers@example.test')
+
+    def test_brokers_application_copies_do_not_affect_northcliff(self):
+        from app.services.response_reconciliation import reconcile_branch_notifications
+        self.seed()
+        applications=[ClientApplication(application_ref='BROKERS-COPY',filing_branch="Martin's Brokers",branch='Brokers',signed_at=datetime.utcnow()),
+                      ClientApplication(application_ref='NORTHCLIFF-PRIVATE',filing_branch='Northcliff',branch='NORTHCLIFF',signed_at=datetime.utcnow())]
+        db.session.add_all(applications);db.session.commit()
+        with patch.dict(os.environ,{'BROKERS_NOTIFICATION_CC':'reception@example.test','APPLICATION_SUBMISSION_NOTIFY':''}):
+            reconcile_branch_notifications();reconcile_branch_notifications()
+            jobs=ApplicationSubmissionNotification.query.filter_by(to_email='reception@example.test').all()
+            self.assertEqual(len(jobs),1)
+            self.assertEqual(jobs[0].application.application_ref,'BROKERS-COPY')
+            self.assertEqual(submission_notification_recipients('',applications[1]),['northcliff@example.test'])

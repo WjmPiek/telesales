@@ -2,7 +2,7 @@
 from collections import defaultdict
 from flask import abort, request, url_for
 from app import db
-from app.models import ClientImportBatch, ClientImportRow, ClientApplication, LapsedPolicy, CallbackEmailNotification, CampaignRecipient
+from app.models import ClientImportBatch, ClientImportRow, ClientApplication, LapsedPolicy, CallbackEmailNotification, CallbackEmailCopy, CampaignRecipient
 from app.services.client_directory import scoped_policies, scoped_applications, process_expressions
 from app.services.whatsapp_clients import directory_delivery
 from app.services.campaign_schedule import schedule_sast
@@ -63,10 +63,16 @@ def overview_context():
             completed=sum(states.get(pid) == 'completed' for pid in members),
             removed=sum(states.get(pid) == 'removed' for pid in members)))
     callback_emails={}
-    for pid,status,address in db.session.query(CampaignRecipient.lapsed_policy_id,CallbackEmailNotification.status,
-            CallbackEmailNotification.to_email).join(CallbackEmailNotification,CallbackEmailNotification.recipient_id==CampaignRecipient.id
+    for pid,status,address,notice_id in db.session.query(CampaignRecipient.lapsed_policy_id,CallbackEmailNotification.status,
+            CallbackEmailNotification.to_email,CallbackEmailNotification.id).join(CallbackEmailNotification,CallbackEmailNotification.recipient_id==CampaignRecipient.id
             ).filter(CampaignRecipient.lapsed_policy_id.in_(ids)).order_by(CallbackEmailNotification.id):
-        callback_emails[pid]=dict(status=status,email=address)
+        callback_emails[pid]=dict(status=status,email=address,notice_id=notice_id,copies=[])
+    for pid,notice_id,status,address in db.session.query(CampaignRecipient.lapsed_policy_id,CallbackEmailNotification.id,
+            CallbackEmailCopy.status,CallbackEmailCopy.to_email).join(CallbackEmailNotification,
+            CallbackEmailNotification.recipient_id==CampaignRecipient.id).join(CallbackEmailCopy,
+            CallbackEmailCopy.notification_id==CallbackEmailNotification.id).filter(CampaignRecipient.lapsed_policy_id.in_(ids)):
+        if pid in callback_emails and callback_emails[pid]['notice_id']==notice_id:
+            callback_emails[pid]['copies'].append(dict(status=status,email=address))
     return dict(branches=branches, selected_branch=branch, import_choices=choices,callback_emails=callback_emails,
                 selected_import=selected_import, import_summaries=summaries,
                 schedule_sast=schedule_sast), ids, applications, by_id

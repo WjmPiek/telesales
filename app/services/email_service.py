@@ -7,6 +7,15 @@ from email.message import EmailMessage
 from email.utils import parseaddr, getaddresses
 
 
+def office_notification_copies(filing_branch):
+    key=''.join(c for c in str(filing_branch or '').lower() if c.isalnum())
+    if key not in {'brokers','martinsbrokers'}:
+        return []
+    configured=os.getenv('BROKERS_NOTIFICATION_CC','').replace(';',',')
+    return list(dict.fromkeys(address.strip().lower() for _,address in getaddresses([configured])
+        if '@' in address and '\r' not in address and '\n' not in address))
+
+
 def submission_notification_recipients(client_email='', application=None):
     """Use the application's selected office, with environment defaults for older applications."""
     seen = {parseaddr(client_email or '')[1].strip().casefold()}
@@ -17,6 +26,7 @@ def submission_notification_recipients(client_email='', application=None):
         from app.services.branch_filing import filing_office
         office = filing_office(application)
         configured = ([office.email] if office else []) + [os.getenv('APPLICATION_SUBMISSION_NOTIFY', '').replace(';', ',')]
+        configured += office_notification_copies(application.filing_branch)
     for _, address in getaddresses(configured):
         address = address.strip()
         key = address.casefold()
