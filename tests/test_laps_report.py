@@ -190,6 +190,37 @@ class LapsReportTests(unittest.TestCase):
         self.import_report(rows=rows)
         self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(), 0)
 
+    def test_shared_policy_different_contacts_preserve_both_clients_on_reimport(self):
+        rows = [
+            ['SHARED', '1', 'A FIRST', 'First address', '0821234567', '', date(2023, 6, 1), 1, 'First note'],
+            ['SHARED', '2', 'B SECOND', 'Second address', '0821234568', '', date(2024, 7, 2), 1, 'Second note'],
+        ]
+        self.assertEqual(self.import_report('Krugersdorp Laps Report.xlsx', rows).status_code, 302)
+        clients = LapsedPolicy.query.filter_by(franchise='Krugersdorp').order_by(LapsedPolicy.id).all()
+        self.assertEqual(len(clients), 2)
+        ids = [p.id for p in clients]
+        self.assertEqual([(p.surname, p.address, p.receipt_number, p.last_date_paid) for p in clients],
+                         [('FIRST', 'First address', '1', date(2023, 6, 1)),
+                          ('SECOND', 'Second address', '2', date(2024, 7, 2))])
+        preference_for(clients[0]).opted_out_all = True
+        clients[0].cell_number = '0829999999'
+        db.session.commit()
+        # Reversed rows and international phone spelling still match the same IDs.
+        rows[0][4] = '+27 82 123 4567'
+        self.assertEqual(self.import_report('Krugersdorp Laps Report.xlsx', rows[::-1]).status_code, 302)
+        clients = LapsedPolicy.query.filter_by(franchise='Krugersdorp').order_by(LapsedPolicy.id).all()
+        self.assertEqual([p.id for p in clients], ids)
+        self.assertTrue(preference_for(clients[0]).opted_out_all)
+        self.assertEqual(clients[1].recovery_status, 'Imported')
+
+    def test_same_policy_and_equivalent_contact_still_rejects_duplicate_rows(self):
+        rows = [
+            ['SHARED', '1', 'A FIRST', '', '0821234567', '', date(2023, 6, 1), 1, ''],
+            ['shared', '2', 'B SECOND', '', '+27 82 123 4567', '', date(2024, 7, 2), 1, ''],
+        ]
+        self.import_report('Krugersdorp Laps Report.xlsx', rows)
+        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Krugersdorp').count(), 0)
+
     def test_directory_filters_franchise_receipt_year_month_and_range(self):
         self.import_report()
         self.import_report('Southridge Laps Report.xlsx', [['S-1', '2', 'B EXAMPLE', '', '0821234568', '', date(2024, 7, 1), 1, '']])

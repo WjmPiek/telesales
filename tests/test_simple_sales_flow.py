@@ -64,6 +64,36 @@ class SimpleSalesFlowTests(unittest.TestCase):
         original=self.client.get(f'/sales/imports/{bid}/download')
         self.assertEqual(original.status_code,200);self.assertTrue(original.data.startswith(b'PK'))
 
+    def test_shared_policy_contacts_saved_separately_with_exact_file_membership(self):
+        self.seed()
+        rows = [
+            ['SHARED', '1', 'A FIRST', 'First address', '0821234567', '', datetime(2023, 6, 1), 1, ''],
+            ['SHARED', '2', 'B SECOND', 'Second address', '0821234568', '', datetime(2024, 7, 2), 1, ''],
+        ]
+        def upload(rows):
+            response = self.client.post('/sales/imports', data={'sales_csrf': self.token,
+                'company_id': self.company_ids[0], 'description': 'Krugersdorp clients',
+                'file': (self.workbook(rows), 'Krugersdorp Laps Report.xlsx')})
+            self.assertEqual(response.status_code, 302)
+            return ClientImportBatch.query.order_by(ClientImportBatch.id.desc()).first()
+        batch = upload(rows)
+        first_ids = {r.policy_id for r in ClientImportRow.query.filter_by(batch_id=batch.id)}
+        self.assertEqual(len(first_ids), 2)
+        self.assertEqual(batch.company_id, self.company_ids[0])
+        self.assertIn(b'Krugersdorp clients', self.client.get('/sales/imports').data)
+        page = self.client.get(f'/sales/imports/{batch.id}')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'First address', page.data); self.assertIn(b'Second address', page.data)
+        batch = upload(rows[::-1])
+        self.assertEqual({r.policy_id for r in ClientImportRow.query.filter_by(batch_id=batch.id)}, first_ids)
+        # A later file containing only one client must not include the other
+        # client merely because the policy number is shared.
+        batch = upload(rows[:1])
+        members = ClientImportRow.query.filter_by(batch_id=batch.id).all()
+        self.assertEqual(len(members), 1)
+        self.assertEqual(db.session.get(LapsedPolicy, members[0].policy_id).surname, 'FIRST')
+        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Krugersdorp').count(), 2)
+
     def test_preview_submit_and_schedule_keep_file_company_documents_and_product(self):
         self.seed();bid,_=self.upload();cid,select_path=self.create_campaign(bid)
         c=db.session.get(CommunicationCampaign,cid)
