@@ -9,6 +9,9 @@ from app.services.communication_service import preference_for, is_suppressed
 
 
 def select_recipients(campaign, policies):
+    from app.services.contact_permissions import allowed_contacts
+    policies = list(policies)
+    permissions = allowed_contacts(policies, 'whatsapp')
     if campaign.audience_type=='individual':
         if len(policies)!=1: raise ValueError('Choose one individual client.')
         policy=policies[0]
@@ -41,18 +44,18 @@ def select_recipients(campaign, policies):
         if not number or number in seen or number in sent:
             continue
         seen.add(number)
-        pref = preference_for(policy)
-        if pref.opted_out_all or not pref.whatsapp_allowed or is_suppressed(policy):
+        if not permissions[policy.id]:
             continue
         recipient = existing.get(number)
         if not recipient:
             recipient = CampaignRecipient(campaign_id=campaign.id, lapsed_policy_id=policy.id,
                                           secure_token=secrets.token_urlsafe(32))
             db.session.add(recipient)
-            db.session.flush()
-        selected.append(recipient.id)
-    campaign.send_recipient_ids_json = json.dumps(selected)
-    return selected
+        selected.append(recipient)
+    db.session.flush()
+    ids = [recipient.id for recipient in selected]
+    campaign.send_recipient_ids_json = json.dumps(ids)
+    return ids
 
 
 def queued_recipients(campaign):

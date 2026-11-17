@@ -151,12 +151,15 @@ CALLBACK_OUTCOMES = {"No Answer", "Voicemail", "Callback Requested"}
 
 
 def open_recovery_query():
-    blocked_ids=[p.id for p in LapsedPolicy.query.all() if telephone_blocked(p)]
-    return scope_by_branch(
-        LapsedPolicy.query.filter(LapsedPolicy.recovery_status.notin_(LEAD_CLOSED_STATUSES), LapsedPolicy.id.notin_(blocked_ids)),
+    from app.services.contact_permissions import allowed_contacts
+    query = scope_by_branch(
+        LapsedPolicy.query.filter(LapsedPolicy.recovery_status.notin_(LEAD_CLOSED_STATUSES)),
         LapsedPolicy,
         agent_col=LapsedPolicy.assigned_agent_id,
     )
+    candidates = query.with_entities(LapsedPolicy.id, LapsedPolicy.cell_number, LapsedPolicy.email_address).all()
+    allowed = allowed_contacts(candidates, 'telephone')
+    return query.filter(LapsedPolicy.id.notin_([pid for pid, permitted in allowed.items() if not permitted]))
 
 
 @recovery_bp.route("/")

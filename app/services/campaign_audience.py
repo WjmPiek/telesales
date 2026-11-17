@@ -1,5 +1,5 @@
 """One campaign message per normalized phone number, retaining source policies."""
-from app.services.communication_service import normalize_phone, is_suppressed, preference_for
+from app.services.communication_service import normalize_phone
 from app.models import CampaignRecipient, LapsedPolicy
 
 SENT_STATUSES = {'Sent', 'Delivered', 'Read'}
@@ -27,6 +27,9 @@ def contact_history():
 
 
 def audience_rows(policies, recipients):
+    from app.services.contact_permissions import allowed_contacts
+    policies = list(policies)
+    permissions = allowed_contacts(policies, 'whatsapp')
     existing = {contact_number(row.policy) for row in recipients if row.policy}
     sent, failed = contact_history()
     existing.discard(None)
@@ -38,8 +41,7 @@ def audience_rows(policies, recipients):
         if number and number in seen:
             continue
         if number:seen.add(number)
-        pref=preference_for(policy)
-        allowed=bool(number and not pref.opted_out_all and pref.whatsapp_allowed and not is_suppressed(policy))
+        allowed=bool(number and permissions[policy.id])
         states[policy.id]={'number':number or '', 'sent':False,
             'status':'Failed' if number in failed else None, 'failed':number in failed, 'selected':number in existing,
             'selectable':allowed and number not in sent}
