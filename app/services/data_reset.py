@@ -173,6 +173,8 @@ def reset_operational_data(*, expected_fingerprint=None, actor_id=None):
     SupportingDocumentReminder.query.delete(synchronize_session=False)
     ApplicationMemberAddition.query.delete(synchronize_session=False)
     ApplicationMemberCountReview.query.delete(synchronize_session=False)
+    from app.models import ApplicationSubmissionNotification
+    ApplicationSubmissionNotification.query.delete(synchronize_session=False)
     ClientApplication.query.delete(synchronize_session=False)
 
     # Delivery/inbox history is removed. Template definitions, provider IDs and

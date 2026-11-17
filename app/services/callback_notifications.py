@@ -1,5 +1,5 @@
 """Durable branch callback emails, queued after a new client callback request."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import current_app
 from app import db
 from app.models import CallbackEmailNotification, BranchFilingOffice, ClientImportBatch, ClientImportCampaign
@@ -12,21 +12,23 @@ def queue_callback_email(recipient):
     campaign=recipient.campaign
     office=BranchFilingOffice.query.filter_by(branch_key=(campaign.filing_branch or '').lower(),active=True).first()
     batch=ClientImportBatch.query.join(ClientImportCampaign).filter(ClientImportCampaign.campaign_id==campaign.id).first()
-    db.session.add(CallbackEmailNotification(recipient_id=recipient.id,branch=campaign.branch,
+    from app.services.response_reconciliation import insert_once
+    insert_once(CallbackEmailNotification,dict(recipient_id=recipient.id,branch=campaign.branch,
         import_description=batch.description if batch else recipient.policy.source_filename,
         to_email=office.email if office else None,requested_at=recipient.responded_at or datetime.utcnow(),
-        status='Pending' if office and office.email else 'Not configured'))
+        status='Pending' if office and office.email else 'Not configured',attempts=0),['recipient_id'])
 
 
 def process_callback_emails(limit=10):
     from app.services.email_service import send_email
     from app.services.marketing_consent import telephone_blocked
-    ids=[row.id for row in CallbackEmailNotification.query.filter_by(status='Pending').order_by(
+    from app.services.response_reconciliation import due_jobs
+    ids=[row.id for row in due_jobs(CallbackEmailNotification).order_by(
         CallbackEmailNotification.id).limit(limit).all()]
     processed=0
     for notification_id in ids:
-        claimed=CallbackEmailNotification.query.filter_by(id=notification_id,status='Pending').update(
-            {'status':'Sending','attempted_at':datetime.utcnow()},synchronize_session=False)
+        claimed=due_jobs(CallbackEmailNotification).filter_by(id=notification_id).update(
+            {'status':'Sending','attempted_at':datetime.utcnow(),'attempts':CallbackEmailNotification.attempts+1},synchronize_session=False)
         db.session.commit()
         if not claimed:
             continue
@@ -41,6 +43,7 @@ def process_callback_emails(limit=10):
               f'Client: {policy.initials or ""} {policy.surname or ""}\n'
               f'Cell number: {policy.cell_number or "Not supplied"}\n'
               f'Policy: {policy.policy_number or "Not supplied"}\n\n'
+              f'Current client status: {policy.recovery_status or "Not recorded"}\n\n'
               f'Open the client file (staff login required):\n{link}')
         try:
             sent=send_email(item.to_email,f'Callback requested — {item.branch or "Branch"}',body,policy_id=policy.id)
@@ -48,5 +51,6 @@ def process_callback_emails(limit=10):
             sent=False
         item.status='Accepted by mail server' if sent else 'Failed'
         item.accepted_at=datetime.utcnow() if sent else None
+        item.next_attempt_at=None if sent else datetime.utcnow()+timedelta(minutes=5*item.attempts)
         db.session.commit();processed+=1
     return processed

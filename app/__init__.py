@@ -451,6 +451,8 @@ def create_app():
         ClientImportCampaign.__table__.create(db.engine, checkfirst=True)
         from app.models import CallbackEmailNotification
         CallbackEmailNotification.__table__.create(db.engine, checkfirst=True)
+        from app.services.response_reconciliation import ensure_notification_tables
+        ensure_notification_tables()
         CompanyDocument.__table__.create(db.engine, checkfirst=True)
         HistoricalMemberCover.__table__.create(db.engine, checkfirst=True)
         from app.models import MarketingScreening
@@ -538,7 +540,13 @@ def create_app():
                 with app.app_context():
                     try:
                         from app.services.callback_notifications import process_callback_emails
-                        process_callback_emails(limit=10)
+                        from app.services.response_reconciliation import reconcile_branch_notifications, process_submission_emails
+                        from app.services.campaign_send_lock import campaign_send_lock
+                        with campaign_send_lock(-1) as acquired:
+                            if acquired:
+                                reconcile_branch_notifications()
+                                process_callback_emails(limit=10)
+                                process_submission_emails(limit=10)
                     except Exception:
                         db.session.rollback()
                         app.logger.exception('Callback branch email delivery failed')

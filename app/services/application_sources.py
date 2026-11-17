@@ -3,7 +3,7 @@ import json
 from sqlalchemy import func
 from app import db
 from app.models import (CampaignRecipient, CommunicationCampaign, ClientImportBatch, ClientImportCampaign,
-                        WhatsAppMessage, ClientCommunication, BranchFilingOffice, AuditLog)
+                        WhatsAppMessage, ClientCommunication, BranchFilingOffice, AuditLog, ApplicationSubmissionNotification)
 
 
 def application_sources(applications):
@@ -31,6 +31,10 @@ def application_sources(applications):
             attempts.setdefault(int(item.entity_id),{})[value['to'].lower()]=dict(value,at=item.created_at)
         except (ValueError,TypeError,KeyError):
             continue
+    for job in ApplicationSubmissionNotification.query.filter(
+            ApplicationSubmissionNotification.application_id.in_([a.id for a in applications])):
+        attempts.setdefault(job.application_id,{})[job.to_email.lower()]=dict(to=job.to_email,status=job.status,
+            at=job.attempted_at or job.created_at)
     result={}
     for a in applications:
         source=sources.get(a.source_campaign_recipient_id)

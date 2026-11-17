@@ -5,7 +5,7 @@ from unittest.mock import patch
 import test_analytics_security as fixtures
 from app import db
 from app.models import (LapsedPolicy,CompanyGroupState,BranchFilingOffice,CommunicationCampaign,CampaignRecipient,
-    ClientImportBatch,ClientImportRow,ClientImportCampaign,CallbackEmailNotification,ClientApplication,
+    ClientImportBatch,ClientImportRow,ClientImportCampaign,CallbackEmailNotification,ClientApplication,ApplicationSubmissionNotification,
     ClientCommunication,WhatsAppContact,WhatsAppConversation,WhatsAppMessage,AuditLog)
 from app.services.communication_service import record_callback
 from app.services.callback_notifications import process_callback_emails
@@ -108,3 +108,82 @@ class BranchResponseNotificationTests(unittest.TestCase):
             self.assertEqual(application_sources([current])[current.id]['email_status'],'Failed')
         self.login('manager')
         self.assertNotIn(b'BRANCH-SIGNED',self.client.get('/applications/?branch=Brokers').data)
+
+    def test_reconciliation_backfills_history_once_and_excludes_drafts(self):
+        from app.services.response_reconciliation import reconcile_branch_notifications,process_submission_emails
+        policy,recipient=self.seed()
+        recipient.response_type='callback';recipient.callback_created=True;recipient.responded_at=datetime(2026,11,1,10,0)
+        policy.recovery_status='Callback'
+        signed=ClientApplication(application_ref='HISTORICAL-SIGNED',first_names='Example',surname='Client',
+            branch='Brokers',filing_branch="Martin's Brokers",source_campaign_recipient_id=recipient.id,
+            lapsed_policy_id=policy.id,signed_at=datetime(2026,11,1,11,0),status='Signed',email='brokers@example.test')
+        draft=ClientApplication(application_ref='DRAFT-NO-NOTICE',branch='Brokers',status='Draft')
+        db.session.add_all([signed,draft]);db.session.commit()
+        with patch.dict(os.environ,{'APPLICATION_SUBMISSION_NOTIFY':'wjm@example.test','MAIL_DOCUMENTS_TO':'wrong@example.test'}):
+            reconcile_branch_notifications();reconcile_branch_notifications()
+            self.assertEqual(CallbackEmailNotification.query.count(),1)
+            self.assertEqual(ApplicationSubmissionNotification.query.count(),2)
+            with patch('app.services.email_service.send_email',return_value=True) as send:
+                process_callback_emails();process_submission_emails()
+                self.assertEqual(send.call_count,3)
+                reconcile_branch_notifications();process_callback_emails();process_submission_emails()
+                self.assertEqual(send.call_count,3)
+        self.assertEqual(ApplicationSubmissionNotification.query.filter_by(application_id=draft.id).count(),0)
+
+    def test_known_failures_retry_later_but_accepted_notifications_are_not_repeated(self):
+        from app.services.response_reconciliation import reconcile_branch_notifications,process_submission_emails
+        from datetime import timedelta
+        policy,recipient=self.seed();record_callback(recipient,'whatsapp')
+        signed=ClientApplication(application_ref='RETRY-SUBMISSION',branch='Brokers',filing_branch="Martin's Brokers",
+            signed_at=datetime(2026,11,1,11,0),status='Signed')
+        db.session.add(signed);db.session.commit()
+        with patch.dict(os.environ,{'APPLICATION_SUBMISSION_NOTIFY':''}):
+            reconcile_branch_notifications()
+        with patch('app.services.email_service.send_email',return_value=False) as send:
+            process_callback_emails();process_submission_emails()
+            self.assertEqual(send.call_count,2)
+            process_callback_emails();process_submission_emails()
+            self.assertEqual(send.call_count,2)
+        for model in [CallbackEmailNotification,ApplicationSubmissionNotification]:
+            item=model.query.one();self.assertEqual(item.attempts,1)
+            item.next_attempt_at=datetime.utcnow()-timedelta(seconds=1)
+        db.session.commit()
+        with patch('app.services.email_service.send_email',return_value=True) as send:
+            process_callback_emails();process_submission_emails()
+            process_callback_emails();process_submission_emails()
+            self.assertEqual(send.call_count,2)
+        for model in [CallbackEmailNotification,ApplicationSubmissionNotification]:
+            item=model.query.one();self.assertEqual(item.status,'Accepted by mail server');self.assertEqual(item.attempts,2)
+
+    def test_previously_accepted_application_address_is_not_emailed_again(self):
+        import json
+        from app.services.response_reconciliation import reconcile_branch_notifications,process_submission_emails
+        self.seed()
+        signed=ClientApplication(application_ref='ALREADY-NOTIFIED',branch='Brokers',filing_branch="Martin's Brokers",
+            signed_at=datetime(2026,11,1,11,0),status='Signed')
+        db.session.add(signed);db.session.flush()
+        db.session.add(AuditLog(action='APPLICATION_SUBMISSION_EMAIL',entity_type='ClientApplication',entity_id=str(signed.id),
+            details=json.dumps({'to':'brokers@example.test','status':'Accepted by mail server'})))
+        db.session.commit()
+        with patch.dict(os.environ,{'APPLICATION_SUBMISSION_NOTIFY':''}),patch('app.services.email_service.send_email') as send:
+            reconcile_branch_notifications();process_submission_emails();send.assert_not_called()
+        self.assertEqual(ApplicationSubmissionNotification.query.one().status,'Accepted by mail server')
+
+    def test_interrupted_email_is_recovered_with_a_bounded_attempt_count(self):
+        from datetime import timedelta
+        from app.services.response_reconciliation import reconcile_branch_notifications
+        from app.services.campaign_send_lock import campaign_send_lock
+        _,recipient=self.seed();record_callback(recipient,'whatsapp');db.session.commit()
+        notice=CallbackEmailNotification.query.one()
+        notice.status='Sending';notice.attempts=1;notice.attempted_at=datetime.utcnow()-timedelta(minutes=20)
+        db.session.commit()
+        with campaign_send_lock(-1),patch('app.services.email_service.send_email',return_value=True) as send:
+            reconcile_branch_notifications();process_callback_emails()
+            self.assertEqual(send.call_count,1)
+        notice=CallbackEmailNotification.query.one()
+        self.assertEqual((notice.status,notice.attempts),('Accepted by mail server',2))
+        notice.status='Sending';notice.attempts=3;notice.attempted_at=datetime.utcnow()-timedelta(minutes=20)
+        db.session.commit()
+        with campaign_send_lock(-1),patch('app.services.email_service.send_email') as send:
+            reconcile_branch_notifications();process_callback_emails();send.assert_not_called()
+        self.assertEqual(CallbackEmailNotification.query.one().status,'Failed')
