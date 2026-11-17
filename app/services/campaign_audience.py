@@ -17,12 +17,12 @@ def contact_history():
     rows = CampaignRecipient.query.with_entities(
         LapsedPolicy.cell_number, CampaignRecipient.whatsapp_status
     ).join(LapsedPolicy, CampaignRecipient.lapsed_policy_id == LapsedPolicy.id).filter(
-        CampaignRecipient.whatsapp_status.in_(SENT_STATUSES | {'Failed'})
+        CampaignRecipient.whatsapp_status.in_(SENT_STATUSES | {'Failed', 'Sending'})
     ).all()
     for phone, status in rows:
         number = normalize_phone(phone)
         if number:
-            (sent if status in SENT_STATUSES else failed).add(number)
+            (sent if status in SENT_STATUSES or status == 'Sending' else failed).add(number)
     return sent, failed - sent
 
 

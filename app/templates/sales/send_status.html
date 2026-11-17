@@ -1,0 +1,12 @@
+{% extends 'base.html' %}{% block content %}
+<h1 class="h3">Message sending progress</h1>
+<p>{{batch.company.company_name}} · {{batch.description}}</p>
+<p><strong>{{'Interrupted — ready to resume' if progress.interrupted else progress.queue_status|capitalize}}</strong></p>
+<p>{{progress.sent}} sent / delivered / read · {{progress.failed}} failed · {{progress.held}} held · {{progress.unsent}} not sent · {{progress.review}} need checking · {{progress.total}} in this batch</p>
+<p>You can close the browser. Queued messages send in the background. A server interruption may require resuming.</p>
+{% if progress.review %}<p class="text-warning">Some attempts were interrupted while contacting WhatsApp. These need checking and will not be retried automatically.</p>{% endif %}
+{% if progress.unsent and (progress.interrupted or progress.queue_status not in ['queued','retry','processing']) %}
+<form method="post" action="{{url_for('sales.resume_unsent',campaign_id=campaign.id)}}"><input type="hidden" name="sales_csrf" value="{{session.sales_csrf}}"><button class="btn btn-success">Resume unsent messages</button></form>
+{% endif %}
+<div class="d-flex gap-2 my-3"><a class="btn btn-outline-primary" href="{{url_for('sales.send_status',campaign_id=campaign.id)}}">Refresh progress</a><a class="btn btn-outline-primary" href="{{url_for('communications.whatsapp_clients',batch_id=batch.id)}}">Message results / retry failed</a><a href="{{url_for('sales.clients',batch_id=batch.id)}}">Back to imported file</a></div>
+{% endblock %}
