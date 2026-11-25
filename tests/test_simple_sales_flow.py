@@ -69,7 +69,9 @@ class SimpleSalesFlowTests(unittest.TestCase):
         self.seed()
         filename = 'Bethlehem Laps Report.xlsx'
         row = ['P-1', '1', 'A EXAMPLE', 'Example Street', '0821234567', '', datetime(2024, 7, 2), 1, '']
-        content = self.workbook([row, row]).getvalue()
+        older = ['P-2', '2', 'B OTHER', '', '+27 82 123 4567', '', datetime(2023, 7, 2), 1, '']
+        missing = ['P-3', '3', 'C MISSING', '', None, '', None, 1, '']
+        content = self.workbook([older, missing, row]).getvalue()
 
         def submit(data, company=0):
             return self.client.post('/sales/imports', data={'sales_csrf': self.token,
@@ -78,12 +80,15 @@ class SimpleSalesFlowTests(unittest.TestCase):
 
         first = submit(content)
         self.assertEqual(first.status_code, 302)
-        self.assertIn(b'Combined 1 repeated client row.', self.client.get(first.location).data)
+        page = self.client.get(first.location)
+        self.assertIn(b'Skipped 1 duplicate contact row.', page.data)
+        self.assertIn(b'Skipped 1 row without a valid mobile number.', page.data)
         second = submit(content)
         self.assertEqual(second.location, first.location)
         self.assertIn(b'already been imported', self.client.get(second.location).data)
         self.assertEqual(ClientImportBatch.query.count(), 1)
         self.assertEqual(ClientImportRow.query.count(), 1)
+        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Bethlehem').one().policy_number, 'P-1')
         self.assertEqual(self.client.get('/sales/imports').data.count(filename.encode()), 1)
         self.assertEqual(self.client.get(f'{first.location}/download').data, content)
 
@@ -91,6 +96,16 @@ class SimpleSalesFlowTests(unittest.TestCase):
         self.assertNotEqual(submit(updated).location, first.location)
         self.assertNotEqual(submit(content, company=1).location, first.location)
         self.assertEqual(ClientImportBatch.query.count(), 3)
+
+    def test_laps_file_without_valid_mobile_numbers_is_not_saved(self):
+        self.seed()
+        rows = [['P-1', '1', 'A EXAMPLE', '', '0', '', None, 1, '']]
+        response = self.client.post('/sales/imports', data={'sales_csrf': self.token,
+            'company_id': self.company_ids[0], 'description': 'Belville',
+            'file': (self.workbook(rows), 'Belville Laps Report.xlsx')})
+        self.assertIn(b'The report has no client rows with a valid mobile number.', response.data)
+        self.assertEqual(ClientImportBatch.query.count(), 0)
+        self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(), 0)
 
     def test_shared_policy_contacts_saved_separately_with_exact_file_membership(self):
         self.seed()
@@ -165,12 +180,18 @@ class SimpleSalesFlowTests(unittest.TestCase):
             ['ALL-1', '1', 'A FIRST', '', '0821234567', '', datetime(2023,6,1), 1, ''],
             ['ALL-2', '2', 'B SECOND', '', '0821234568', '', datetime(2023,6,1), 1, ''],
             ['ALL-3', '3', 'C NO MOBILE', '', '', '', datetime(2023,6,1), 1, ''],
+            ['ALL-4', '4', 'D OPTED OUT', '', '0821234569', '', datetime(2023,6,1), 1, ''],
         ]
         response = self.client.post('/sales/imports', data={'sales_csrf':self.token,
             'company_id':self.company_ids[0], 'description':'All clients test',
             'file':(self.workbook(rows),'Krugersdorp Laps Report.xlsx')})
         self.assertEqual(response.status_code,302)
         batch = ClientImportBatch.query.order_by(ClientImportBatch.id.desc()).first()
+        self.assertEqual(ClientImportRow.query.filter_by(batch_id=batch.id).count(), 3)
+        opted_out = LapsedPolicy.query.filter_by(policy_number='ALL-4').one()
+        from app.services.communication_service import preference_for
+        preference_for(opted_out).opted_out_all = True
+        db.session.commit()
         path = f'/sales/imports/{batch.id}/campaign/{self.template_id}'
         html = self.client.get(path).get_data(as_text=True)
         self.assertIn('All available clients in this imported file', html)

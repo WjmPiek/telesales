@@ -114,14 +114,15 @@ def imports():
                 flash('This file has already been imported. Opened the saved import.', 'info')
                 return redirect(url_for('.clients', batch_id=existing_batch.id))
             workbook = load_workbook(io.BytesIO(content),data_only=True,read_only=True)
-            duplicates = 0
+            skipped = ''
             try:
-                from app.services.laps_report import REPORT_HEADERS, header, import_report
+                from app.services.laps_report import REPORT_HEADERS, header, import_report, skipped_rows_summary
                 headers = [header(c.value) for c in workbook.active[1]]
                 if REPORT_HEADERS.issubset(headers):
                     policies = []
-                    _, _, _, _, duplicates = import_report(workbook, filename, current_user, company_override=company,
-                                                           commit=False, policies_out=policies)
+                    _, _, _, missing, duplicates = import_report(workbook, filename, current_user,
+                        company_override=company, commit=False, policies_out=policies)
+                    skipped = skipped_rows_summary(missing, duplicates)
                 elif headers == ['name','cellnumber']:
                     policies = import_names(workbook, company, filename)
                 else:
@@ -137,9 +138,8 @@ def imports():
             db.session.add(AuditLog(user_id=current_user.id,action='CLIENT_FILE_IMPORTED',entity_type='ClientImportBatch',
                 entity_id=str(batch.id),details=f'{len(policies)} records saved to company #{company.id}'))
             db.session.commit()
-            if duplicates:
-                label = 'row' if duplicates == 1 else 'rows'
-                flash(f'Combined {duplicates} repeated client {label}. The original Excel file is available to download.', 'info')
+            if skipped:
+                flash(f'{skipped} The original Excel file is available to download.', 'info')
             return redirect(url_for('.clients',batch_id=batch.id))
         except (ValueError, OSError, KeyError, BadZipFile, InvalidFileException) as exc:
             db.session.rollback();flash(str(exc),'danger')

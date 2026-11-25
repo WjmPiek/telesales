@@ -54,23 +54,23 @@ def receipt_date(value, epoch):
     return result if result.year > 1900 else None
 
 
-def contact_key(value):
-    """Match local/international spellings of a number, including Excel numbers."""
+def name_key(value):
+    return ' '.join(text(value).casefold().split())
+
+
+def imported_client_key(policy):
     from app.routes.prospects import prospect_phone
-    return prospect_phone(value) or re.sub(r'\D', '', text(value))
 
-
-def imported_contact(policy):
-    # Submitted applications may change the live cell number. Match the original
-    # imported number so a re-import retains the application and client record.
+    # Submitted applications can change the live name and number. Use the
+    # original identity so a re-import does not move applications to another client.
     try:
         source = json.loads(policy.source_row_json or '{}')
-        for name, value in source.items():
-            if header(name) == 'cell':
-                return contact_key(value)
+        fields = {header(name): value for name, value in source.items()}
     except (ValueError, TypeError, AttributeError):
-        pass
-    return contact_key(policy.cell_number)
+        fields = {}
+    mobile = prospect_phone(fields.get('cell', policy.cell_number))
+    name = fields.get('initialsurname') or f'{policy.initials or ""} {policy.surname or ""}'
+    return policy.policy_number.casefold(), mobile, name_key(name)
 
 
 def parse_report(workbook, filename):
@@ -84,13 +84,17 @@ def parse_report(workbook, filename):
     if len(set(named_headers)) != len(named_headers) or not REPORT_HEADERS.issubset(named_headers):
         raise ValueError('Expected Policy #, Initial. Surname, Address, Cell# and Last Receipt columns.')
     rows = {}
-    duplicates = 0
+    missing_mobile = duplicates = 0
     for number, values in enumerate(iterator, 2):
         if number > 10001:
             raise ValueError('Import at most 10,000 clients per file.')
         if not any(text(value) for value in values):
             continue
         data = dict(zip(headers, values))
+        mobile = prospect_phone(data.get('cell'))
+        if not mobile:
+            missing_mobile += 1
+            continue
         policy = text(data.get('policy'))
         full_name = text(data.get('initialsurname'))
         if not policy or not full_name or len(policy) > 80:
@@ -98,32 +102,38 @@ def parse_report(workbook, filename):
         initials, _, surname = full_name.partition(' ')
         if not surname or len(initials) > 50 or len(surname) > 120 or len(text(data.get('receipt'))) > 80:
             raise ValueError(f'Row {number}: check the initials, surname and receipt number lengths.')
-        client_key = (policy.casefold(), contact_key(data.get('cell')))
-        name_key = ' '.join(full_name.casefold().split())
-        previous = rows.get(client_key)
-        if previous and previous[1] != name_key:
-            raise ValueError(f'Rows {previous[0]} and {number}: the same policy and contact number have different client names. Check these rows before importing.')
         try:
             last_paid = receipt_date(data.get('lastreceipt'), workbook.epoch)
         except (ValueError, TypeError, OverflowError) as exc:
             raise ValueError(f'Row {number}: invalid Last Receipt date.') from exc
-        if previous:
+        previous = rows.get(mobile)
+        if previous is not None:
             duplicates += 1
-            previous_date = previous[2]['last_date_paid']
+            previous_date = previous['last_date_paid']
             if last_paid is None or (previous_date is not None and last_paid <= previous_date):
                 continue
         source = {str(key): value.isoformat() if isinstance(value, (date, datetime)) else value
                   for key, value in zip(original_headers, values)}
-        mobile = prospect_phone(data.get('cell'))
-        row = dict(policy_number=policy, initials=initials, surname=surname,
-                   cell_number=mobile or text(data.get('cell'))[:50], valid_mobile=bool(mobile),
-                   home_tel=text(data.get('phone'))[:50], address=text(data.get('address')),
-                   last_date_paid=last_paid, receipt_number=text(data.get('receipt')),
-                   comments=text(data.get('comment')), source_row_json=json.dumps(source, ensure_ascii=False))
-        rows[client_key] = (previous[0] if previous else number, name_key, row)
+        rows[mobile] = dict(
+            policy_number=policy, initials=initials, surname=surname, cell_number=mobile,
+            home_tel=text(data.get('phone'))[:50], address=text(data.get('address')),
+            last_date_paid=last_paid, receipt_number=text(data.get('receipt')),
+            comments=text(data.get('comment')), source_row_json=json.dumps(source, ensure_ascii=False),
+        )
     if not rows:
-        raise ValueError('The report has no client rows.')
-    return franchise, [row for _, _, row in rows.values()], duplicates
+        raise ValueError('The report has no client rows with a valid mobile number.')
+    return franchise, rows.values(), missing_mobile, duplicates
+
+
+def skipped_rows_summary(missing_mobile, duplicates):
+    parts = []
+    if missing_mobile:
+        label = 'row' if missing_mobile == 1 else 'rows'
+        parts.append(f'Skipped {missing_mobile} {label} without a valid mobile number.')
+    if duplicates:
+        label = 'row' if duplicates == 1 else 'rows'
+        parts.append(f'Skipped {duplicates} duplicate contact {label}.')
+    return ' '.join(parts)
 
 
 def report_company(franchise):
@@ -159,7 +169,7 @@ def report_group_repairs():
 
 def import_report(workbook, filename, user, *, company_override=None, commit=True, policies_out=None):
     from app.services.communication_service import is_suppressed, preference_for
-    franchise, rows, duplicates = parse_report(workbook, filename)
+    franchise, rows, missing_mobile, duplicates = parse_report(workbook, filename)
     company = company_override or report_company(franchise)
     branch = company.branch
     role = user.role.name.lower().replace('_', ' ') if user.role else ''
@@ -167,12 +177,12 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
         raise ValueError('This report belongs to another branch. Ask an administrator to import it.')
     if company.status != 'Active':
         raise ValueError('This franchise is suspended or deleted. Reactivate it before importing.')
-    existing = {(p.policy_number.casefold(), imported_contact(p)): p for p in LapsedPolicy.query.filter_by(company_id=company.id).filter(
+    existing = {imported_client_key(p): p for p in LapsedPolicy.query.filter_by(company_id=company.id).filter(
         db.func.lower(LapsedPolicy.franchise) == franchise.lower()).all() if p.policy_number}
-    created = updated = missing_mobile = 0
+    created = updated = 0
     for data in rows:
-        valid_mobile = data.pop('valid_mobile')
-        client_key = (data['policy_number'].casefold(), contact_key(data['cell_number']))
+        client_key = (data['policy_number'].casefold(), data['cell_number'],
+                      name_key(f"{data['initials']} {data['surname']}"))
         policy = existing.get(client_key)
         if policy is None:
             policy = LapsedPolicy(company_id=company.id, company_name=company.company_name, franchise=franchise,
@@ -210,16 +220,14 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
             pref.email_allowed = False
             policy.recovery_status = 'Opted Out'
             policy.next_action_date = None
-        elif not valid_mobile:
-            missing_mobile += 1
-            if policy.recovery_status in {'New', 'Imported', 'Suspense'}:
-                policy.recovery_status = 'Suspense'
-                policy.suspense_reason = 'Valid mobile number'
         elif policy.recovery_status == 'Suspense' and policy.suspense_reason in {'Valid mobile number', 'ID number', 'ID number, contact number'}:
             policy.recovery_status = 'Imported'
             policy.suspense_reason = None
-    db.session.add(AuditLog(user_id=user.id, action='LAPS_REPORT_IMPORT', entity_type='CompanyGroupState',
-                entity_id=str(company.id), details=f'{created} created; {updated} updated; {missing_mobile} missing valid mobile numbers; {duplicates} duplicate rows combined.'))
+    db.session.add(AuditLog(
+        user_id=user.id, action='LAPS_REPORT_IMPORT', entity_type='CompanyGroupState', entity_id=str(company.id),
+        details=(f'{created} created; {updated} updated; {missing_mobile} rows skipped without a valid mobile number; '
+                 f'{duplicates} duplicate contact rows skipped.'),
+    ))
     if commit:
         db.session.commit()
     return franchise, created, updated, missing_mobile, duplicates

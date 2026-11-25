@@ -24,7 +24,7 @@ class LapsReportTests(unittest.TestCase):
         workbook.active.append(['Policy #', 'Receipt #', 'Initial. Surname', 'Address', 'Cell#', 'Phone#', 'Last Receipt', 'MPIA', 'Comment'])
         for row in rows if rows is not None else [
             ['TEST-1', '123', 'JP VAN DER TEST', '1 Fictional Road', 821234567, '0', datetime(2023, 6, 22), 1, 'Source note'],
-            ['TEST-2', 'NONE YET', 'A EXAMPLE', '2 Fictional Road', '0', '', datetime(1900, 1, 1), 0, 'No receipt'],
+            ['TEST-2', 'NONE YET', 'A EXAMPLE', '2 Fictional Road', '0821234569', '', datetime(1900, 1, 1), 0, 'No receipt'],
         ]:
             workbook.active.append(row)
         output = io.BytesIO()
@@ -54,10 +54,10 @@ class LapsReportTests(unittest.TestCase):
         self.assertEqual(original['Initial. Surname'], 'JP VAN DER TEST')
         from app.routes.recovery import _policy_missing_fields
         self.assertEqual(_policy_missing_fields(lead), [])
-        missing = self.lead('TEST-2')
-        self.assertEqual(missing.recovery_status, 'Suspense')
-        self.assertIsNone(missing.last_date_paid)
-        self.assertIn('1900-01-01', missing.source_row_json)
+        no_receipt = self.lead('TEST-2')
+        self.assertEqual(no_receipt.recovery_status, 'Imported')
+        self.assertIsNone(no_receipt.last_date_paid)
+        self.assertIn('1900-01-01', no_receipt.source_row_json)
 
     def test_named_franchise_uses_existing_company_instead_of_admin_branch(self):
         from app.models import CompanyGroupState
@@ -211,13 +211,38 @@ class LapsReportTests(unittest.TestCase):
         self.assertTrue(preference_for(clients[0]).opted_out_all)
         self.assertEqual(clients[1].recovery_status, 'Imported')
 
-    def test_same_policy_and_equivalent_contact_rejects_conflicting_client_names(self):
+    def test_same_contact_is_deduplicated_even_when_policy_or_name_differs(self):
         rows = [
             ['SHARED', '1', 'A FIRST', '', '0821234567', '', date(2023, 6, 1), 1, ''],
             ['shared', '2', 'B SECOND', '', '+27 82 123 4567', '', date(2024, 7, 2), 1, ''],
+            ['OTHER', '3', 'C THIRD', '', 821234567, '', date(2024, 7, 2), 1, ''],
+            ['MISSING', '4', 'D FOURTH', '', None, '', 'invalid date ignored without a contact', 1, ''],
+            ['INVALID', '5', 'E FIFTH', '', '0', '', None, 1, ''],
+            ['UNIQUE', '6', 'F SIXTH', '', '0821234568', '', None, 1, ''],
         ]
-        self.import_report('Krugersdorp Laps Report.xlsx', rows)
-        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Krugersdorp').count(), 0)
+        response = self.import_report('Belville Laps Report.xlsx', rows)
+        page = self.client.get(response.location)
+        self.assertIn(b'Skipped 2 rows without a valid mobile number.', page.data)
+        self.assertIn(b'Skipped 2 duplicate contact rows.', page.data)
+        clients = LapsedPolicy.query.filter_by(franchise='Belville').order_by(LapsedPolicy.id).all()
+        self.assertEqual([(p.policy_number, p.surname, p.receipt_number) for p in clients],
+                         [('shared', 'SECOND', '2'), ('UNIQUE', 'SIXTH', '6')])
+
+    def test_new_import_does_not_overwrite_another_client_with_same_policy_and_phone(self):
+        first = ['TEST-1', '1', 'A FIRST', '', '0821234567', '', date(2023, 6, 1), 1, '']
+        second = ['TEST-1', '2', 'B SECOND', '', '+27 82 123 4567', '', date(2024, 7, 2), 1, '']
+        self.import_report(rows=[first])
+        previous = self.lead()
+        previous_id = previous.id
+        previous.recovery_status = 'Application Started'
+        db.session.commit()
+
+        self.import_report(rows=[first, second])
+        self.import_report(rows=[second])
+        clients = LapsedPolicy.query.filter_by(franchise='Northcliff').order_by(LapsedPolicy.id).all()
+        self.assertEqual([(p.surname, p.recovery_status) for p in clients],
+                         [('FIRST', 'Application Started'), ('SECOND', 'Imported')])
+        self.assertEqual(clients[0].id, previous_id)
 
     def test_repeated_client_uses_newest_receipt_and_imports_other_rows(self):
         rows = [
@@ -228,7 +253,7 @@ class LapsReportTests(unittest.TestCase):
         for franchise, report in [('Belville', rows), ('Daveyton', rows[::-1])]:
             response = self.import_report(f'{franchise} Laps Report.xlsx', report)
             page = self.client.get(response.location)
-            self.assertIn(b'Combined 1 repeated client row.', page.data)
+            self.assertIn(b'Skipped 1 duplicate contact row.', page.data)
             clients = LapsedPolicy.query.filter_by(franchise=franchise).order_by(LapsedPolicy.policy_number).all()
             self.assertEqual(len(clients), 2)
             self.assertEqual((clients[0].address, clients[0].receipt_number, clients[0].last_date_paid),
