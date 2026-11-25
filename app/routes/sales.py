@@ -488,6 +488,7 @@ def resume_unsent(campaign_id):
             if not live.ok or campaign.template_status!='Approved':
                 raise ValueError(live.error or 'The WhatsApp template must be approved before resuming.')
             campaign.send_recipient_ids_json=json.dumps(pending)
+            campaign.send_batch_cursor_id = None
             campaign.queue_status='queued';campaign.status='Scheduled';campaign.scheduled_at=datetime.utcnow()
             db.session.add(AuditLog(user_id=current_user.id,action='CAMPAIGN_UNSENT_RESUMED',entity_type='CommunicationCampaign',
                 entity_id=str(campaign.id),details=f'{len(pending)} previously unsent messages queued'))

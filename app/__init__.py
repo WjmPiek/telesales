@@ -75,9 +75,18 @@ def _ensure_company_registry(app):
 
 def _ensure_communication_campaign_columns(app):
     """Keep existing Render databases compatible with image-template campaigns."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     with app.app_context():
         try:
+            if db.engine.dialect.name == 'sqlite':
+                inspector = inspect(db.engine)
+                if inspector.has_table('communication_campaigns') and not any(
+                    column['name'] == 'send_batch_cursor_id'
+                    for column in inspector.get_columns('communication_campaigns')
+                ):
+                    with db.engine.begin() as conn:
+                        conn.execute(text('ALTER TABLE communication_campaigns ADD COLUMN send_batch_cursor_id INTEGER'))
+                return
             if not str(db.engine.url).startswith("postgresql"):
                 return
             statements = [
@@ -104,6 +113,7 @@ def _ensure_communication_campaign_columns(app):
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS template_approval_notified_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS send_recipient_ids_json TEXT",
+                "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS send_batch_cursor_id INTEGER",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS queue_status VARCHAR(30) DEFAULT 'idle'",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP",
                 "ALTER TABLE communication_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
