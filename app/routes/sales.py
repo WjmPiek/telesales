@@ -2,12 +2,16 @@
 import io
 import json
 import secrets
+from contextlib import closing
 from datetime import datetime
 from pathlib import PurePosixPath
 from zipfile import BadZipFile
+
+from sqlalchemy.exc import SQLAlchemyError
 from openpyxl.utils.exceptions import InvalidFileException
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, jsonify, send_file
+from flask import (Blueprint, Response, abort, current_app, flash, redirect, render_template, request, session,
+                   stream_with_context, url_for, jsonify, send_file)
 from flask_login import login_required, current_user
 from openpyxl import load_workbook
 from app import db
@@ -19,6 +23,7 @@ from app.services.campaign_schedule import parse_schedule, schedule_sast
 from app.services.whatsapp_clients import client_rows, visible_campaigns
 
 sales_bp = Blueprint('sales', __name__, url_prefix='/sales')
+IMPORT_PROGRESS_TYPE = 'application/x-ndjson'
 
 
 @sales_bp.before_request
@@ -92,62 +97,19 @@ def imports():
         company = next((c for c in allowed if c.id == request.form.get('company_id',type=int)), None)
         description = request.form.get('description','').strip()
         upload = request.files.get('file')
-        try:
-            if not company or not description or len(description)>255:
-                raise ValueError('Select Northcliff or Brokers and enter a description (up to 255 characters).')
-            if not upload or not (upload.filename or '').lower().endswith('.xlsx'):
-                raise ValueError('Choose your Excel .xlsx client file.')
-            content = upload.stream.read(10*1024*1024+1)
-            if len(content)>10*1024*1024:
-                raise ValueError('The file must be 10 MB or smaller.')
-            filename = PurePosixPath(upload.filename.replace('\\','/')).name[:255]
-            # Serialize file lookup and creation for this company in the same transaction.
-            if db.engine.dialect.name == 'sqlite':
-                db.session.execute(db.update(CompanyGroupState).where(CompanyGroupState.id == company.id)
-                    .values(updated_at=CompanyGroupState.updated_at))
-            company = db.session.get(CompanyGroupState, company.id, populate_existing=True, with_for_update=True)
-            if not company or company.status != 'Active':
-                raise ValueError('This company is no longer active. Select an active company to import clients.')
-            existing_batch = ClientImportBatch.query.filter_by(company_id=company.id, filename=filename,
-                file_size=len(content), file_data=content).order_by(ClientImportBatch.id).first()
-            if existing_batch:
-                flash('This file has already been imported. Opened the saved import.', 'info')
-                return redirect(url_for('.clients', batch_id=existing_batch.id))
-            workbook = load_workbook(io.BytesIO(content),data_only=True,read_only=True)
-            missing = duplicates = None
-            try:
-                from app.services.laps_report import REPORT_HEADERS, header, import_report, skipped_rows_summary
-                headers = [header(c.value) for c in workbook.active[1]]
-                if REPORT_HEADERS.issubset(headers):
-                    policy_ids = []
-                    _, _, _, missing, duplicates = import_report(workbook, filename, current_user,
-                        company_override=company, commit=False, policy_ids_out=policy_ids)
-                elif headers == ['name','cellnumber']:
-                    policy_ids = [policy.id for policy in import_names(workbook, company, filename)]
-                else:
-                    raise ValueError('Use your laps report columns, or a file with Name and Cell_Number columns.')
-            finally:
-                workbook.close()
-            office = office_for(company)
-            batch = ClientImportBatch(filename=filename,description=description,company_id=company.id,
-                filing_branch=office.branch_name if office else None, created_by_id=current_user.id,
-                file_data=content,file_size=len(content),skipped_missing_mobile=missing,
-                skipped_duplicate_contacts=duplicates)
-            db.session.add(batch);db.session.flush()
-            db.session.execute(db.insert(ClientImportRow),
-                               [{'batch_id': batch.id, 'policy_id': policy_id} for policy_id in policy_ids])
-            db.session.add(AuditLog(user_id=current_user.id,action='CLIENT_FILE_IMPORTED',entity_type='ClientImportBatch',
-                entity_id=str(batch.id),details=f'{len(policy_ids)} records saved to company #{company.id}'))
-            db.session.commit()
-            if missing is not None:
-                skipped = skipped_rows_summary(missing, duplicates)
-                summary = f'{len(policy_ids):,} client records saved.'
-                if skipped:
-                    summary += f' {skipped} The original Excel file is available to download.'
-                flash(summary, 'success')
-            return redirect(url_for('.clients',batch_id=batch.id))
-        except (ValueError, OSError, KeyError, BadZipFile, InvalidFileException) as exc:
-            db.session.rollback();flash(str(exc),'danger')
+        events = upload_events(company, description, upload)
+        if any(kind == IMPORT_PROGRESS_TYPE and quality > 0 for kind, quality in request.accept_mimetypes):
+            return Response(stream_with_context(encode_import_events(events)),
+                            mimetype=IMPORT_PROGRESS_TYPE,
+                            headers={'Cache-Control': 'no-store, no-transform', 'X-Accel-Buffering': 'no'})
+        for event in events:
+            if event['stage'] == 'done':
+                if event['message']:
+                    flash(event['message'], event['category'])
+                return redirect(event['url'])
+            if event['stage'] == 'error':
+                flash(event['message'], 'danger')
+
     batches = ClientImportBatch.query.filter(ClientImportBatch.company_id.in_([c.id for c in allowed])).order_by(ClientImportBatch.id.desc()).all()
     legacy = (scoped_policies().with_entities(LapsedPolicy.source_filename,LapsedPolicy.company_id,
         db.func.count(LapsedPolicy.id)).filter(LapsedPolicy.source_filename.isnot(None),
@@ -162,6 +124,95 @@ def imports():
                           visible.c.company_id == ClientImportBatch.company_id)
                   .group_by(ClientImportRow.batch_id))
     return render('imports',companies=allowed,batches=batches,legacy=legacy,counts=counts)
+
+
+
+def encode_import_events(events):
+    with closing(events):
+        for event in events:
+            yield json.dumps(event) + '\n'
+
+
+def upload_events(company, description, upload):
+    try:
+        yield {'stage': 'checking'}
+        if not company or not description or len(description) > 255:
+            raise ValueError('Select Northcliff or Brokers and enter a description (up to 255 characters).')
+        if not upload or not (upload.filename or '').lower().endswith('.xlsx'):
+            raise ValueError('Choose your Excel .xlsx client file.')
+        content = upload.stream.read(10 * 1024 * 1024 + 1)
+        if len(content) > 10 * 1024 * 1024:
+            raise ValueError('The file must be 10 MB or smaller.')
+        filename = PurePosixPath(upload.filename.replace('\\', '/')).name[:255]
+        # Serialize file lookup and creation for this company in the same transaction.
+        if db.engine.dialect.name == 'sqlite':
+            db.session.execute(db.update(CompanyGroupState).where(CompanyGroupState.id == company.id)
+                               .values(updated_at=CompanyGroupState.updated_at))
+        company = db.session.get(CompanyGroupState, company.id, populate_existing=True, with_for_update=True)
+        if not company or company.status != 'Active':
+            raise ValueError('This company is no longer active. Select an active company to import clients.')
+        existing = ClientImportBatch.query.filter_by(company_id=company.id, filename=filename,
+            file_size=len(content), file_data=content).order_by(ClientImportBatch.id).first()
+        if existing:
+            yield {'stage': 'done', 'url': url_for('.clients', batch_id=existing.id), 'category': 'info',
+                   'message': 'This file has already been imported. Opened the saved import.'}
+            return
+
+        from app.services.laps_report import REPORT_HEADERS, header, import_report_steps, skipped_rows_summary
+        policy_ids = []
+        missing = duplicates = None
+        workbook = load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+        try:
+            headers = [header(cell.value) for cell in workbook.active[1]]
+            if REPORT_HEADERS.issubset(headers):
+                with closing(import_report_steps(workbook, filename, current_user, company_override=company,
+                                                 commit=False, policy_ids_out=policy_ids)) as steps:
+                    while True:
+                        try:
+                            processed, total = next(steps)
+                        except StopIteration as result:
+                            _, _, _, missing, duplicates = result.value
+                            break
+                        yield {'stage': 'processing', 'processed': processed, 'total': total}
+            elif headers == ['name', 'cellnumber']:
+                yield {'stage': 'reading_clients'}
+                policy_ids = [policy.id for policy in import_names(workbook, company, filename)]
+            else:
+                raise ValueError('Use your laps report columns, or a file with Name and Cell_Number columns.')
+        finally:
+            workbook.close()
+
+        yield {'stage': 'saving'}
+        office = office_for(company)
+        batch = ClientImportBatch(filename=filename, description=description, company_id=company.id,
+            filing_branch=office.branch_name if office else None, created_by_id=current_user.id,
+            file_data=content, file_size=len(content), skipped_missing_mobile=missing,
+            skipped_duplicate_contacts=duplicates)
+        db.session.add(batch)
+        db.session.flush()
+        db.session.execute(db.insert(ClientImportRow),
+                           [{'batch_id': batch.id, 'policy_id': policy_id} for policy_id in policy_ids])
+        db.session.add(AuditLog(user_id=current_user.id, action='CLIENT_FILE_IMPORTED', entity_type='ClientImportBatch',
+            entity_id=str(batch.id), details=f'{len(policy_ids)} records saved to company #{company.id}'))
+        location = url_for('.clients', batch_id=batch.id)
+        db.session.commit()
+
+        summary = f'{len(policy_ids):,} client records saved.'
+        if missing is not None:
+            skipped = skipped_rows_summary(missing, duplicates)
+            if skipped:
+                summary += f' {skipped} The original Excel file is available to download.'
+        yield {'stage': 'done', 'url': location, 'category': 'success', 'message': summary}
+    except (ValueError, OSError, KeyError, BadZipFile, InvalidFileException) as exc:
+        db.session.rollback()
+        yield {'stage': 'error', 'message': str(exc)}
+    except SQLAlchemyError as exc:
+        db.session.rollback()
+        current_app.logger.error('Client import database operation failed (%s)', type(exc).__name__)
+        yield {'stage': 'error', 'message': 'Telesales could not save this import. Check Saved Files and try again.'}
+    except GeneratorExit:
+        db.session.rollback()
+        raise
 
 
 def import_names(workbook, company, filename):

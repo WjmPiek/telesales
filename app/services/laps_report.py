@@ -207,6 +207,16 @@ def sync_import_preferences(policies):
 
 
 def import_report(workbook, filename, user, *, company_override=None, commit=True, policy_ids_out=None):
+    steps = import_report_steps(workbook, filename, user, company_override=company_override,
+                                commit=commit, policy_ids_out=policy_ids_out)
+    while True:
+        try:
+            next(steps)
+        except StopIteration as result:
+            return result.value
+
+
+def import_report_steps(workbook, filename, user, *, company_override=None, commit=True, policy_ids_out=None):
     from app.models import ApplicationJourney, ClientApplication
     from app.services.client_merge import merge_application_details
 
@@ -218,6 +228,8 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
         raise ValueError('This report belongs to another branch. Ask an administrator to import it.')
     if company.status != 'Active':
         raise ValueError('This franchise is suspended or deleted. Reactivate it before importing.')
+    total = len(rows)
+    yield 0, total
     existing = {imported_client_key(policy): policy for policy in LapsedPolicy.query.options(
         undefer(LapsedPolicy.source_row_json)).filter(
         LapsedPolicy.company_id == company.id,
@@ -266,6 +278,7 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
         db.session.flush()
         if policy_ids_out is not None:
             policy_ids_out.extend(policy.id for policy in policies)
+        yield created + updated, total
     db.session.add(AuditLog(
         user_id=user.id, action='LAPS_REPORT_IMPORT', entity_type='CompanyGroupState', entity_id=str(company.id),
         details=(f'{created} created; {updated} updated; {missing_mobile} rows skipped without a valid mobile number; '

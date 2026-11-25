@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime
 from io import BytesIO
@@ -144,6 +145,63 @@ class SimpleSalesFlowTests(unittest.TestCase):
         self.assertEqual(LapsedPolicy.query.filter_by(franchise='Daveyton').count(), 0)
         self.assertEqual(ClientImportBatch.query.count(), 0)
         self.assertEqual(ClientImportRow.query.count(), 0)
+
+    def test_import_reports_real_batch_progress_and_completion_after_commit(self):
+        self.seed()
+        rows = [['P-' + str(i), '1', 'A EXAMPLE', '', f'08255{i:05d}', '', datetime(2024, 1, 1), 1, '']
+                for i in range(501)]
+        rows.append(['DUP', '2', 'B EXAMPLE', '', '+27 82 550 0000', '', datetime(2025, 1, 1), 1, ''])
+        rows.append(['MISSING', '3', 'C EXAMPLE', '', '', '', None, 1, ''])
+        response = self.client.post('/sales/imports', data={'sales_csrf': self.token,
+            'company_id': self.company_ids[0], 'description': 'Daveyton',
+            'file': (self.workbook(rows), 'Daveyton Laps Report.xlsx')},
+            headers={'Accept': 'application/x-ndjson'}, buffered=False)
+        with response:
+            self.assertEqual(response.mimetype, 'application/x-ndjson')
+            self.assertEqual(response.headers['X-Accel-Buffering'], 'no')
+            events = iter(response.response)
+            self.assertEqual(json.loads(next(events)), {'stage': 'checking'})
+            for count in (0, 250, 500, 501):
+                self.assertEqual(json.loads(next(events)), {'stage': 'processing', 'processed': count, 'total': 501})
+            self.assertEqual(json.loads(next(events)), {'stage': 'saving'})
+            self.assertEqual(ClientImportBatch.query.count(), 0)
+            complete = json.loads(next(events))
+            batch = ClientImportBatch.query.one()
+            self.assertEqual(complete['stage'], 'done')
+            self.assertEqual(complete['url'], f'/sales/imports/{batch.id}')
+            self.assertIn('501 client records saved.', complete['message'])
+            self.assertIn('Skipped 1 row without a valid mobile number.', complete['message'])
+            self.assertIn('Skipped 1 duplicate contact row.', complete['message'])
+            self.assertEqual(ClientImportRow.query.filter_by(batch_id=batch.id).count(), 501)
+            self.assertEqual(list(events), [])
+
+    def test_interrupted_import_progress_leaves_no_partial_records(self):
+        self.seed()
+        rows = [['P-' + str(i), '1', 'A EXAMPLE', '', f'08255{i:05d}', '', None, 1, ''] for i in range(251)]
+        response = self.client.post('/sales/imports', data={'sales_csrf': self.token,
+            'company_id': self.company_ids[0], 'description': 'Daveyton',
+            'file': (self.workbook(rows), 'Daveyton Laps Report.xlsx')},
+            headers={'Accept': 'application/x-ndjson'}, buffered=False)
+        with response:
+            events = iter(response.response)
+            self.assertEqual(json.loads(next(events))['stage'], 'checking')
+            self.assertEqual(json.loads(next(events))['processed'], 0)
+            self.assertEqual(json.loads(next(events))['processed'], 250)
+        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Daveyton').count(), 0)
+        self.assertEqual(ClientImportBatch.query.count(), 0)
+        self.assertEqual(ClientImportRow.query.count(), 0)
+
+    def test_import_progress_reports_validation_error_without_success(self):
+        self.seed()
+        rows = [['P-1', '1', 'A EXAMPLE', '', '0', '', None, 1, '']]
+        response = self.client.post('/sales/imports', data={'sales_csrf': self.token,
+            'company_id': self.company_ids[0], 'description': 'Daveyton',
+            'file': (self.workbook(rows), 'Daveyton Laps Report.xlsx')},
+            headers={'Accept': 'application/x-ndjson'}, buffered=True)
+        events = [json.loads(line) for line in response.data.splitlines()]
+        self.assertEqual([event['stage'] for event in events], ['checking', 'error'])
+        self.assertIn('no client rows with a valid mobile number', events[-1]['message'])
+        self.assertEqual(ClientImportBatch.query.count(), 0)
 
     def test_laps_file_without_valid_mobile_numbers_is_not_saved(self):
         self.seed()
