@@ -120,3 +120,44 @@ class ImportDeliveryVisibilityTests(unittest.TestCase):
         self.assertIn(b'Page 1 of 2',response.data)
         self.assertIn(b'source_file=Pages.xlsx',response.data)
         self.assertIn(b'status=not_sent',response.data)
+
+    def test_directory_counts_all_matching_clients_but_loads_details_for_one_page(self):
+        from sqlalchemy import event
+
+        self.login('admin')
+        campaign = CommunicationCampaign(name='Bounded history', message_body='Synthetic only', branch='A',
+                                         created_by_id=self.user_ids['admin'])
+        db.session.add(campaign)
+        db.session.flush()
+        ids = db.session.scalars(db.insert(LapsedPolicy).returning(LapsedPolicy.id), [
+            {'initials': 'Synthetic', 'surname': f'Page-{index:03d}', 'branch': 'A',
+             'cell_number': f'08255{index:05d}', 'source_filename': 'Bounded.xlsx'}
+            for index in range(125)
+        ]).all()
+        db.session.execute(db.insert(CampaignRecipient), [
+            {'campaign_id': campaign.id, 'lapsed_policy_id': policy_id,
+             'secure_token': f'bounded-history-{policy_id}', 'whatsapp_status': 'Delivered'}
+            for policy_id in ids
+        ])
+        db.session.commit()
+        db.session.expunge_all()
+
+        policies, recipients = [], []
+        def loaded_policy(policy, context):
+            policies.append(policy.id)
+
+        def loaded_recipient(recipient, context):
+            recipients.append(recipient.lapsed_policy_id)
+
+        event.listen(LapsedPolicy, 'load', loaded_policy)
+        event.listen(CampaignRecipient, 'load', loaded_recipient)
+        try:
+            page = self.client.get('/communications/clients?source_file=Bounded.xlsx&status=delivered&page=2')
+        finally:
+            event.remove(LapsedPolicy, 'load', loaded_policy)
+            event.remove(CampaignRecipient, 'load', loaded_recipient)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'125 matching client(s)', page.data)
+        self.assertIn(b'Page 2 of 3', page.data)
+        self.assertEqual(set(policies), set(ids[25:75]))
+        self.assertEqual(set(recipients), set(ids[25:75]))
