@@ -44,6 +44,31 @@ class ResumeImportMessagesTests(unittest.TestCase):
         self.assertEqual([progress[k] for k in ('sent','failed','held','review','unsent','total')],[1,1,1,1,1,5])
         self.assertTrue(progress['interrupted'])
 
+    def test_queued_campaign_opens_lightweight_status_instead_of_selection(self):
+        _, campaign_id = self.interrupted_batch()
+        path = f'/sales/campaign/{campaign_id}'
+        with patch('app.services.campaign_audience.audience_rows') as audience, \
+             patch('app.routes.communications._refresh_template_status') as refresh_template:
+            self.assertEqual(self.client.get(f'{path}/select').location, f'{path}/status')
+            self.assertEqual(self.client.post(f'{path}/select',
+                data={'sales_csrf': self.token, 'action': 'send'}).location, f'{path}/status')
+            audience.assert_not_called()
+            refresh_template.assert_not_called()
+        self.assertIn(b'Resume unsent messages', self.client.get(f'{path}/status').data)
+
+    def test_progress_aggregates_recipient_statuses_without_loading_recipient_objects(self):
+        from sqlalchemy.orm import raiseload
+        from app.routes.sales import send_progress
+
+        _, campaign_id = self.interrupted_batch()
+        db.session.expire_all()
+        campaign = CommunicationCampaign.query.options(raiseload(CommunicationCampaign.recipients)).filter_by(
+            id=campaign_id).populate_existing().one()
+        progress = send_progress(campaign)
+        self.assertEqual([progress[key] for key in ('sent', 'failed', 'held', 'review', 'unsent', 'total')],
+                         [1, 1, 1, 1, 1, 5])
+        self.assertTrue(progress['interrupted'])
+
     def test_resume_only_unsent_and_no_duplicate_sender(self):
         bid,cid=self.interrupted_batch()
         url=f'/sales/campaign/{cid}/resume'
