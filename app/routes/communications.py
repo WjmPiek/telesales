@@ -1371,85 +1371,25 @@ def suppression_list():
 @communications_bp.route("/clients")
 @login_required
 def whatsapp_clients():
-    from app.services.whatsapp_clients import client_rows, visible_campaigns, message_date_range
-    policies = scope_by_branch(LapsedPolicy.query, LapsedPolicy,
-                              agent_col=LapsedPolicy.assigned_agent_id).order_by(LapsedPolicy.id.desc()).all()
-    campaigns = visible_campaigns()
-    rows = client_rows(policies, [c.id for c in campaigns], include_uncontacted=True)
-    batch_id=request.args.get('batch_id',type=int)
-    batch=None;batch_ids=None
+    from app.services.whatsapp_clients import directory_page, visible_campaigns
+
+    policies = scope_by_branch(LapsedPolicy.query, LapsedPolicy, agent_col=LapsedPolicy.assigned_agent_id)
+    campaigns = visible_campaigns(summaries=True)
+    batch_id = request.args.get('batch_id', type=int)
+    batch = batch_scope = None
     if batch_id:
         from app.routes.sales import batch_record, batch_policies
-        batch=batch_record(batch_id)
-        batch_ids={p.id for p in batch_policies(batch)}
-        rows=[r for r in rows if any(p.id in batch_ids for p in r['policies'])]
-        for row in rows:
-            row['policy']=next(p for p in row['policies'] if p.id in batch_ids)
-            row['name']=f"{row['policy'].initials or ''} {row['policy'].surname or ''}".strip()
-    branches = sorted({b for row in rows for b in row['branches'] if b})
-    source_files = sorted({name for row in rows for name in row['source_files']})
-    franchises = sorted({name for row in rows for name in row['franchises'] if name})
-    query = (request.args.get('q') or '').strip()
-    status = request.args.get('status', '')
-    branch = request.args.get('branch', '')
-    source_file = request.args.get('source_file', '')
-    franchise = request.args.get('franchise', '')
-    campaign_id = request.args.get('campaign', type=int)
-    if branch:
-        rows = [r for r in rows if branch in r['branches']]
-    if source_file:
-        rows = [r for r in rows if source_file in r['source_files']]
-    if franchise:
-        rows = [r for r in rows if franchise in r['franchises']]
-    if source_file or franchise or branch:
-        for row in rows:
-            matching = [p for p in row['policies']
-                        if (not source_file or p.source_filename == source_file)
-                        and (not franchise or (p.franchise or p.company_name or p.branch or '') == franchise)
-                        and (not branch or p.branch == branch)]
-            if matching:
-                row['policy'] = matching[0]
-                row['name'] = f"{matching[0].initials or ''} {matching[0].surname or ''}".strip() or 'Unnamed client'
-        rows = [r for r in rows if any(
-            (not source_file or p.source_filename == source_file)
-            and (not franchise or (p.franchise or p.company_name or p.branch or '') == franchise)
-            and (not branch or p.branch == branch) for p in r['policies'])]
-    if query:
-        rows = [r for r in rows if query.lower() in ' '.join(
-            f"{p.initials or ''} {p.surname or ''} {p.cell_number or ''} {p.policy_number or ''} {p.address or ''}"
-            for p in r['policies']).lower() or query.lower() in r['phone']]
-    if campaign_id:
-        rows = [r for r in rows if any(h.campaign_id == campaign_id for h in r['selections'])]
+        batch = batch_record(batch_id)
+        batch_scope = batch_policies(batch)
     try:
-        low,high=message_date_range(request.args)
+        directory = directory_page(policies, [campaign.id for campaign in campaigns], request.args,
+                                   batch_policies=batch_scope)
     except ValueError as exc:
-        abort(400,str(exc))
-    if low or high:
-        rows=[r for r in rows if any((not low or at>=low) and (not high or at<high) for at in r['message_dates'])]
-    summary = dict(total=len(rows), sent=sum(r['sent'] for r in rows), not_sent=sum(not r['sent'] for r in rows),
-                   failed=sum(r['delivery_key'] in {'failed','held'} for r in rows),
-                   undelivered=sum(r['delivery_key'] in {'sent','failed','held'} for r in rows),
-                   delivered=sum(r['delivered'] for r in rows),
-                   opted_out=sum(r['opted_out'] for r in rows), callback=sum(r['callback'] for r in rows))
-    checks = {'sent': lambda r: r['sent'], 'delivered': lambda r: r['delivered'],
-              'read': lambda r: r['delivery_key'] == 'read',
-              'callback': lambda r: r['callback'], 'opted_out': lambda r: r['opted_out'],
-              'not_sent': lambda r: not r['sent'],
-              'undelivered': lambda r: r['delivery_key'] in {'sent','failed','held'},
-              'failed': lambda r: any(h.whatsapp_status in {'Failed','Held'} for h in r['history'])}
-    if status and status not in checks:
-        abort(400, 'Choose a valid message status.')
-    if status:
-        rows = [r for r in rows if checks[status](r)]
-    total = len(rows)
-    page = max(1, request.args.get('page', 1, type=int))
-    page = min(page, max(1, (total + 49) // 50))
-    return render_template('communications/clients.html', rows=rows[(page-1)*50:page*50],
-                           summary=summary, total=total, page=page, pages=max(1, (total+49)//50),
-                           campaigns=campaigns, branches=branches, q=query, status=status,
-                           branch=branch, campaign_id=campaign_id, source_file=source_file,
-                           source_files=source_files, franchises=franchises, franchise=franchise, batch=batch,
-                           sent_from=request.args.get('sent_from',''),sent_to=request.args.get('sent_to',''))
+        abort(400, str(exc))
+    return render_template('communications/clients.html', campaigns=campaigns, batch=batch,
+                           q=(request.args.get('q') or '').strip(), campaign_id=request.args.get('campaign', type=int),
+                           **{key: request.args.get(key, '') for key in ('status', 'branch', 'source_file', 'franchise',
+                                                                         'sent_from', 'sent_to')}, **directory)
 
 
 @communications_bp.route("/<int:campaign_id>/schedule", methods=["POST"])
