@@ -55,6 +55,7 @@ def select_recipients(campaign, policies):
     db.session.flush()
     ids = [recipient.id for recipient in selected]
     campaign.send_recipient_ids_json = json.dumps(ids)
+    campaign.send_batch_cursor_id = None
     return ids
 
 

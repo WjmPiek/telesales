@@ -831,6 +831,7 @@ class CommunicationCampaign(db.Model):
     sent_at = db.Column(db.DateTime)
     scheduled_at = db.Column(db.DateTime, index=True)
     send_recipient_ids_json = db.Column(db.Text)
+    send_batch_cursor_id = db.Column(db.Integer)
     queue_status = db.Column(db.String(30), default="idle", nullable=False, index=True)
     archived_at = db.Column(db.DateTime)
     deleted_at = db.Column(db.DateTime)

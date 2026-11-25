@@ -151,7 +151,7 @@ class WhatsAppProcessTests(unittest.TestCase):
         recipient.campaign.template_status = "Approved"
         db.session.commit()
         from app.services.whatsapp_campaign_engine import process_scheduled_campaigns
-        def send(campaign, target, channel):
+        def send(campaign, target, channel, **kwargs):
             target.whatsapp_status = "Sent"
             return True, None
         with patch("app.routes.communications._refresh_template_status", return_value=Mock(ok=True)), patch("app.routes.communications._send_to_recipient", side_effect=send) as sender:

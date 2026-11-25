@@ -196,6 +196,7 @@ def reset_operational_data(*, expected_fingerprint=None, actor_id=None):
         campaign.sent_at = None
         campaign.scheduled_at = None
         campaign.send_recipient_ids_json = None
+        campaign.send_batch_cursor_id = None
         campaign.queue_status = "idle"
         campaign.qr_scan_count = 0
 

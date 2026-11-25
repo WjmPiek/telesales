@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -36,7 +37,7 @@ class CampaignBatchTests(unittest.TestCase):
         c=db.session.get(CommunicationCampaign,cid)
         self.assertEqual(len(json.loads(c.send_recipient_ids_json)),size)
         called=[]
-        def send(c,r,channel):
+        def send(c,r,channel, **kwargs):
             called.append(r.lapsed_policy_id);r.whatsapp_status='Delivered';return True,''
         with patch('app.routes.communications._refresh_template_status',return_value=SimpleNamespace(ok=True)),patch('app.routes.communications._send_to_recipient',side_effect=send):
             process_scheduled_campaigns();process_scheduled_campaigns()
@@ -47,6 +48,87 @@ class CampaignBatchTests(unittest.TestCase):
         # A second batch can reuse the campaign while sent clients are skipped.
         self.queue(cid,ids[:size])
         self.assertEqual(db.session.get(CommunicationCampaign,cid).queue_status,'completed')
+
+    def test_scheduled_send_is_bounded_and_will_not_repeat_first_batch_failures(self):
+        campaign_id, policy_ids = self.seed()
+        self.queue(campaign_id, policy_ids[:17])
+        calls = []
+
+        def send(campaign, recipient, channel, **kwargs):
+            calls.append(recipient.lapsed_policy_id)
+            if recipient.lapsed_policy_id == policy_ids[0]:
+                recipient.whatsapp_status = 'Failed'
+                return False, 'synthetic provider rejection'
+            if recipient.lapsed_policy_id == policy_ids[1]:
+                recipient.whatsapp_status = 'Held'
+                return False, 'synthetic consent hold'
+            recipient.whatsapp_status = 'Delivered'
+            return True, None
+
+        with patch.dict(os.environ, {'WHATSAPP_SEND_BATCH_SIZE': '10'}), \
+             patch('app.routes.communications._refresh_template_status', return_value=SimpleNamespace(ok=True)), \
+             patch('app.routes.communications._send_to_recipient', side_effect=send):
+            process_scheduled_campaigns()
+            self.assertEqual(calls, policy_ids[:10])
+            campaign = db.session.get(CommunicationCampaign, campaign_id)
+            self.assertEqual(campaign.queue_status, 'queued')
+            self.assertIsNotNone(campaign.send_batch_cursor_id)
+            self.assertIsNotNone(campaign.sent_at)
+            process_scheduled_campaigns()
+            self.assertEqual(campaign.queue_status, 'held')
+            self.assertIsNone(campaign.send_batch_cursor_id)
+            self.assertEqual(process_scheduled_campaigns()['processed'], 0)
+        self.assertEqual(calls, policy_ids[:17])
+        self.assertEqual(CampaignRecipient.query.filter_by(campaign_id=campaign_id, whatsapp_status='Delivered').count(), 15)
+        self.assertEqual(CampaignRecipient.query.filter_by(campaign_id=campaign_id, whatsapp_status='Not Sent').count(), 3)
+
+    def test_recovery_keeps_uncertain_attempt_and_continues_only_with_remaining_contacts(self):
+        campaign_id, policy_ids = self.seed()
+        self.queue(campaign_id, policy_ids[:6])
+        calls = []
+
+        def send(campaign, recipient, channel, **kwargs):
+            calls.append(recipient.lapsed_policy_id)
+            if recipient.lapsed_policy_id == policy_ids[1]:
+                raise SystemExit('synthetic restart before provider confirmation')
+            recipient.whatsapp_status = 'Sent'
+            return True, None
+
+        with patch.dict(os.environ, {'WHATSAPP_SEND_BATCH_SIZE': '2'}), \
+             patch('app.routes.communications._refresh_template_status', return_value=SimpleNamespace(ok=True)), \
+             patch('app.routes.communications._send_to_recipient', side_effect=send):
+            with self.assertRaises(SystemExit):
+                process_scheduled_campaigns()
+            self.assertEqual(calls, policy_ids[:2])
+            self.assertEqual(db.session.get(CommunicationCampaign, campaign_id).queue_status, 'processing')
+            db.session.remove()
+            process_scheduled_campaigns()
+            self.assertEqual(calls, policy_ids[:4])
+            process_scheduled_campaigns()
+            self.assertEqual(calls, policy_ids[:6])
+            self.assertEqual(process_scheduled_campaigns()['processed'], 0)
+        self.assertEqual(db.session.get(CommunicationCampaign, campaign_id).queue_status, 'held')
+        self.assertEqual(CampaignRecipient.query.filter_by(campaign_id=campaign_id, whatsapp_status='Sending').count(), 1)
+
+    def test_worker_holds_duplicate_number_when_an_older_attempt_is_uncertain(self):
+        campaign_id, policy_ids = self.seed()
+        campaign = db.session.get(CommunicationCampaign, campaign_id)
+        earlier = CampaignRecipient.query.filter_by(campaign_id=campaign_id, lapsed_policy_id=policy_ids[0]).one()
+        duplicate = CampaignRecipient.query.filter_by(campaign_id=campaign_id, lapsed_policy_id=policy_ids[1]).one()
+        duplicate.policy.cell_number = '+27 82 100 0000'
+        earlier.whatsapp_status = 'Sending'
+        campaign.send_recipient_ids_json = json.dumps([duplicate.id])
+        campaign.status = 'Scheduled'
+        campaign.queue_status = 'queued'
+        campaign.scheduled_at = datetime.utcnow()
+        db.session.commit()
+        with patch('app.routes.communications._refresh_template_status', return_value=SimpleNamespace(ok=True)), \
+             patch('app.routes.communications.send_whatsapp_template_image') as provider:
+            process_scheduled_campaigns()
+            provider.assert_not_called()
+        self.assertEqual(earlier.whatsapp_status, 'Sending')
+        self.assertEqual(duplicate.whatsapp_status, 'Held')
+        self.assertEqual(campaign.queue_status, 'held')
 
     def test_five_is_exact_even_with_twenty_saved_recipients(self): self.assert_batch(5)
 

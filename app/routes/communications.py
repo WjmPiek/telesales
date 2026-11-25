@@ -203,18 +203,27 @@ def _event(recipient, event_type, channel=None, details=None):
     ))
 
 
-def _send_to_recipient(campaign, recipient, channel, *, follow_up=False):
+def _send_to_recipient(campaign, recipient, channel, *, follow_up=False, number_states=None):
     if channel != "whatsapp":
         return False, "Campaigns support WhatsApp only"
-    from app.services.campaign_audience import SENT_STATUSES, contact_number
+    from app.services.campaign_audience import SENT_STATUSES, campaign_number_states, contact_number
     if not follow_up and recipient.whatsapp_status in SENT_STATUSES:
         return True, None
     number=contact_number(recipient.policy)
-    if not follow_up and number and any(row.id != recipient.id and row.whatsapp_status in SENT_STATUSES
-            and row.policy and contact_number(row.policy) == number for row in campaign.recipients):
-        recipient.whatsapp_status='Skipped'
-        _event(recipient,'duplicate_number_skipped',channel,'This number already received this campaign.')
-        return False,'This number already received this campaign'
+    if not follow_up and number:
+        if number_states is not None and number in number_states:
+            prior_status = number_states[number]
+        else:
+            prior_status = campaign_number_states(campaign.id, {number}, exclude_id=recipient.id).get(number)
+        if prior_status == 'Sending':
+            recipient.whatsapp_status = 'Held'
+            reason = 'An earlier attempt for this number needs checking'
+            _event(recipient, 'duplicate_number_held', channel, reason)
+            return False, reason
+        if prior_status in SENT_STATUSES:
+            recipient.whatsapp_status = 'Skipped'
+            _event(recipient, 'duplicate_number_skipped', channel, 'This number already received this campaign.')
+            return False, 'This number already received this campaign'
     policy = recipient.policy
     if campaign.company:
         if campaign.company.status != "Active":
@@ -1484,6 +1493,7 @@ def campaign_queue_action(campaign_id, action):
     elif action == "resume":
         campaign.queue_status = "queued"; campaign.status = "Scheduled"
     elif action == "retry":
+        campaign.send_batch_cursor_id = None
         campaign.queue_status = "retry"; campaign.status = "Scheduled"
         campaign.scheduled_at = datetime.utcnow()
     else:

@@ -85,7 +85,7 @@ class ResumeImportMessagesTests(unittest.TestCase):
         unsent=CampaignRecipient.query.filter_by(campaign_id=cid,whatsapp_status='Not Sent').one()
         self.assertEqual(json.loads(campaign.send_recipient_ids_json),[unsent.id])
         called=[]
-        def send(c,r,channel):
+        def send(c,r,channel, **kwargs):
             called.append(r.id);r.whatsapp_status='Delivered';return True,None
         with patch('app.routes.communications._refresh_template_status',return_value=SimpleNamespace(ok=True)), \
              patch('app.routes.communications._send_to_recipient',side_effect=send):
@@ -104,7 +104,16 @@ class ResumeImportMessagesTests(unittest.TestCase):
         self.assertEqual(CampaignRecipient.query.filter_by(campaign_id=cid,whatsapp_status='Sending').count(),2)
         with patch('app.routes.communications._send_to_recipient') as sender:
             process_scheduled_campaigns();sender.assert_not_called()
-        self.assertTrue(self.client.get(f'/sales/campaign/{cid}/progress').json['interrupted'])
+        progress = self.client.get(f'/sales/campaign/{cid}/progress').json
+        self.assertEqual(progress['queue_status'], 'held')
+        self.assertEqual(progress['review'], 2)
+
+    def test_legacy_interruption_does_not_start_sending_without_manual_resume(self):
+        _, campaign_id = self.interrupted_batch()
+        with patch('app.routes.communications._send_to_recipient') as provider:
+            self.assertEqual(process_scheduled_campaigns()['processed'], 0)
+            provider.assert_not_called()
+        self.assertTrue(self.client.get(f'/sales/campaign/{campaign_id}/progress').json['interrupted'])
 
     def test_resume_requires_csrf_and_batch_access(self):
         _,cid=self.interrupted_batch()
