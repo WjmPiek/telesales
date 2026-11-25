@@ -97,6 +97,54 @@ class SimpleSalesFlowTests(unittest.TestCase):
         self.assertNotEqual(submit(content, company=1).location, first.location)
         self.assertEqual(ClientImportBatch.query.count(), 3)
 
+    def test_large_report_is_saved_once_with_whole_file_deduplication_and_totals(self):
+        self.seed()
+        rows = [['P-' + str(i), '1', 'A EXAMPLE', '', f'08255{i:05d}', '', datetime(2024, 1, 1), 1, '']
+                for i in range(14_658)]
+        rows.extend(['NO-MOBILE', '2', 'B EXAMPLE', '', None, '', None, 1, ''] for _ in range(19_566))
+        rows.append(['WINNER', '3', 'C EXAMPLE', '', '+27 82 550 0000', '', datetime(2025, 1, 1), 1, ''])
+        content = self.workbook(rows).getvalue()
+
+        def upload():
+            return self.client.post('/sales/imports', data={'sales_csrf': self.token,
+                'company_id': self.company_ids[0], 'description': 'Daveyton',
+                'file': (BytesIO(content), 'Daveyton Laps Report.xlsx')})
+
+        response = upload()
+        self.assertEqual(response.status_code, 302)
+        batch = ClientImportBatch.query.one()
+        self.assertEqual(response.location, f'/sales/imports/{batch.id}')
+        self.assertEqual(ClientImportRow.query.filter_by(batch_id=batch.id).count(), 14_658)
+        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Daveyton', cell_number='+27825500000').one().policy_number,
+                         'WINNER')
+        self.assertEqual(upload().location, response.location)
+        self.assertEqual(ClientImportBatch.query.count(), 1)
+        saved = self.client.get('/sales/imports').data
+        self.assertEqual(saved.count(b'Daveyton Laps Report.xlsx'), 1)
+        self.assertIn(b'14,658 saved client records', saved)
+        self.assertIn(b'19,566 without valid mobile numbers skipped', saved)
+        self.assertIn(b'1 duplicate row skipped', saved)
+        page = self.client.get(f'{response.location}?page=147&mode=call')
+        self.assertIn(b'Page 147 of 147', page.data)
+        self.assertIn(b'14,658 client records', page.data)
+        self.assertIn(b'P-14657', page.data)
+        self.assertEqual(self.client.get(f'{response.location}/download').data, content)
+
+    def test_large_report_error_rolls_back_earlier_chunks(self):
+        self.seed()
+        rows = [['P-' + str(i), '1', 'A EXAMPLE', '', f'08255{i:05d}', '', None, 1, '']
+                for i in range(251)]
+        with patch('app.services.laps_report.sync_import_preferences',
+                   side_effect=[None, ValueError('Test failure while processing the last chunk')]) as preferences:
+            response = self.client.post('/sales/imports', data={'sales_csrf': self.token,
+                'company_id': self.company_ids[0], 'description': 'Daveyton',
+                'file': (self.workbook(rows), 'Daveyton Laps Report.xlsx')})
+            self.assertEqual(preferences.call_count, 2)
+        self.assertIn(b'Test failure while processing the last chunk', response.data)
+        self.assertEqual(LapsedPolicy.query.filter_by(franchise='Daveyton').count(), 0)
+        self.assertEqual(ClientImportBatch.query.count(), 0)
+        self.assertEqual(ClientImportRow.query.count(), 0)
+
     def test_laps_file_without_valid_mobile_numbers_is_not_saved(self):
         self.seed()
         rows = [['P-1', '1', 'A EXAMPLE', '', '0', '', None, 1, '']]

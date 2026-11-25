@@ -853,6 +853,8 @@ class ClientImportBatch(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     file_data = db.deferred(db.Column(db.LargeBinary))
     file_size = db.Column(db.Integer, nullable=False, default=0)
+    skipped_missing_mobile = db.Column(db.Integer)
+    skipped_duplicate_contacts = db.Column(db.Integer)
     company = db.relationship('CompanyGroupState')
 
 
