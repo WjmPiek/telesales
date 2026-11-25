@@ -259,6 +259,26 @@ class LapsReportTests(unittest.TestCase):
             self.assertEqual((clients[0].address, clients[0].receipt_number, clients[0].last_date_paid),
                              ('New address', '2', date(2024, 7, 2)))
 
+    def test_limit_applies_to_unique_contacts_after_filtering(self):
+        from app.services.laps_report import parse_report
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(['Policy #', 'Initial. Surname', 'Address', 'Cell#', 'Last Receipt'])
+        for number in range(10_000):
+            sheet.append([f'TEST-{number}', 'A EXAMPLE', '', f'082555{number:04d}', date(2024, 1, 1)])
+        sheet.append([None, None, None, None, None])
+        sheet.append(['NO-MOBILE', 'B EXAMPLE', '', None, None])
+        sheet.append(['NEWEST', 'C EXAMPLE', '', '+27 82 555 0000', date(2025, 1, 1)])
+
+        _, rows, missing, duplicates = parse_report(workbook, 'Daveyton Laps Report.xlsx')
+        self.assertEqual((len(rows), missing, duplicates), (10_000, 1, 1))
+        self.assertEqual(next(iter(rows))['policy_number'], 'NEWEST')
+
+        sheet.append(['EXTRA', 'D EXAMPLE', '', '0825560000', None])
+        with self.assertRaisesRegex(ValueError, '10,000 unique clients with valid mobile numbers'):
+            parse_report(workbook, 'Daveyton Laps Report.xlsx')
+
     def test_directory_filters_franchise_receipt_year_month_and_range(self):
         self.import_report()
         self.import_report('Southridge Laps Report.xlsx', [['S-1', '2', 'B EXAMPLE', '', '0821234568', '', date(2024, 7, 1), 1, '']])
