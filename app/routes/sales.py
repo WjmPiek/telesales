@@ -114,17 +114,16 @@ def imports():
                 flash('This file has already been imported. Opened the saved import.', 'info')
                 return redirect(url_for('.clients', batch_id=existing_batch.id))
             workbook = load_workbook(io.BytesIO(content),data_only=True,read_only=True)
-            skipped = ''
+            missing = duplicates = None
             try:
                 from app.services.laps_report import REPORT_HEADERS, header, import_report, skipped_rows_summary
                 headers = [header(c.value) for c in workbook.active[1]]
                 if REPORT_HEADERS.issubset(headers):
-                    policies = []
+                    policy_ids = []
                     _, _, _, missing, duplicates = import_report(workbook, filename, current_user,
-                        company_override=company, commit=False, policies_out=policies)
-                    skipped = skipped_rows_summary(missing, duplicates)
+                        company_override=company, commit=False, policy_ids_out=policy_ids)
                 elif headers == ['name','cellnumber']:
-                    policies = import_names(workbook, company, filename)
+                    policy_ids = [policy.id for policy in import_names(workbook, company, filename)]
                 else:
                     raise ValueError('Use your laps report columns, or a file with Name and Cell_Number columns.')
             finally:
@@ -132,14 +131,20 @@ def imports():
             office = office_for(company)
             batch = ClientImportBatch(filename=filename,description=description,company_id=company.id,
                 filing_branch=office.branch_name if office else None, created_by_id=current_user.id,
-                file_data=content,file_size=len(content))
+                file_data=content,file_size=len(content),skipped_missing_mobile=missing,
+                skipped_duplicate_contacts=duplicates)
             db.session.add(batch);db.session.flush()
-            db.session.add_all([ClientImportRow(batch_id=batch.id,policy_id=p.id) for p in policies])
+            db.session.execute(db.insert(ClientImportRow),
+                               [{'batch_id': batch.id, 'policy_id': policy_id} for policy_id in policy_ids])
             db.session.add(AuditLog(user_id=current_user.id,action='CLIENT_FILE_IMPORTED',entity_type='ClientImportBatch',
-                entity_id=str(batch.id),details=f'{len(policies)} records saved to company #{company.id}'))
+                entity_id=str(batch.id),details=f'{len(policy_ids)} records saved to company #{company.id}'))
             db.session.commit()
-            if skipped:
-                flash(f'{skipped} The original Excel file is available to download.', 'info')
+            if missing is not None:
+                skipped = skipped_rows_summary(missing, duplicates)
+                summary = f'{len(policy_ids):,} client records saved.'
+                if skipped:
+                    summary += f' {skipped} The original Excel file is available to download.'
+                flash(summary, 'success')
             return redirect(url_for('.clients',batch_id=batch.id))
         except (ValueError, OSError, KeyError, BadZipFile, InvalidFileException) as exc:
             db.session.rollback();flash(str(exc),'danger')
@@ -149,7 +154,14 @@ def imports():
         LapsedPolicy.company_id.in_([c.id for c in allowed]),
         ~LapsedPolicy.id.in_(db.session.query(ClientImportRow.policy_id)))
         .group_by(LapsedPolicy.source_filename,LapsedPolicy.company_id).all())
-    return render('imports',companies=allowed,batches=batches,legacy=legacy)
+    visible = scoped_policies().with_entities(LapsedPolicy.id, LapsedPolicy.company_id).subquery()
+    counts = dict(db.session.query(ClientImportRow.batch_id, db.func.count(ClientImportRow.id))
+                  .select_from(ClientImportRow).join(visible, visible.c.id == ClientImportRow.policy_id)
+                  .join(ClientImportBatch, ClientImportBatch.id == ClientImportRow.batch_id)
+                  .filter(ClientImportBatch.company_id.in_([c.id for c in allowed]),
+                          visible.c.company_id == ClientImportBatch.company_id)
+                  .group_by(ClientImportRow.batch_id))
+    return render('imports',companies=allowed,batches=batches,legacy=legacy,counts=counts)
 
 
 def import_names(workbook, company, filename):
@@ -215,9 +227,11 @@ def open_existing():
 def clients(batch_id):
     batch=batch_record(batch_id)
     query=batch_policies(batch)
-    # The dedicated file page keeps all original client records, including duplicates.
     from sqlalchemy.orm import undefer
-    policies=query.options(undefer(LapsedPolicy.source_row_json)).order_by(LapsedPolicy.id).all()
+    page = max(request.args.get('page', 1, type=int) or 1, 1)
+    pagination = query.options(undefer(LapsedPolicy.source_row_json)).order_by(LapsedPolicy.id).paginate(
+        page=page, per_page=100, error_out=False)
+    policies = pagination.items
     sources={}
     for policy in policies:
         try:
@@ -229,7 +243,8 @@ def clients(batch_id):
     campaigns = CommunicationCampaign.query.join(ClientImportCampaign).filter(
         ClientImportCampaign.batch_id==batch.id, CommunicationCampaign.deleted_at.is_(None)).order_by(CommunicationCampaign.id.desc()).all()
     return render('clients',batch=batch,policies=policies,delivery=directory_delivery(policies),sources=sources,
-                  send_batches=[(c,send_progress(c)) for c in campaigns],call_mode=request.args.get('mode')=='call')
+                  send_batches=[(c,send_progress(c)) for c in campaigns],call_mode=request.args.get('mode')=='call',
+                  pagination=pagination)
 
 
 @sales_bp.route('/imports/<int:batch_id>/download')

@@ -259,7 +259,7 @@ class LapsReportTests(unittest.TestCase):
             self.assertEqual((clients[0].address, clients[0].receipt_number, clients[0].last_date_paid),
                              ('New address', '2', date(2024, 7, 2)))
 
-    def test_limit_applies_to_unique_contacts_after_filtering(self):
+    def test_contacts_can_be_deduplicated_past_the_previous_limit(self):
         from app.services.laps_report import parse_report
 
         workbook = Workbook()
@@ -276,8 +276,8 @@ class LapsReportTests(unittest.TestCase):
         self.assertEqual(next(iter(rows))['policy_number'], 'NEWEST')
 
         sheet.append(['EXTRA', 'D EXAMPLE', '', '0825560000', None])
-        with self.assertRaisesRegex(ValueError, '10,000 unique clients with valid mobile numbers'):
-            parse_report(workbook, 'Daveyton Laps Report.xlsx')
+        _, rows, missing, duplicates = parse_report(workbook, 'Daveyton Laps Report.xlsx')
+        self.assertEqual((len(rows), missing, duplicates), (10_001, 1, 1))
 
     def test_directory_filters_franchise_receipt_year_month_and_range(self):
         self.import_report()
@@ -433,6 +433,23 @@ class LapsReportTests(unittest.TestCase):
                         {column['name'] for column in inspect(db.engine).get_columns('lapsed_policies')})
         with db.engine.connect() as conn:
             self.assertEqual(conn.execute(text('SELECT policy_number FROM lapsed_policies')).scalar(), 'OLD-REPORT')
+
+    def test_existing_saved_files_gain_optional_skip_counts(self):
+        from app.services.laps_report import ensure_report_columns
+        from sqlalchemy import inspect, text
+
+        with db.engine.begin() as conn:
+            conn.execute(text('DROP TABLE client_import_batches'))
+            conn.execute(text('CREATE TABLE client_import_batches (id INTEGER PRIMARY KEY, filename TEXT)'))
+            conn.execute(text("INSERT INTO client_import_batches VALUES (1, 'Old report.xlsx')"))
+        ensure_report_columns()
+        ensure_report_columns()
+        names = {column['name'] for column in inspect(db.engine).get_columns('client_import_batches')}
+        self.assertTrue({'skipped_missing_mobile', 'skipped_duplicate_contacts'} <= names)
+        with db.engine.connect() as conn:
+            row = conn.execute(text('SELECT filename, skipped_missing_mobile, skipped_duplicate_contacts '
+                                    'FROM client_import_batches')).one()
+        self.assertEqual(tuple(row), ('Old report.xlsx', None, None))
 
     def test_trailing_formatted_blank_columns_do_not_break_report_import(self):
         from openpyxl.styles import PatternFill

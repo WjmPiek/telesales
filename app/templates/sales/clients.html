@@ -1,7 +1,15 @@
 {% extends 'base.html' %}{% block content %}
-<h1 class="h3">{{batch.description}}</h1><p>{{batch.company.company_name}} · {{batch.filename}} · {{policies|length}} client records</p>
+<h1 class="h3">{{batch.description}}</h1><p>{{batch.company.company_name}} · {{batch.filename}} · {{'{:,}'.format(pagination.total)}} client records</p>
 {% for campaign,progress in send_batches %}<div class="card card-body mb-3"><b>Message batch #{{campaign.id}} · {{'Interrupted' if progress.interrupted else progress.queue_status}}</b><p>{{progress.sent}} sent · {{progress.failed}} failed · {{progress.held}} held · {{progress.unsent}} not sent · {{progress.review}} need checking</p><a href="{{url_for('sales.send_status',campaign_id=campaign.id)}}">View progress / resume unsent messages</a></div>{% endfor %}
 <div class="d-flex gap-2 mb-4"><a class="btn btn-success btn-lg" href="{{url_for('sales.templates',batch_id=batch.id)}}">WhatsApp</a><a class="btn btn-primary btn-lg" href="{{url_for('sales.clients',batch_id=batch.id,mode='call')}}">Call</a></div>
 <p><a href="{{url_for('sales.imports')}}">Back to imported files</a> · <a href="{{url_for('communications.whatsapp_clients',batch_id=batch.id)}}">Message results</a>{% if batch.file_size %} · <a href="{{url_for('sales.download',batch_id=batch.id)}}">Download original file</a>{% endif %}</p>
 <div class="table-responsive"><table class="table table-striped"><thead><tr><th>Client</th><th>Cell number</th><th>Address</th><th>Policy / receipt</th><th>Message status</th><th></th></tr></thead><tbody>{% for p in policies %}<tr><td>{{p.initials or ''}} {{p.surname or ''}}</td><td>{{p.cell_number or 'Missing'}}</td><td>{{p.address or ''}}</td><td>{{p.policy_number or 'Individual'}}<div>Last receipt: {{p.last_date_paid or 'Unknown'}} · {{p.receipt_number or ''}}</div><div>{{p.comments or ''}}</div></td><td>{{delivery[p.id].delivery_label}}{% if delivery[p.id].opted_out %}<div class="text-danger">Opted out</div>{% endif %}</td><td>{% if call_mode %}<a class="btn btn-primary btn-sm" href="{{url_for('recovery.log_call',policy_id=p.id)}}">Call client</a>{% endif %} <a href="{{url_for('client_files.index',policy_id=p.id)}}">Full client details</a>{% if sources.get(p.id) %}<details class="mt-2"><summary>All imported information</summary><dl>{% for label,value in sources[p.id].items() %}<dt>{{label}}</dt><dd>{{value if value is not none else ''}}</dd>{% endfor %}</dl></details>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% if pagination.pages > 1 %}
+<nav class="d-flex flex-wrap gap-3 align-items-center" aria-label="Client pages">
+{% set mode = 'call' if call_mode else none %}
+{% if pagination.has_prev %}<a class="btn btn-outline-primary" href="{{url_for('sales.clients',batch_id=batch.id,mode=mode,page=pagination.prev_num)}}">Previous</a>{% endif %}
+<span>Page {{pagination.page}} of {{pagination.pages}}</span>
+{% if pagination.has_next %}<a class="btn btn-outline-primary" href="{{url_for('sales.clients',batch_id=batch.id,mode=mode,page=pagination.next_num)}}">Next</a>{% endif %}
+</nav>
+{% endif %}
 {% endblock %}
