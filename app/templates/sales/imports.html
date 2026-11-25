@@ -1,9 +1,20 @@
 {% extends 'base.html' %}{% block content %}
 <h1 class="h3">Import clients</h1><p>Select the branch, describe the list and upload your Excel file.</p>
-<form method="post" enctype="multipart/form-data" class="card card-body mb-4"><input type="hidden" name="sales_csrf" value="{{session.sales_csrf}}">
+<form id="client-import" method="post" enctype="multipart/form-data" class="card card-body mb-4"><input type="hidden" name="sales_csrf" value="{{session.sales_csrf}}">
 <label class="form-label" for="company">Branch</label><select class="form-select mb-3" name="company_id" id="company" required><option value="">Choose Northcliff or Brokers</option>{% for c in companies %}<option value="{{c.id}}">{{c.company_name}}</option>{% endfor %}</select>
 <label class="form-label" for="description">Description</label><input class="form-control mb-3" name="description" id="description" maxlength="255" required placeholder="For example: November lapsed clients">
 <label class="form-label" for="file">Client file</label><input class="form-control mb-2" type="file" name="file" id="file" accept=".xlsx" required><p class="small text-muted">Use your existing laps report, or Name and Cell_Number columns. Maximum 10 MB.</p><button class="btn btn-primary align-self-start">Import file</button></form>
+<dialog id="import-progress" aria-labelledby="import-progress-title" class="border-0 rounded shadow p-4"
+        style="width: min(30rem, calc(100% - 2rem));">
+  <h2 id="import-progress-title" class="h5">Importing clients</h2>
+  <p id="import-progress-status" role="status">Uploading workbook…</p>
+  <progress id="import-progress-bar" class="w-100" aria-labelledby="import-progress-status"></progress>
+  <div class="d-flex flex-wrap gap-2 mt-3">
+    <a id="import-progress-open" class="btn btn-primary" hidden>Open saved clients</a>
+    <button type="button" id="import-progress-close" class="btn btn-outline-secondary" hidden>Close</button>
+  </div>
+</dialog>
+<script defer src="{{ url_for('static', filename='js/sales-import-progress.js') }}"></script>
 <h2 class="h5">Saved files</h2><div class="table-responsive"><table class="table"><thead><tr><th>Branch</th><th>Description / file</th><th>Imported</th><th></th></tr></thead><tbody>{% for batch in batches %}<tr><td>{{batch.company.company_name}}</td><td>{{batch.description}}<div class="small text-muted">{{batch.filename}}</div><div>{{'{:,}'.format(counts.get(batch.id, 0))}} saved client records</div>{% if batch.skipped_missing_mobile is not none %}<div class="small text-muted">{{'{:,}'.format(batch.skipped_missing_mobile)}} without valid mobile numbers skipped · {{'{:,}'.format(batch.skipped_duplicate_contacts or 0)}} duplicate {{'row' if batch.skipped_duplicate_contacts == 1 else 'rows'}} skipped</div>{% endif %}</td><td>{{schedule_sast(batch.created_at)}} SAST</td><td><a class="btn btn-outline-primary" href="{{url_for('sales.clients',batch_id=batch.id)}}">Open clients</a></td></tr>{% endfor %}
 {% for filename,company_id,count in legacy %}<tr><td>{% for c in companies if c.id==company_id %}{{c.company_name}}{% endfor %}</td><td>{{filename}}<div>{{count}} saved client records</div></td><td>Existing import</td><td><form method="post" action="{{url_for('sales.open_existing')}}"><input type="hidden" name="sales_csrf" value="{{session.sales_csrf}}"><input type="hidden" name="company_id" value="{{company_id}}"><input type="hidden" name="filename" value="{{filename}}"><button class="btn btn-outline-primary">Open saved file</button></form></td></tr>{% endfor %}</tbody></table></div>
 {% endblock %}
