@@ -182,11 +182,9 @@ class LapsReportTests(unittest.TestCase):
         self.assertEqual(lead.recovery_status, 'Opted Out')
         self.assertFalse(preference_for(lead).whatsapp_allowed)
 
-    def test_duplicate_or_malformed_report_does_not_partially_import(self):
+    def test_malformed_report_does_not_partially_import(self):
         rows = [['TEST-1', '1', 'A EXAMPLE', '', '0821234567', '', date(2023, 6, 1), 1, '']]
-        self.import_report(rows=rows + rows)
-        self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(), 0)
-        rows.append(['TEST-2', '2', 'B EXAMPLE', '', '0821234568', '', 'not a date', 1, ''])
+        rows.append(['TEST-1', '2', 'A EXAMPLE', '', '0821234567', '', 'not a date', 1, ''])
         self.import_report(rows=rows)
         self.assertEqual(LapsedPolicy.query.filter_by(source_type='laps_report').count(), 0)
 
@@ -213,13 +211,28 @@ class LapsReportTests(unittest.TestCase):
         self.assertTrue(preference_for(clients[0]).opted_out_all)
         self.assertEqual(clients[1].recovery_status, 'Imported')
 
-    def test_same_policy_and_equivalent_contact_still_rejects_duplicate_rows(self):
+    def test_same_policy_and_equivalent_contact_rejects_conflicting_client_names(self):
         rows = [
             ['SHARED', '1', 'A FIRST', '', '0821234567', '', date(2023, 6, 1), 1, ''],
             ['shared', '2', 'B SECOND', '', '+27 82 123 4567', '', date(2024, 7, 2), 1, ''],
         ]
         self.import_report('Krugersdorp Laps Report.xlsx', rows)
         self.assertEqual(LapsedPolicy.query.filter_by(franchise='Krugersdorp').count(), 0)
+
+    def test_repeated_client_uses_newest_receipt_and_imports_other_rows(self):
+        rows = [
+            ['P-1', '2', 'A EXAMPLE', 'New address', '0821234567', '', date(2024, 7, 2), 1, ''],
+            ['p-1', '1', 'a example', 'Old address', '+27 82 123 4567', '', date(2023, 6, 1), 1, ''],
+            ['P-2', '3', 'B EXAMPLE', '', '0821234568', '', None, 1, ''],
+        ]
+        for franchise, report in [('Belville', rows), ('Daveyton', rows[::-1])]:
+            response = self.import_report(f'{franchise} Laps Report.xlsx', report)
+            page = self.client.get(response.location)
+            self.assertIn(b'Combined 1 repeated client row.', page.data)
+            clients = LapsedPolicy.query.filter_by(franchise=franchise).order_by(LapsedPolicy.policy_number).all()
+            self.assertEqual(len(clients), 2)
+            self.assertEqual((clients[0].address, clients[0].receipt_number, clients[0].last_date_paid),
+                             ('New address', '2', date(2024, 7, 2)))
 
     def test_directory_filters_franchise_receipt_year_month_and_range(self):
         self.import_report()
