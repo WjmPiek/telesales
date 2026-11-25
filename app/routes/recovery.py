@@ -472,8 +472,11 @@ def _import_recovery_workbook(wb, filename):
     report_headers = {header(cell.value) for cell in wb.active[1]}
     if REPORT_HEADERS.issubset(report_headers):
         try:
-            franchise, created, updated, missing = import_report(wb, filename, current_user)
-            flash(f'{franchise}: imported {created} clients; updated {updated}; {missing} without a valid mobile number. Importing does not send WhatsApp messages.', 'success' if not missing else 'warning')
+            franchise, created, updated, missing, duplicates = import_report(wb, filename, current_user)
+            summary = f'{franchise}: imported {created} clients; updated {updated}; {missing} without a valid mobile number.'
+            if duplicates:
+                summary += f' Combined {duplicates} repeated client {"row" if duplicates == 1 else "rows"}.'
+            flash(f'{summary} Importing does not send WhatsApp messages.', 'success' if not missing else 'warning')
             from pathlib import PurePosixPath
             return redirect(url_for('recovery.queue', source_file=PurePosixPath(filename.replace('\\', '/')).name[:255]))
         except ValueError as exc:

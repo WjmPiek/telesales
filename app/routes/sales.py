@@ -11,7 +11,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 from flask_login import login_required, current_user
 from openpyxl import load_workbook
 from app import db
-from app.models import (ClientImportBatch, ClientImportRow, ClientImportCampaign, LapsedPolicy,
+from app.models import (ClientImportBatch, ClientImportRow, ClientImportCampaign, CompanyGroupState, LapsedPolicy,
     CommunicationCampaign, CampaignRecipient, WhatsAppTemplate, PolicyProduct, BranchFilingOffice, AuditLog)
 from app.security import permission_required
 from app.services.client_directory import scoped_policies
@@ -101,14 +101,27 @@ def imports():
             if len(content)>10*1024*1024:
                 raise ValueError('The file must be 10 MB or smaller.')
             filename = PurePosixPath(upload.filename.replace('\\','/')).name[:255]
+            # Serialize file lookup and creation for this company in the same transaction.
+            if db.engine.dialect.name == 'sqlite':
+                db.session.execute(db.update(CompanyGroupState).where(CompanyGroupState.id == company.id)
+                    .values(updated_at=CompanyGroupState.updated_at))
+            company = db.session.get(CompanyGroupState, company.id, populate_existing=True, with_for_update=True)
+            if not company or company.status != 'Active':
+                raise ValueError('This company is no longer active. Select an active company to import clients.')
+            existing_batch = ClientImportBatch.query.filter_by(company_id=company.id, filename=filename,
+                file_size=len(content), file_data=content).order_by(ClientImportBatch.id).first()
+            if existing_batch:
+                flash('This file has already been imported. Opened the saved import.', 'info')
+                return redirect(url_for('.clients', batch_id=existing_batch.id))
             workbook = load_workbook(io.BytesIO(content),data_only=True,read_only=True)
+            duplicates = 0
             try:
                 from app.services.laps_report import REPORT_HEADERS, header, import_report
                 headers = [header(c.value) for c in workbook.active[1]]
                 if REPORT_HEADERS.issubset(headers):
                     policies = []
-                    import_report(workbook, filename, current_user, company_override=company,
-                                  commit=False, policies_out=policies)
+                    _, _, _, _, duplicates = import_report(workbook, filename, current_user, company_override=company,
+                                                           commit=False, policies_out=policies)
                 elif headers == ['name','cellnumber']:
                     policies = import_names(workbook, company, filename)
                 else:
@@ -124,6 +137,9 @@ def imports():
             db.session.add(AuditLog(user_id=current_user.id,action='CLIENT_FILE_IMPORTED',entity_type='ClientImportBatch',
                 entity_id=str(batch.id),details=f'{len(policies)} records saved to company #{company.id}'))
             db.session.commit()
+            if duplicates:
+                label = 'row' if duplicates == 1 else 'rows'
+                flash(f'Combined {duplicates} repeated client {label}. The original Excel file is available to download.', 'info')
             return redirect(url_for('.clients',batch_id=batch.id))
         except (ValueError, OSError, KeyError, BadZipFile, InvalidFileException) as exc:
             db.session.rollback();flash(str(exc),'danger')

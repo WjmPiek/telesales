@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 import test_laps_report as fixtures
@@ -63,6 +64,33 @@ class SimpleSalesFlowTests(unittest.TestCase):
         self.assertIn(b'WhatsApp</a>',page.data);self.assertIn(b'Call</a>',page.data)
         original=self.client.get(f'/sales/imports/{bid}/download')
         self.assertEqual(original.status_code,200);self.assertTrue(original.data.startswith(b'PK'))
+
+    def test_repeated_workbook_reuses_saved_import_and_changed_workbook_is_separate(self):
+        self.seed()
+        filename = 'Bethlehem Laps Report.xlsx'
+        row = ['P-1', '1', 'A EXAMPLE', 'Example Street', '0821234567', '', datetime(2024, 7, 2), 1, '']
+        content = self.workbook([row, row]).getvalue()
+
+        def submit(data, company=0):
+            return self.client.post('/sales/imports', data={'sales_csrf': self.token,
+                'company_id': self.company_ids[company], 'description': 'BETHLEHEM',
+                'file': (BytesIO(data), filename)})
+
+        first = submit(content)
+        self.assertEqual(first.status_code, 302)
+        self.assertIn(b'Combined 1 repeated client row.', self.client.get(first.location).data)
+        second = submit(content)
+        self.assertEqual(second.location, first.location)
+        self.assertIn(b'already been imported', self.client.get(second.location).data)
+        self.assertEqual(ClientImportBatch.query.count(), 1)
+        self.assertEqual(ClientImportRow.query.count(), 1)
+        self.assertEqual(self.client.get('/sales/imports').data.count(filename.encode()), 1)
+        self.assertEqual(self.client.get(f'{first.location}/download').data, content)
+
+        updated = self.workbook([row, ['P-2', '2', 'B EXAMPLE', '', '0821234568', '', None, 1, '']]).getvalue()
+        self.assertNotEqual(submit(updated).location, first.location)
+        self.assertNotEqual(submit(content, company=1).location, first.location)
+        self.assertEqual(ClientImportBatch.query.count(), 3)
 
     def test_shared_policy_contacts_saved_separately_with_exact_file_membership(self):
         self.seed()

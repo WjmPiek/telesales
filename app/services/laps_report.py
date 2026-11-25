@@ -83,8 +83,8 @@ def parse_report(workbook, filename):
     named_headers = [name for name in headers if name]
     if len(set(named_headers)) != len(named_headers) or not REPORT_HEADERS.issubset(named_headers):
         raise ValueError('Expected Policy #, Initial. Surname, Address, Cell# and Last Receipt columns.')
-    rows = []
-    seen = set()
+    rows = {}
+    duplicates = 0
     for number, values in enumerate(iterator, 2):
         if number > 10001:
             raise ValueError('Import at most 10,000 clients per file.')
@@ -99,24 +99,31 @@ def parse_report(workbook, filename):
         if not surname or len(initials) > 50 or len(surname) > 120 or len(text(data.get('receipt'))) > 80:
             raise ValueError(f'Row {number}: check the initials, surname and receipt number lengths.')
         client_key = (policy.casefold(), contact_key(data.get('cell')))
-        if client_key in seen:
-            raise ValueError(f'Row {number}: the policy number and contact number are duplicated in this report.')
-        seen.add(client_key)
+        name_key = ' '.join(full_name.casefold().split())
+        previous = rows.get(client_key)
+        if previous and previous[1] != name_key:
+            raise ValueError(f'Rows {previous[0]} and {number}: the same policy and contact number have different client names. Check these rows before importing.')
         try:
             last_paid = receipt_date(data.get('lastreceipt'), workbook.epoch)
         except (ValueError, TypeError, OverflowError) as exc:
             raise ValueError(f'Row {number}: invalid Last Receipt date.') from exc
+        if previous:
+            duplicates += 1
+            previous_date = previous[2]['last_date_paid']
+            if last_paid is None or (previous_date is not None and last_paid <= previous_date):
+                continue
         source = {str(key): value.isoformat() if isinstance(value, (date, datetime)) else value
                   for key, value in zip(original_headers, values)}
-        rows.append(dict(policy_number=policy, initials=initials, surname=surname,
-                         cell_number=prospect_phone(data.get('cell')) or text(data.get('cell'))[:50],
-                         valid_mobile=bool(prospect_phone(data.get('cell'))),
-                         home_tel=text(data.get('phone'))[:50], address=text(data.get('address')),
-                         last_date_paid=last_paid, receipt_number=text(data.get('receipt')),
-                         comments=text(data.get('comment')), source_row_json=json.dumps(source, ensure_ascii=False)))
+        mobile = prospect_phone(data.get('cell'))
+        row = dict(policy_number=policy, initials=initials, surname=surname,
+                   cell_number=mobile or text(data.get('cell'))[:50], valid_mobile=bool(mobile),
+                   home_tel=text(data.get('phone'))[:50], address=text(data.get('address')),
+                   last_date_paid=last_paid, receipt_number=text(data.get('receipt')),
+                   comments=text(data.get('comment')), source_row_json=json.dumps(source, ensure_ascii=False))
+        rows[client_key] = (previous[0] if previous else number, name_key, row)
     if not rows:
         raise ValueError('The report has no client rows.')
-    return franchise, rows
+    return franchise, [row for _, _, row in rows.values()], duplicates
 
 
 def report_company(franchise):
@@ -152,7 +159,7 @@ def report_group_repairs():
 
 def import_report(workbook, filename, user, *, company_override=None, commit=True, policies_out=None):
     from app.services.communication_service import is_suppressed, preference_for
-    franchise, rows = parse_report(workbook, filename)
+    franchise, rows, duplicates = parse_report(workbook, filename)
     company = company_override or report_company(franchise)
     branch = company.branch
     role = user.role.name.lower().replace('_', ' ') if user.role else ''
@@ -212,10 +219,10 @@ def import_report(workbook, filename, user, *, company_override=None, commit=Tru
             policy.recovery_status = 'Imported'
             policy.suspense_reason = None
     db.session.add(AuditLog(user_id=user.id, action='LAPS_REPORT_IMPORT', entity_type='CompanyGroupState',
-                           entity_id=str(company.id), details=f'{created} created; {updated} updated; {missing_mobile} missing valid mobile numbers.'))
+                entity_id=str(company.id), details=f'{created} created; {updated} updated; {missing_mobile} missing valid mobile numbers; {duplicates} duplicate rows combined.'))
     if commit:
         db.session.commit()
-    return franchise, created, updated, missing_mobile
+    return franchise, created, updated, missing_mobile, duplicates
 
 
 def ensure_report_columns():
