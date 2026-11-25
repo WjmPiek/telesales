@@ -86,8 +86,6 @@ def parse_report(workbook, filename):
     rows = {}
     missing_mobile = duplicates = 0
     for number, values in enumerate(iterator, 2):
-        if number > 10001:
-            raise ValueError('Import at most 10,000 clients per file.')
         if not any(text(value) for value in values):
             continue
         data = dict(zip(headers, values))
@@ -112,6 +110,8 @@ def parse_report(workbook, filename):
             previous_date = previous['last_date_paid']
             if last_paid is None or (previous_date is not None and last_paid <= previous_date):
                 continue
+        elif len(rows) >= 10_000:
+            raise ValueError('Import at most 10,000 unique clients with valid mobile numbers per laps report.')
         source = {str(key): value.isoformat() if isinstance(value, (date, datetime)) else value
                   for key, value in zip(original_headers, values)}
         rows[mobile] = dict(
