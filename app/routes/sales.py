@@ -385,12 +385,15 @@ def campaign_record(campaign_id):
 @login_required
 def select(campaign_id):
     batch,campaign=campaign_record(campaign_id)
+    if campaign.queue_status in {'queued', 'retry', 'processing'}:
+        if request.method == 'POST':
+            flash('This list is already sending or scheduled. View its progress before sending again.', 'warning')
+        return redirect(url_for('.send_status', campaign_id=campaign_id))
+
     from app.services.campaign_selection import select_recipients
     from app.routes.communications import _refresh_template_status
     if request.method=='POST':
         try:
-            if campaign.queue_status in {'queued','retry','processing'}:
-                raise ValueError('This list is already sending or scheduled. View the results before sending again.')
             ids={int(v) for v in request.form.getlist('policy_ids') if v.isdigit()}
             policies=batch_policies(batch).filter(LapsedPolicy.id.in_(ids)).all()
             if not ids or {p.id for p in policies}!=ids:
@@ -404,7 +407,9 @@ def select(campaign_id):
                 raise ValueError(live.error or 'The WhatsApp template is not currently approved.')
             campaign=db.session.query(CommunicationCampaign).filter_by(id=campaign.id).with_for_update().populate_existing().one()
             if campaign.queue_status in {'queued','retry','processing'}:
-                raise ValueError('This list is already queued.')
+                db.session.rollback()
+                flash('This list is already queued.', 'warning')
+                return redirect(url_for('.send_status', campaign_id=campaign_id))
             db.session.expire(campaign,['recipients'])
             chosen=select_recipients(campaign,policies)
             if not chosen:
@@ -430,15 +435,19 @@ def progress(campaign_id):
 
 def send_progress(campaign):
     from app.services.campaign_send_lock import sender_active
-    recipients=list(campaign.recipients)
-    interrupted=campaign.queue_status=='processing' and not sender_active(campaign)
-    return dict(done=campaign.queue_status not in {'queued','retry','processing'} or interrupted,
+    status = CampaignRecipient.whatsapp_status
+    counts = dict(db.session.query(status, db.func.count(CampaignRecipient.id))
+                  .filter(CampaignRecipient.campaign_id == campaign.id).group_by(status))
+    interrupted = campaign.queue_status == 'processing' and not sender_active(campaign)
+    return dict(
+        done=campaign.queue_status not in {'queued', 'retry', 'processing'} or interrupted,
         interrupted=interrupted, queue_status=campaign.queue_status,
-        sent=sum(r.whatsapp_status in {'Sent','Delivered','Read'} for r in recipients),
-        failed=sum(r.whatsapp_status=='Failed' for r in recipients),
-        held=sum(r.whatsapp_status in {'Held','Skipped'} for r in recipients),
-        unsent=sum(r.whatsapp_status in {None,'Not Sent'} for r in recipients),
-        review=sum(r.whatsapp_status=='Sending' for r in recipients),total=len(recipients))
+        sent=sum(counts.get(value, 0) for value in ('Sent', 'Delivered', 'Read')),
+        failed=counts.get('Failed', 0),
+        held=counts.get('Held', 0) + counts.get('Skipped', 0),
+        unsent=counts.get(None, 0) + counts.get('Not Sent', 0),
+        review=counts.get('Sending', 0), total=sum(counts.values()),
+    )
 
 
 @sales_bp.route('/campaign/<int:campaign_id>/status')
@@ -466,7 +475,7 @@ def resume_unsent(campaign_id):
             if batch.company.status!='Active':
                 raise ValueError('This branch is not active.')
             recipients=queued_recipients(campaign)
-            permitted={p.id for p in batch_policies(batch).all()}
+            permitted = {policy_id for policy_id, in batch_policies(batch).with_entities(LapsedPolicy.id)}
             if any(r.lapsed_policy_id not in permitted for r in recipients):
                 abort(403)
             accepted={rid for rid, in db.session.query(WhatsAppMessage.campaign_recipient_id).filter(

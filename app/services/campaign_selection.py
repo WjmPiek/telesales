@@ -65,4 +65,5 @@ def queued_recipients(campaign):
     ids = json.loads(campaign.send_recipient_ids_json)
     if not isinstance(ids, list) or any(type(value) is not int for value in ids):
         raise ValueError('Invalid campaign client selection')
-    return [r for r in campaign.recipients if r.id in set(ids)]
+    selected_ids = set(ids)
+    return [r for r in campaign.recipients if r.id in selected_ids]
