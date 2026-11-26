@@ -86,3 +86,45 @@ class CallbackOverviewTests(unittest.TestCase):
             template_rendered.disconnect(record, self.app)
         item = next(i for i in captured[-1]['import_summaries'] if i['key']==f'batch:{self.batches[0]}')
         self.assertEqual((item['clients'], item['sent'], item['callbacks'], item['applications']), (1,1,1,1))
+
+    def test_landing_page_does_not_load_non_callback_client_or_history_objects(self):
+        from sqlalchemy import event
+
+        self.seed()
+        self.login('admin')
+        batch = db.session.get(ClientImportBatch, self.batches[0])
+        campaign = CommunicationCampaign(name='Synthetic bulk messaging', company_id=batch.company_id,
+            branch='A', message_body='Test', created_by_id=self.user_ids['admin'])
+        db.session.add(campaign)
+        db.session.flush()
+        ids = db.session.scalars(db.insert(LapsedPolicy).returning(LapsedPolicy.id), [
+            {'initials': 'A', 'surname': 'Example', 'branch': 'A', 'company_id': batch.company_id,
+             'cell_number': f'08255{i:05d}', 'recovery_status': 'Imported'}
+            for i in range(200)
+        ]).all()
+        db.session.execute(db.insert(ClientImportRow), [{'batch_id': batch.id, 'policy_id': pid} for pid in ids])
+        db.session.execute(db.insert(CampaignRecipient), [
+            {'campaign_id': campaign.id, 'lapsed_policy_id': pid, 'secure_token': f'overview-load-{pid}',
+             'whatsapp_status': 'Delivered'} for pid in ids
+        ])
+        db.session.commit()
+        db.session.expunge_all()
+        loaded_policies, loaded_recipients = [], []
+
+        def policy_loaded(policy, context):
+            loaded_policies.append(policy.id)
+
+        def recipient_loaded(recipient, context):
+            loaded_recipients.append(recipient.id)
+
+        event.listen(LapsedPolicy, 'load', policy_loaded)
+        event.listen(CampaignRecipient, 'load', recipient_loaded)
+        try:
+            page = self.client.get('/recovery/callbacks?branch=A')
+        finally:
+            event.remove(LapsedPolicy, 'load', policy_loaded)
+            event.remove(CampaignRecipient, 'load', recipient_loaded)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'<td>201</td><td>200</td>', page.data)
+        self.assertEqual(len(loaded_policies), 2)
+        self.assertEqual(loaded_recipients, [])
