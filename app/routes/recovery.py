@@ -150,13 +150,14 @@ CALL_OUTCOMES = list(OUTCOME_TO_STATUS.keys())
 CALLBACK_OUTCOMES = {"No Answer", "Voicemail", "Callback Requested"}
 
 
-def open_recovery_query():
+def open_recovery_query(*conditions):
     from app.services.contact_permissions import allowed_contacts
     query = scope_by_branch(
         LapsedPolicy.query.filter(LapsedPolicy.recovery_status.notin_(LEAD_CLOSED_STATUSES)),
         LapsedPolicy,
         agent_col=LapsedPolicy.assigned_agent_id,
     )
+    query = query.filter(*conditions)
     candidates = query.with_entities(LapsedPolicy.id, LapsedPolicy.cell_number, LapsedPolicy.email_address).all()
     allowed = allowed_contacts(candidates, 'telephone')
     return query.filter(LapsedPolicy.id.notin_([pid for pid, permitted in allowed.items() if not permitted]))
@@ -245,12 +246,21 @@ def callbacks():
     """Phase 2 callback worklist: overdue, today, upcoming and unscheduled follow-ups."""
     now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
     today = now.date()
-    from app.services.callback_overview import overview_context
+    from app.services.callback_overview import callback_email_statuses, overview_context
     context, policy_ids, applications, policies = overview_context()
-    rows = open_recovery_query().filter(LapsedPolicy.id.in_(policy_ids), LapsedPolicy.recovery_status == 'Callback').order_by(LapsedPolicy.next_action_date.asc(), LapsedPolicy.callback_at.asc()).all()
+    conditions = [LapsedPolicy.recovery_status == 'Callback']
+    if context['selected_branch']:
+        branch = db.func.coalesce(db.func.nullif(LapsedPolicy.branch, ''), 'Unassigned')
+        conditions.append(branch == context['selected_branch'])
+    if context['selected_import']:
+        conditions.append(LapsedPolicy.id.in_(policy_ids))
+    rows = open_recovery_query(*conditions).order_by(
+        LapsedPolicy.next_action_date.asc(), LapsedPolicy.callback_at.asc()).all()
+    context['callback_emails'] = callback_email_statuses([policy.id for policy in rows])
     overdue = [p for p in rows if (p.callback_at and p.callback_at <= now) or (not p.callback_at and p.next_action_date and p.next_action_date < today)]
-    due_today = [p for p in rows if p not in overdue and not p.callback_at and p.next_action_date == today]
-    upcoming = [p for p in rows if p not in overdue and ((p.callback_at and p.callback_at > now) or (p.next_action_date and p.next_action_date > today))]
+    overdue_ids = {policy.id for policy in overdue}
+    due_today = [p for p in rows if p.id not in overdue_ids and not p.callback_at and p.next_action_date == today]
+    upcoming = [p for p in rows if p.id not in overdue_ids and ((p.callback_at and p.callback_at > now) or (p.next_action_date and p.next_action_date > today))]
     unscheduled = [p for p in rows if not p.next_action_date and not p.callback_at]
     submitted_applications = sorted((a for a in applications if a.signed_at and
         a.status in {"Signed", "FICA Outstanding", "FICA Review", "QA Pending"}),
@@ -276,7 +286,8 @@ def callbacks():
 @permission_required('recovery.view')
 def callback_reminders():
     now = datetime.now(ZoneInfo('Africa/Johannesburg')).replace(tzinfo=None)
-    rows = open_recovery_query().filter(LapsedPolicy.recovery_status == 'Callback', LapsedPolicy.callback_at <= now + timedelta(minutes=2)).order_by(LapsedPolicy.callback_at).all()
+    rows = open_recovery_query(LapsedPolicy.recovery_status == 'Callback',
+                               LapsedPolicy.callback_at <= now + timedelta(minutes=2)).order_by(LapsedPolicy.callback_at).all()
     reminders, alerts = [], []
     for p in rows:
         call = scope_by_branch(TelesalesScriptSession.query, TelesalesScriptSession, agent_col=TelesalesScriptSession.agent_id).filter_by(lapsed_policy_id=p.id,status='In Progress').order_by(TelesalesScriptSession.created_at.desc()).first()
